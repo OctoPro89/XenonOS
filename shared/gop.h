@@ -1,5 +1,4 @@
 #pragma once
-#pragma once
 #include <stdint.h>
 
 typedef struct {
@@ -8,4 +7,5 @@ typedef struct {
     uint32_t Width;
     uint32_t Height;
     uint32_t PixelsPerScanLine;
+    uint32_t PixelFormat;
 } Framebuffer;

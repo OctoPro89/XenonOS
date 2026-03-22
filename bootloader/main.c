@@ -182,11 +182,35 @@ EFI_STATUS efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable)
     SystemTable->ConOut->OutputString(SystemTable->ConOut, L"Kernel loaded!\r\n");
 
     // GOP
-    EFI_GRAPHICS_OUTPUT_PROTOCOL *gop;
+    EFI_GRAPHICS_OUTPUT_PROTOCOL* gop;
     EFI_GUID gopGuid = EFI_GRAPHICS_OUTPUT_PROTOCOL_GUID;
     status = SystemTable->BootServices->LocateProtocol(&gopGuid, NULL, (void**)&gop);
-    if (status != EFI_SUCCESS || !gop) {
+    if (EFI_ERROR(status) || !gop) {
         SystemTable->ConOut->OutputString(SystemTable->ConOut, L"GOP not found!\r\n");
+        while(1);
+    }
+
+    // Find the highest resolution 32-bit mode
+    UINT32 best_mode = gop->Mode->Mode;
+    UINT32 best_pixels = 0;
+    for (UINT32 i = 0; i < gop->Mode->MaxMode; i++) {
+        EFI_GRAPHICS_OUTPUT_MODE_INFORMATION* info;
+        UINTN size;
+        status = gop->QueryMode(gop, i, &size, &info);
+        if (EFI_ERROR(status)) continue;
+        if (info->PixelFormat != PixelRedGreenBlueReserved8BitPerColor && info->PixelFormat != PixelBlueGreenRedReserved8BitPerColor)
+            continue;
+        UINT32 pixels = info->HorizontalResolution * info->VerticalResolution;
+        if (pixels > best_pixels) {
+            best_pixels = pixels;
+            best_mode = i;
+        }
+    }
+
+    // Set the mode
+    status = gop->SetMode(gop, best_mode);
+    if (EFI_ERROR(status)) {
+        SystemTable->ConOut->OutputString(SystemTable->ConOut, L"Failed to set GOP mode!\r\n");
         while(1);
     }
 
@@ -198,11 +222,14 @@ EFI_STATUS efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable)
     fb.Width = gop->Mode->Info->HorizontalResolution;
     fb.Height = gop->Mode->Info->VerticalResolution;
     fb.PixelsPerScanLine = gop->Mode->Info->PixelsPerScanLine;
+    fb.PixelFormat = gop->Mode->Info->PixelFormat;
+
+    SystemTable->ConOut->OutputString(SystemTable->ConOut, L"Setting up paging\r\n");
 
     // Setup paging
     uint64_t *pml4;
     uint64_t *pdpt;
-    uint64_t *pd;
+    uint64_t **pd;
 
     EFI_PHYSICAL_ADDRESS addr;
 
@@ -211,15 +238,21 @@ EFI_STATUS efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable)
     SystemTable->BootServices->AllocatePages(AllocateAnyPages, EfiLoaderData, 1, &addr);
     pml4 = (uint64_t*)addr;
 
+    SystemTable->ConOut->OutputString(SystemTable->ConOut, L"Allocated pml4\r\n");
+
     // PDPT
     addr = 0;
     SystemTable->BootServices->AllocatePages(AllocateAnyPages, EfiLoaderData, 1, &addr);
     pdpt = (uint64_t*)addr;
 
+    SystemTable->ConOut->OutputString(SystemTable->ConOut, L"Allocated pdpt\r\n");
+
     // PD
     addr = 0;
     SystemTable->BootServices->AllocatePages(AllocateAnyPages, EfiLoaderData, 1, &addr);
-    pd = (uint64_t*)addr;
+    pd = (uint64_t**)addr;
+
+    SystemTable->ConOut->OutputString(SystemTable->ConOut, L"Allocated pd\r\n");
 
     for (int i = 0; i < 512; i++) {
         pml4[i] = 0;
@@ -230,60 +263,73 @@ EFI_STATUS efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable)
     pml4[0] = ((uint64_t)pdpt) | PAGE_PRESENT | PAGE_WRITABLE;
     pdpt[0] = ((uint64_t)pd)   | PAGE_PRESENT | PAGE_WRITABLE;
 
-    for (int i = 0; i < 512; i++) {
-        uint64_t phys = (uint64_t)i * 0x200000; // 2MB
-        pd[i] = phys | PAGE_PRESENT | PAGE_WRITABLE | PAGE_PS;
+    SystemTable->ConOut->OutputString(SystemTable->ConOut, L"Setting pd\r\n");
+
+    for (int i = 0; i < 4; i++) {
+        addr = 0;
+        SystemTable->BootServices->AllocatePages(AllocateAnyPages, EfiLoaderData, 1, &addr);
+        pd[i] = (uint64_t*)addr;
+
+        for (int j = 0; j < 512; j++) {
+            uint64_t phys = (uint64_t)i * 0x40000000 + (uint64_t)j * 0x200000;
+            pd[i][j] = phys | PAGE_PRESENT | PAGE_WRITABLE | PAGE_PS;
+        }
+
+        pdpt[i] = ((uint64_t)pd[i]) | PAGE_PRESENT | PAGE_WRITABLE;
     }
+
+    SystemTable->ConOut->OutputString(SystemTable->ConOut, L"pd set\r\n");
 
     uint64_t pml4_phys = (uint64_t)pml4;
 
     UINTN mapSize = 0;
+    EFI_MEMORY_DESCRIPTOR *memMap = NULL;
+
     UINTN mapKey;
     UINTN descSize;
     UINT32 descVersion;
 
-    EFI_MEMORY_DESCRIPTOR *memMap = NULL;
-
-    // First call to get size
-    status = SystemTable->BootServices->GetMemoryMap(
-        &mapSize, NULL, &mapKey, &descSize, &descVersion
-    );
-
+    // First call
+    status = SystemTable->BootServices->GetMemoryMap(&mapSize, NULL, &mapKey, &descSize, &descVersion);
     if (status != EFI_BUFFER_TOO_SMALL) {
-        // error
+        SystemTable->ConOut->OutputString(SystemTable->ConOut, L"Failed to get memory map size!\r\n");
+        while (1);
     }
 
-    // Add slack BEFORE allocation
-    mapSize += descSize * 2;
+    // Add slack
+    mapSize += descSize * 8;
 
-    // Allocate ONCE
-    SystemTable->BootServices->AllocatePool(
-        EfiLoaderData, mapSize, (void**)&memMap
-    );
-
-    // Now retry UNTIL success (no realloc!)
     while (1) {
-        status = SystemTable->BootServices->GetMemoryMap(
-            &mapSize, memMap, &mapKey, &descSize, &descVersion
-        );
-
-        if (status == EFI_SUCCESS) break;
-
-        if (status != EFI_BUFFER_TOO_SMALL) {
-            SystemTable->ConOut->OutputString(SystemTable->ConOut, L"GetMemoryMap failed!\r\n");
-            while(1);
+        // Allocate fresh buffer every attempt
+        if (memMap != NULL) {
+            SystemTable->BootServices->FreePool(memMap);
         }
 
-        // If still too small, increase size BUT reuse buffer carefully
-        mapSize += descSize * 2;
-    }
+        status = SystemTable->BootServices->AllocatePool(
+            EfiLoaderData, mapSize, (void**)&memMap
+        );
+        if (EFI_ERROR(status)) {
+            SystemTable->ConOut->OutputString(SystemTable->ConOut, L"Failed to allocate memory map!\r\n");
+            while (1);
+        }
 
-    // uint32_t *pixel = (uint32_t*)fb.BaseAddress;
-    // for (uint32_t y = 0; y < fb.Height; y++) {
-    //     for (uint32_t x = 0; x < fb.Width; x++) {
-    //         pixel[y * fb.PixelsPerScanLine + x] = 0x00FFFF00; // yellow
-    //     }
-    // }
+        UINTN newSize = mapSize;
+
+        status = SystemTable->BootServices->GetMemoryMap(&newSize, memMap, &mapKey, &descSize, &descVersion);
+
+        if (status == EFI_SUCCESS) {
+            mapSize = newSize;
+            break;
+        }
+
+        if (status != EFI_BUFFER_TOO_SMALL) {
+            SystemTable->ConOut->OutputString(SystemTable->ConOut, L"Failed to get memory map!\r\n");
+            while (1);
+        }
+
+        // Update size and retry
+        mapSize = newSize + descSize * 8;
+    }
 
     BootInfo bootInfo;
     bootInfo.fb = fb;
@@ -298,13 +344,6 @@ EFI_STATUS efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable)
         while(1);
     }
     
-    // pixel = (uint32_t*)fb.BaseAddress;
-    // for (uint32_t y = 0; y < fb.Height; y++) {
-    //     for (uint32_t x = 0; x < fb.Width; x++) {
-    //         pixel[y * fb.PixelsPerScanLine + x] = 0x0000FF00; // green
-    //     }
-    // }
-
     // Jump to kernel, passing framebuffer pointer
     typedef void (*kernel_entry_t)(BootInfo*);
     kernel_entry_t kernel = (kernel_entry_t)ehdr.e_entry;
