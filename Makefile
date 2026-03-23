@@ -40,7 +40,7 @@ build/BOOTX64.EFI: build/bootloader.o
 # Compile C files
 build/%_c.o: kernel/%.c
 	mkdir -p $(dir $@)
-	clang $(KERNCFLAGS) $< -o $@
+	clang $(KERNCFLAGS) $< -o $@ -I"kernel/"
 
 # Assemble ASM files
 build/%_asm.o: kernel/%.asm

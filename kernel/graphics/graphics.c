@@ -1,8 +1,6 @@
-#include <stdint.h>
 #include "graphics.h"
-
-#pragma once
-#include <stdint.h>
+#include <kernel_memory.h>
+#include <arch/x86_64/io.h>
 
 // Basic 8x8 ASCII font for U+0000–U+007F
 // Source: font8x8 project (Public Domain):contentReference[oaicite:1]{index=1}
@@ -136,60 +134,146 @@ static const uint8_t font8x8_basic[128][8] = {
     { 0x6E, 0x3B, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00},   // U+007E (~)
     { 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00}    // U+007F
 };
-uint32_t convert_color(uint8_t r, uint8_t g, uint8_t b, Framebuffer* fb) {
-    if (fb->PixelFormat == 1) { // RGB
+
+static uint32_t dirty_x1 = UINT32_MAX;
+static uint32_t dirty_y1 = UINT32_MAX;
+static uint32_t dirty_x2 = 0;
+static uint32_t dirty_y2 = 0;
+
+static inline void mark_dirty(uint32_t x, uint32_t y, uint32_t w, uint32_t h) {
+    if (x < dirty_x1) dirty_x1 = x;
+    if (y < dirty_y1) dirty_y1 = y;
+    if (x + w > dirty_x2) dirty_x2 = x + w;
+    if (y + h > dirty_y2) dirty_y2 = y + h;
+}
+
+uint32_t* backbuffer;
+uint32_t current_width, current_height, pixels_per_line, pixel_format;
+
+const uint32_t bytes_per_pixel = 4;
+
+static inline void memset_fast_qword(void* dest, uint64_t value, uint64_t qwords) {
+    asm volatile (
+        "rep stosq"
+        : "=D"(dest), "=c"(qwords)
+        : "0"(dest), "1"(qwords), "a"(value)
+        : "memory"
+    );
+}
+
+static inline void memcpy_fast_qword(void* dest, const void* src, uint64_t qwords) {
+    asm volatile (
+        "rep movsq"
+        : "=D"(dest), "=S"(src), "=c"(qwords)
+        : "0"(dest), "1"(src), "2"(qwords)
+        : "memory"
+    );
+}
+
+void graphics_init(Framebuffer* fb) {
+    current_width = fb->Width;
+    current_height = fb->Height;
+    pixels_per_line = fb->PixelsPerScanLine;
+    pixel_format = fb->PixelFormat;
+    backbuffer = (uint32_t*)kmalloc(pixels_per_line * current_height * bytes_per_pixel);
+    if (!backbuffer) {
+        serial_write_str("Failed to allocate backbuffer!");
+        while(1);
+    }
+}
+
+void graphics_swap_buffers(Framebuffer* fb) {
+    if (dirty_x1 >= dirty_x2 || dirty_y1 >= dirty_y2) return;
+
+    for (uint32_t y = dirty_y1; y < dirty_y2; y++) {
+        uint32_t* src = backbuffer + y * pixels_per_line + dirty_x1;
+        uint32_t* dst = (uint32_t*)fb->BaseAddress + y * pixels_per_line + dirty_x1;
+
+        uint32_t width = dirty_x2 - dirty_x1;
+        memcpy_fast_qword(dst, src, width / 2);
+
+        if (width & 1)
+            dst[width - 1] = src[width - 1];
+    }
+
+    // reset
+    dirty_x1 = UINT32_MAX;
+    dirty_y1 = UINT32_MAX;
+    dirty_x2 = 0;
+    dirty_y2 = 0;
+}
+
+uint32_t convert_color(uint8_t r, uint8_t g, uint8_t b) {
+    if (pixel_format == 1) { // RGB
         return (r << 16) | (g << 8) | b;
-    } else if (fb->PixelFormat == 0) { // BGR
+    } else if (pixel_format == 0) { // BGR
         return (b << 16) | (g << 8) | r;
     } else {
         return (r << 16) | (g << 8) | b; // fallback
     }
 }
 
-static inline void memset32(uint32_t* dest, uint32_t value, uint64_t count) {
-    for (uint64_t i = 0; i < count; i++) {
-        dest[i] = value;
+void clear_screen(uint32_t color) {
+    uint64_t packed = ((uint64_t)color << 32) | color;
+    uint64_t total_pixels = pixels_per_line * current_height;
+
+    memset_fast_qword(backbuffer, packed, total_pixels / 2);
+
+    if (total_pixels & 1) {
+        backbuffer[total_pixels - 1] = color;
     }
 }
 
-void clear_screen(Framebuffer* fb, uint32_t color) {
-    uint32_t* pixels = (uint32_t*)fb->BaseAddress;
-    memset32(pixels, color, fb->Height * fb->PixelsPerScanLine);
+static inline void put_pixel(uint32_t x, uint32_t y, uint32_t color) {
+    /*
+    if (x >= current_width || y >= current_height) {
+        serial_write_str("Failed to put pixel, out of bounds");
+        while(1) {} // Hang
+        return;
+    }
+        */
+    // ((volatile uint32_t*)backbuffer)[y * pixels_per_line + x] = color;
+    ((uint32_t*)backbuffer)[y * pixels_per_line + x] = color; // regular RAM buffer doesn't need volatile
 }
 
-static inline void put_pixel(Framebuffer* fb, uint32_t x, uint32_t y, uint32_t color) {
-    if (x >= fb->Width || y >= fb->Height) return;
-    ((volatile uint32_t*)fb->BaseAddress)[y * fb->PixelsPerScanLine + x] = color;
-}
-
-void draw_rect(Framebuffer* fb, uint32_t x, uint32_t y, uint32_t w, uint32_t h, uint32_t color) {
+void draw_rect(uint32_t x, uint32_t y, uint32_t w, uint32_t h, uint32_t color) {
     for (uint32_t j = 0; j < h; j++) {
-        uint32_t* row = (uint32_t*)fb->BaseAddress + (y + j) * fb->PixelsPerScanLine + x;
-        memset32(row, color, w);
+        uint32_t* row = (uint32_t*)backbuffer + (y + j) * pixels_per_line + x;
+        uint64_t packed = ((uint64_t)color << 32) | color;
+        memset_fast_qword(row, packed, w / 2);
+        if (w & 1) row[w - 1] = color;
     }
+    mark_dirty(x, y, w, h);
 }
 
-void draw_char(Framebuffer* fb, char c, uint32_t x, uint32_t y, uint32_t color) {
+void draw_char(char c, uint32_t x, uint32_t y, uint32_t color) {
     if (c < 0 || c > 127) return; // unsupported
     const uint8_t* glyph = font8x8_basic[(uint8_t)c];  // no -32
     for (uint32_t row = 0; row < 8; row++) {
         uint8_t bits = glyph[row];
         for (uint32_t col = 0; col < 8; col++) {
             if (bits & (1 << col)) {  // bit order seems fine
-                put_pixel(fb, x + col, y + row, color);
+                uint32_t* row_ptr = backbuffer + (y + row) * pixels_per_line + x;
+
+                for (uint32_t col = 0; col < 8; col++) {
+                    if (bits & (1 << col)) {
+                        row_ptr[col] = color;
+                    }
+                }
             }
         }
     }
+    mark_dirty(x, y, 8, 8);
 }
 
-void draw_string(Framebuffer* fb, const char* str, uint32_t x, uint32_t y, uint32_t color) {
+void draw_string(const char* str, uint32_t x, uint32_t y, uint32_t color) {
     uint32_t orig_x = x;
     while (*str) {
         if (*str == '\n') {
             y += 8;
             x = orig_x;
         } else {
-            draw_char(fb, *str, x, y, color);
+            draw_char(*str, x, y, color);
             x += 8;
         }
         str++;
