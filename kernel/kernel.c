@@ -1,11 +1,15 @@
 #include "../shared/boot_info.h"
 #include "arch/x86_64/hal.h"
+#include "arch/x86_64/io.h"
 #include "graphics/graphics.h"
 #include "kernel_memory.h"
 #include "kernel.h"
 
 void ASMCALL kernel_main_trampoline(BootInfo* bootInfo) {
     x86_64_HAL_init();
+    uint64_t rip;
+    asm volatile ("lea (%%rip), %0" : "=r"(rip));
+    serial_write_hex(rip);
 
     kheap_init((void*)0x300000, 0x5000000); // 80 MB heap
 

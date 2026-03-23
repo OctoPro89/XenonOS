@@ -4,6 +4,9 @@
 
 #include <stdint.h>
 
+#define KERNEL_VMA 0xFFFFFFFF80000000ULL
+#define KERNEL_LMA 0x00200000ULL
+
 typedef uint64_t Elf64_Addr;
 typedef uint64_t Elf64_Off;
 typedef uint16_t Elf64_Half;
@@ -153,7 +156,9 @@ EFI_STATUS efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable)
         // Allocate pages for segment
         UINTN num_pages = (phdr.p_memsz + 0xFFF) / 0x1000;
         void *segment;
-        EFI_PHYSICAL_ADDRESS segment_addr = phdr.p_vaddr;
+
+        EFI_PHYSICAL_ADDRESS segment_addr =
+    phdr.p_vaddr - KERNEL_VMA + KERNEL_LMA;
         SystemTable->BootServices->AllocatePages(
             AllocateAddress,
             EfiLoaderData,
@@ -278,6 +283,25 @@ EFI_STATUS efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable)
         pdpt[i] = ((uint64_t)pd[i]) | PAGE_PRESENT | PAGE_WRITABLE;
     }
 
+
+    uint64_t pml4_index = (KERNEL_VMA >> 39) & 0x1FF;
+uint64_t pdpt_index = (KERNEL_VMA >> 30) & 0x1FF;
+
+    pml4[pml4_index] = ((uint64_t)pdpt) | PAGE_PRESENT | PAGE_WRITABLE;
+
+// allocate PD for kernel
+addr = 0;
+SystemTable->BootServices->AllocatePages(AllocateAnyPages, EfiLoaderData, 1, &addr);
+uint64_t* kernel_pd = (uint64_t*)addr;
+
+// map first ~1GB of phys at high half
+for (int j = 0; j < 512; j++) {
+    uint64_t phys = KERNEL_LMA + j * 0x200000;
+    kernel_pd[j] = phys | PAGE_PRESENT | PAGE_WRITABLE | PAGE_PS;
+}
+
+pdpt[pdpt_index] = ((uint64_t)kernel_pd) | PAGE_PRESENT | PAGE_WRITABLE;
+
     SystemTable->ConOut->OutputString(SystemTable->ConOut, L"pd set\r\n");
 
     uint64_t pml4_phys = (uint64_t)pml4;
@@ -288,6 +312,10 @@ EFI_STATUS efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable)
     UINTN mapKey;
     UINTN descSize;
     UINT32 descVersion;
+
+    SystemTable->ConOut->OutputString(SystemTable->ConOut, L"Entry: ");
+print_hex(SystemTable, ehdr.e_entry);
+SystemTable->ConOut->OutputString(SystemTable->ConOut, L"\r\n");
 
     // First call
     status = SystemTable->BootServices->GetMemoryMap(&mapSize, NULL, &mapKey, &descSize, &descVersion);
