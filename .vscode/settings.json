@@ -1,3 +1,6 @@
 {
-    "makefile.configureOnOpen": false
+    "makefile.configureOnOpen": false,
+    "files.associations": {
+        "*.asm": "c" // trick vscode into thinking you can debug asm files
+    }
 }

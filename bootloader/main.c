@@ -206,7 +206,7 @@ EFI_STATUS efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable)
         if (info->PixelFormat != PixelRedGreenBlueReserved8BitPerColor && info->PixelFormat != PixelBlueGreenRedReserved8BitPerColor)
             continue;
         UINT32 pixels = info->HorizontalResolution * info->VerticalResolution;
-        if (pixels > best_pixels) {
+        if (pixels == (1280 * 720)) {
             best_pixels = pixels;
             best_mode = i;
         }
@@ -364,6 +364,7 @@ SystemTable->ConOut->OutputString(SystemTable->ConOut, L"\r\n");
     bootInfo.MemoryMap = (uint64_t)memMap;
     bootInfo.MemoryMapSize = mapSize;
     bootInfo.MemoryDescriptorSize = descSize;
+    bootInfo.PML4 = pml4_phys;
 
     // Exit boot services
     status = SystemTable->BootServices->ExitBootServices(ImageHandle, mapKey);

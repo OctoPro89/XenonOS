@@ -4,4 +4,4 @@
 
 #define XENON_KERNEL
 
-#define ASMCALL __attribute__ ((__cdecl__))
+#define ASMCALL // Would be SystemV abi but there is no macro for it

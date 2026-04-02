@@ -47,10 +47,20 @@ __attribute__((aligned(16))) static uint8_t ist_stack[4096];
 struct TSS tss = {0};
 
 // GDT array: null, code, data
-struct GDTEntry gdt[3];
-struct GDTEntryTSS gdt_tss;
+struct {
+    struct GDTEntry entries[5];
+    struct GDTEntryTSS tss;
+} __attribute__((packed)) gdt_full;
+
+#define gdt (gdt_full.entries)
+#define gdt_tss (gdt_full.tss)
 
 struct GDTPtr gdt_ptr;
+
+__attribute__((aligned(16)))
+uint8_t kernel_stack[8192];
+
+uint64_t kernel_stack_top = (uint64_t)(kernel_stack + sizeof(kernel_stack));
 
 void gdt_init(void) {
     // Null descriptor
@@ -58,13 +68,23 @@ void gdt_init(void) {
 
     // Kernel code segment
     gdt[1].access = 0x9A; // present, code, exec/read
-    gdt[1].flags  = 0x20; // 64-bit long mode
+    gdt[1].flags  = 0xA0; // 64-bit long mode 0x80 (G) | 0x20 (L)
     gdt[1].limit_low = gdt[1].base_low = gdt[1].base_mid = gdt[1].base_high = 0;
 
     // Kernel data segment
     gdt[2].access = 0x92; // present, data, read/write
-    gdt[2].flags  = 0x0;
+    gdt[2].flags  = 0xC0;
     gdt[2].limit_low = gdt[2].base_low = gdt[2].base_mid = gdt[2].base_high = 0;
+
+    // User code segment
+    gdt[3].access = 0xFA; // present, ring 3, executable
+    gdt[3].flags  = 0xA8;
+    gdt[3].limit_low = gdt[3].base_low = gdt[3].base_mid = gdt[3].base_high = 0;
+
+    // User data segment
+    gdt[4].access = 0xF2; // present, ring 3, writable
+    gdt[4].flags  = 0x40;
+    gdt[4].limit_low = gdt[4].base_low = gdt[4].base_mid = gdt[4].base_high = 0;
 
     // TSS descriptor
     uint64_t tss_addr = (uint64_t)&tss;
@@ -80,15 +100,17 @@ void gdt_init(void) {
 
     // IST stack
     tss.ist[0] = (uint64_t)(ist_stack + sizeof(ist_stack));
+    tss.rsp0 = kernel_stack_top;
+    tss.io_map_base = sizeof(struct TSS);
 
     // GDTPtr
-    gdt_ptr.limit = sizeof(gdt) + sizeof(gdt_tss) - 1;
-    gdt_ptr.base  = (uint64_t)&gdt;
+    gdt_ptr.base  = (uint64_t)&gdt_full;
+    gdt_ptr.limit = sizeof(gdt_full) - 1;
 
     asm volatile ("lgdt %0" : : "m"(gdt_ptr));
 
     // Load TSS (selector = 0x18)
-    asm volatile ("ltr %0" : : "r"((uint16_t)0x18));
+    asm volatile ("ltr %0" : : "r"((uint16_t)0x28));
 
     // Far jump to reload CS and DS/SS properly
     asm volatile (

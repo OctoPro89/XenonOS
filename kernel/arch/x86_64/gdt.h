@@ -1,6 +1,4 @@
 #pragma once
-#include <stdint.h>
+#include <xstdint.h>
 
-extern struct TSS tss;
-extern struct GDTPtr gdt_ptr;
 void gdt_init(void);

@@ -12,7 +12,9 @@ KERNCFLAGS = -I$(EFI_INCLUDE) -I$(EFI_INCLUDE)/$(EFI_ARCH) \
          -fno-stack-protector \
          -fshort-wchar \
          -mno-red-zone \
-         -c
+         -c -g -O0
+
+ASMFLAGS = -f elf64 -g -F dwarf
 
 # --- Source discovery ---
 KERNEL_C_SRCS := $(shell find kernel -name '*.c')
@@ -45,7 +47,7 @@ build/%_c.o: kernel/%.c
 # Assemble ASM files
 build/%_asm.o: kernel/%.asm
 	mkdir -p $(dir $@)
-	nasm -f elf64 $< -o $@
+	nasm $(ASMFLAGS) $< -o $@
 
 # Link kernel
 build/kernel.elf: $(KERNEL_OBJS)
@@ -61,8 +63,11 @@ image: build/BOOTX64.EFI build/kernel.elf
 run: image
 	qemu-system-x86_64 \
 	-drive format=raw,file=fat:rw:image \
-	-bios /usr/share/OVMF/OVMF_CODE.fd \
-	-serial stdio
+	-bios /usr/share/ovmf/OVMF_CODE.fd \
+	-serial stdio \
+	-d int \
+	-S -gdb tcp::1234 \
+	-no-reboot
 
 # --- Clean ---
 clean:
