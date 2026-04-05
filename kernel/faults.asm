@@ -1,4 +1,4 @@
 global trigger_gp_fault
 trigger_gp_fault:
-    mov ax, 0x9999   ; An index likely beyond your GDT limit
-    mov ds, ax       ; Triggers #GP(selector index)
+    mov ax, 0x9999   ; an index likely beyond GDT limit
+    mov ds, ax       ; triggers #GP(selector index)

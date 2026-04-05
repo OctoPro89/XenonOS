@@ -40,38 +40,62 @@ syscall_init:
 ; --------------------------------------------
 ; Syscall entry point (called via SYSCALL)
 ; Kernel stack is switched here
+; --------------------------------------------
 extern user_rsp_save
 
 syscall_entry:
-    mov [rel user_rsp_save], rsp   ; save user stack
+    ; save critical values
+    mov r12, rcx    ; user RIP
+    mov r13, r11    ; user RFLAGS
+
+    mov [rel user_rsp_save], rsp
 
     mov rsp, [rel kernel_stack_top]
     and rsp, -16
 
-    push rcx
-    push r11
-    push rbx
-    push r12
-    push r13
-    push r14
+    ; save all regs except rcx/r11 (already saved them)
     push r15
+    push r14
+    push r13   ; saved r11
+    push r12   ; saved rcx
+    push r10
+    push r9
+    push r8
+    push rbp
+    push rdi
+    push rsi
+    push rdx
+    push rbx
+    push rax
 
+    mov rdi, rsp
     call syscall_handler
 
-    pop r15
-    pop r14
-    pop r13
-    pop r12
+    ; Restore
+    pop rax
     pop rbx
-    pop r11        ; restore r11 (RFLAGS)
-    pop rcx        ; restore rcx (RIP)
+    pop rdx
+    pop rsi
+    pop rdi
+    pop rbp
+    pop r8
+    pop r9
+    pop r10
+    pop r12   ; rcx
+    pop r13   ; r11
+    pop r14
+    pop r15
+
+    ; restore syscall state
+    mov rcx, r12
+    mov r11, r13
 
     mov rax, [rel user_rsp_save]
 
-    push 0x23      ; SS (user data)
-    push rax       ; RSP
-    push r11       ; RFLAGS
-    push 0x1B      ; CS (user code)
-    push rcx       ; RIP
+    push 0x23
+    push rax
+    push r11
+    push 0x1B
+    push rcx
 
     iretq
