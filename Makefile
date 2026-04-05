@@ -64,10 +64,12 @@ run: image
 	qemu-system-x86_64 \
 	-drive format=raw,file=fat:rw:image \
 	-bios /usr/share/ovmf/OVMF_CODE.fd \
-	-serial stdio \
-	-d int \
-	-S -gdb tcp::1234 \
-	-no-reboot
+	-serial stdio
+
+#  	-d int \
+#  	-S -gdb tcp::1234 \
+#  	-no-reboot
+# 	-no-shutdown
 
 # --- Clean ---
 clean:

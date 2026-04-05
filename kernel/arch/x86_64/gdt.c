@@ -1,4 +1,4 @@
-#include <stdint.h>
+#include <xstdint.h>
 #include "gdt.h"
 
 // 8-byte code/data descriptors

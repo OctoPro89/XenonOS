@@ -1,4 +1,4 @@
-#include <stdint.h>
+#include <xstdint.h>
 #include <stddef.h>
 
 void kheap_init(void* start, size_t size);

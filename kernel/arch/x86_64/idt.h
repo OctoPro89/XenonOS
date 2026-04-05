@@ -1,5 +1,5 @@
 #pragma once
-#include <stdint.h>
+#include <xstdint.h>
 
 struct IDTEntry {
     uint16_t offset_low;

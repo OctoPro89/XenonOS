@@ -1,4 +1,4 @@
-#include <stdint.h>
+#include <xstdint.h>
 
 void serial_write_str(const char*);
 void serial_write_hex(uint64_t);

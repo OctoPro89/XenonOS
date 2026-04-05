@@ -1,7 +1,8 @@
 #include "../shared/boot_info.h"
-#include "arch/x86_64/hal.h"
-#include "arch/x86_64/io.h"
-#include "graphics/graphics.h"
+#include <arch/x86_64/hal.h>
+#include <arch/x86_64/io.h>
+#include <arch/x86_64/syscall.h>
+#include <graphics/graphics.h>
 #include "paging.h"
 #include "kernel_memory.h"
 #include "kernel.h"
@@ -101,10 +102,8 @@ void run_graphics_demo(BootInfo* bootInfo) {
 }
 
 uint8_t user_code[] = {
-    0x48, 0xB8,
-    0xEF, 0xBE, 0xAD, 0xDE,  // low 4 bytes
-    0x00, 0x00, 0x00, 0x00,  // high 4 bytes
-    0xEB, 0xFE
+    0x0F, 0x05,   // syscall
+    0xEB, 0xFE    // infinite loop
 };
 
 #define USER_CODE_ADDR 0x400000
@@ -152,6 +151,8 @@ void run_user() {
 
 void ASMCALL kernel_main_trampoline(BootInfo* bootInfo) {
     x86_64_HAL_init();
+    syscall_init();
+
     uint64_t rip;
     asm volatile ("lea (%%rip), %0" : "=r"(rip));
     serial_write_hex(rip);
