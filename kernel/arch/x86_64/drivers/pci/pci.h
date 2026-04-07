@@ -1,5 +1,5 @@
 /*
-    PCI (Peripheral Component Interconnect) driver header
+    PCI (Peripheral Component Interconnect) driver for XenonOS
 */
 
 #pragma once

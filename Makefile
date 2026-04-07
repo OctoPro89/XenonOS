@@ -79,7 +79,7 @@ run: image
 	sudo mkdir -p /mnt/EFI/BOOT
 	sudo cp build/BOOTX64.EFI /mnt/EFI/BOOT/
 	sudo cp build/kernel.elf /mnt/
-	sudo cp test.txt /mnt/
+	sudo cp testlongfilename.txt /mnt/
 	sudo umount /mnt
 
 	sudo losetup -d /dev/loop0
@@ -90,11 +90,11 @@ run: image
     -device ide-hd,bus=ahci.0,drive=disk0 \
     -bios /usr/share/ovmf/OVMF_CODE.fd \
     -boot order=c \
-    -serial stdio \
- 	-S -gdb tcp::1234 \
-	-no-reboot \
- 	-no-shutdown \
-  	-d int
+    -serial stdio
+#  	-S -gdb tcp::1234 \
+# 	-no-reboot \
+#  	-no-shutdown \
+#   	-d int
 
 # 	qemu-system-x86_64 \
 # 	-drive format=raw,file=fat:rw:image \

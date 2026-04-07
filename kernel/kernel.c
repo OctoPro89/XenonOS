@@ -1,6 +1,7 @@
 #include "../shared/boot_info.h"
 #include <xlibc/string.h>
 #include <xlibc/stdlib.h>
+#include <xlibc/stdio.h>
 #include <arch/x86_64/hal.h>
 #include <arch/x86_64/io.h>
 #include <arch/x86_64/syscall.h>
@@ -9,6 +10,8 @@
 #include <filesystem/block_device/block_device.h>
 #include <filesystem/gpt/gpt.h>
 #include <filesystem/fat32/fat32.h>
+#include <filesystem/vfs/vfs.h>
+#include <filesystem/vfs/vfs_fat32.h>
 #include <graphics/graphics.h>
 #include "paging.h"
 #include "heap.h"
@@ -17,11 +20,11 @@
 #define KERNEL_VMA 0xFFFFFFFF80000000ULL
 #define KERNEL_PMA 0x00200000ULL
 
-uint64_t* current_pml4;
+u64* current_pml4;
 
 void kernel_setup_paging() {
     current_pml4 = alloc_page();
-    uint64_t* old_pml4;
+    u64* old_pml4;
     asm volatile("mov %%cr3, %0" : "=r"(old_pml4));
 
     // Copy identity map (first 4 entries for safety)
@@ -29,11 +32,11 @@ void kernel_setup_paging() {
         current_pml4[i] = old_pml4[i];
     }
 
-    uint64_t kernel_start = KERNEL_VMA;
-    uint64_t phys_start   = KERNEL_PMA;
+    u64 kernel_start = KERNEL_VMA;
+    u64 phys_start   = KERNEL_PMA;
 
     // map a gb for now
-    for (uint64_t off = 0; off < 0x40000000; off += 0x1000) {
+    for (u64 off = 0; off < 0x40000000; off += 0x1000) {
         map_page(current_pml4,
             kernel_start + off,
             phys_start + off,
@@ -41,10 +44,10 @@ void kernel_setup_paging() {
         );
     }
 
-    uint64_t rsp;
+    u64 rsp;
     asm volatile("mov %%rsp, %0" : "=r"(rsp));
 
-    uint64_t stack_base = rsp & ~0xFFF;
+    u64 stack_base = rsp & ~0xFFF;
 
     for (int i = 0; i < 16; i++) {
         map_page(current_pml4,
@@ -59,8 +62,8 @@ void kernel_setup_paging() {
 }
 
 void run_graphics_demo(BootInfo* bootInfo) {
-    uint32_t red   = convert_color(255,0,0);
-    uint32_t green = convert_color(0,255,0);
+    u32 red   = convert_color(255,0,0);
+    u32 green = convert_color(0,255,0);
 
     graphics_init(&bootInfo->fb);
     clear_screen(0); // black
@@ -106,7 +109,7 @@ void run_graphics_demo(BootInfo* bootInfo) {
     }
 }
 
-uint8_t user_code[] = {
+u8 user_code[] = {
 	0xb8, 0x01, 0x00, 0x00, 0x00, 0x48, 0x8d, 0x3d, 
 	0x1c, 0x00, 0x00, 0x00, 0xbe, 0x0c, 0x00, 0x00, 
 	0x00, 0x0f, 0x05, 0xb8, 0x01, 0x00, 0x00, 0x00, 
@@ -119,35 +122,35 @@ uint8_t user_code[] = {
 #define USER_CODE_ADDR 0x400000
 #define USER_STACK_TOP 0x800000
 
-void setup_user_memory(uint64_t* pml4) {
+void setup_user_memory(u64* pml4) {
     void* code_page = alloc_page();
 
     // copy code
     for (int i = 0; i < sizeof(user_code); i++)
-        ((uint8_t*)code_page)[i] = user_code[i];
+        ((u8*)code_page)[i] = user_code[i];
 
     for (int i = 0; i < 4; i++) {
         void* stack_page = alloc_page();
-        map_page(pml4, USER_STACK_TOP - (i+1)*0x1000, (uint64_t)stack_page,
+        map_page(pml4, USER_STACK_TOP - (i+1)*0x1000, (u64)stack_page,
                 PAGE_PRESENT | PAGE_WRITABLE | PAGE_USER);
     }
 
-    for (uint64_t i = 0; i < 0x10000000; i += 0x1000) {
+    for (u64 i = 0; i < 0x10000000; i += 0x1000) {
         map_page(pml4, i, i,
             PAGE_PRESENT | PAGE_WRITABLE | PAGE_USER);
     }
 
-    map_page(pml4, USER_CODE_ADDR, (uint64_t)code_page,
+    map_page(pml4, USER_CODE_ADDR, (u64)code_page,
         PAGE_PRESENT | PAGE_USER | PAGE_WRITABLE);
 }
 
 extern void ASMCALL enter_user_mode(u64 entry, u64 stack);
 
 void run_user() {
-    uint64_t* old_pml4;
+    u64* old_pml4;
     asm volatile("mov %%cr3, %0" : "=r"(old_pml4));
 
-    uint64_t* user_pml4 = create_address_space(current_pml4);
+    u64* user_pml4 = create_address_space(current_pml4);
 
     setup_user_memory(user_pml4);
 
@@ -160,15 +163,15 @@ void run_user() {
 }
 
 void fat32_list_root(FAT32_FS* fs) {
-    uint32_t cluster = fs->root_cluster;
+    u32 cluster = fs->root_cluster;
 
-    uint32_t cluster_size = fs->sectors_per_cluster * 512;
-    uint8_t* buf = malloc(cluster_size);
+    u32 cluster_size = fs->sectors_per_cluster * 512;
+    u8* buf = malloc(cluster_size);
 
     while (cluster < 0x0FFFFFF8) {
         fat32_read_cluster(fs, cluster, buf);
 
-        for (uint32_t i = 0; i < cluster_size; i += 32) {
+        for (u32 i = 0; i < cluster_size; i += 32) {
             FAT32_DIRECTORY_ENTRY* ent = (FAT32_DIRECTORY_ENTRY*)(buf + i);
 
             if (ent->name[0] == 0x00) return;
@@ -221,10 +224,12 @@ void ASMCALL kernel_main_trampoline(BootInfo* bootInfo) {
 
     serial_write_char('\n');
     serial_write_char('\n');
-    uint64_t rip;
+    u64 rip;
     serial_write_str("Kernel RIP: ");
     asm volatile ("lea (%%rip), %0" : "=r"(rip));
     serial_write_hex(rip);
+    serial_write_char('\n');
+
     serial_write_char('\n');
     serial_write_char('\n');
 
@@ -238,7 +243,7 @@ void ASMCALL kernel_main_trampoline(BootInfo* bootInfo) {
     }
 
     serial_write_str("Found AHCI device: ");
-    print_ahci_info(ahci_dev);
+    // print_ahci_info(ahci_dev);
 
     if (!ahci_dev) {
         serial_write_str("No AHCI\n");
@@ -257,7 +262,7 @@ void ASMCALL kernel_main_trampoline(BootInfo* bootInfo) {
         .read = ahci_block_read,
     };
 
-    uint64_t part_lba;
+    u64 part_lba;
 
     if (!gpt_find_fat32(&boot_disk, &part_lba)) {
         serial_write_str("No FAT32 partition found\n");
@@ -268,19 +273,37 @@ void ASMCALL kernel_main_trampoline(BootInfo* bootInfo) {
     fat32_init(&fs, &boot_disk, part_lba);
     fat32_list_root(&fs);
 
-    FAT32_FILE* f = fat32_open(&fs, "TEST.TXT");
+    vfs_mount_root(&fat32_ops, (void*)&fs);
+
+    FILE* f = fopen("testlongfilename.txt", "r");
     if (!f) {
-        serial_write_str("Failed to find TEST.TXT on disk!\n");
-        while (1);
+        serial_write_str("Failed to open file!\n");
+        while(1);
     }
 
-    uint8_t buf[14];
-    if (fat32_read(f, buf, 14) != 0) {
-        for (int i = 0; i < 14; ++i) {
-            serial_write_char((char)buf[i]);
-        }
-    }
-        
+    fseek(f, 0, SEEK_END);
+    u32 size = ftell(f);
+    fseek(f, 0, SEEK_SET);
+    serial_write_str("Filesize: ");
+    serial_write_dec((u64)size);
+    serial_write_str(" bytes\n");
+
+    u8 buffer[26];
+    fread(buffer, 10, 1, f);
+    for (int i = 0; i < 10; ++i) { serial_write_char((char)buffer[i]); }
+
+    serial_write_char('\n');
+
+    fread(buffer, 16, 1, f);
+    for (int i = 0; i < 16; ++i) { serial_write_char((char)buffer[i]); }
+
+    fseek(f, -20, SEEK_CUR);
+
+    fread(buffer, 16, 1, f);
+    for (int i = 0; i < 16; ++i) { serial_write_char((char)buffer[i]); }
+
+    fclose(f);
+
     // run_user();
     // run_graphics_demo(bootInfo);
     while(1);

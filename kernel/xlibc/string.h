@@ -1,6 +1,6 @@
 /*
     libc implementations for string & memory ops
-    NOTE: **as of apr 5 2026** all functions are overlap / alignment safe
+    NOTE: **as of apr 5 2026** all functions are alignment safe
 */
 
 #include <xlibc/xstddef.h>

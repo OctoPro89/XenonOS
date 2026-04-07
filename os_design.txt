@@ -1,0 +1,3 @@
+Filesystem Architecture:
+
+libc (fopen etc) -> VFS (path routing, file abstraction) -> Disk driver (i.e. FAT32 driver) -> block_device (i.e AHCI driver) -> read sectors from disk
