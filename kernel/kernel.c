@@ -1,10 +1,17 @@
 #include "../shared/boot_info.h"
+#include <xlibc/string.h>
+#include <xlibc/stdlib.h>
 #include <arch/x86_64/hal.h>
 #include <arch/x86_64/io.h>
 #include <arch/x86_64/syscall.h>
+#include <arch/x86_64/drivers/pci/pci.h>
+#include <arch/x86_64/drivers/ahci/ahci.h>
+#include <filesystem/block_device/block_device.h>
+#include <filesystem/gpt/gpt.h>
+#include <filesystem/fat32/fat32.h>
 #include <graphics/graphics.h>
 #include "paging.h"
-#include "kernel_memory.h"
+#include "heap.h"
 #include "kernel.h"
 
 #define KERNEL_VMA 0xFFFFFFFF80000000ULL
@@ -12,7 +19,7 @@
 
 uint64_t* current_pml4;
 
-void kernel_setup_paging_and_heap() {
+void kernel_setup_paging() {
     current_pml4 = alloc_page();
     uint64_t* old_pml4;
     asm volatile("mov %%cr3, %0" : "=r"(old_pml4));
@@ -49,8 +56,6 @@ void kernel_setup_paging_and_heap() {
 
     // Map test page
     asm volatile("mov %0, %%cr3" :: "r"(current_pml4));
-
-    kheap_init((void*)0x300000, 0x5000000); // 80 MB heap
 }
 
 void run_graphics_demo(BootInfo* bootInfo) {
@@ -136,7 +141,7 @@ void setup_user_memory(uint64_t* pml4) {
         PAGE_PRESENT | PAGE_USER | PAGE_WRITABLE);
 }
 
-extern void enter_user_mode(uint64_t entry, uint64_t stack);
+extern void ASMCALL enter_user_mode(u64 entry, u64 stack);
 
 void run_user() {
     uint64_t* old_pml4;
@@ -154,6 +159,62 @@ void run_user() {
     while (1);
 }
 
+void fat32_list_root(FAT32_FS* fs) {
+    uint32_t cluster = fs->root_cluster;
+
+    uint32_t cluster_size = fs->sectors_per_cluster * 512;
+    uint8_t* buf = malloc(cluster_size);
+
+    while (cluster < 0x0FFFFFF8) {
+        fat32_read_cluster(fs, cluster, buf);
+
+        for (uint32_t i = 0; i < cluster_size; i += 32) {
+            FAT32_DIRECTORY_ENTRY* ent = (FAT32_DIRECTORY_ENTRY*)(buf + i);
+
+            if (ent->name[0] == 0x00) return;
+            if (ent->name[0] == 0xE5) continue;
+            if (ent->attr == 0x0F) continue; // skip LFN
+
+            char name[12];
+            memcpy(name, ent->name, 11);
+            name[11] = 0;
+
+            serial_write_str("File: ");
+            serial_write_str(name);
+            serial_write_str(" Size: ");
+            serial_write_dec(ent->size);
+            serial_write_char('\n');
+        }
+
+        cluster = fat32_read_fat_entry(fs, cluster);
+    }
+}
+
+void print_ahci_info(PCI_Device* ahci_dev) {
+    for (int i = 0; i < 6; ++i) {
+        serial_write_hex(ahci_dev->bar[i]);
+        serial_write_char('\n');
+    }
+    serial_write_dec(ahci_dev->bus);
+    serial_write_char('\n');
+    serial_write_dec(ahci_dev->class_code);
+    serial_write_char('\n');
+    serial_write_dec(ahci_dev->device);
+    serial_write_char('\n');
+    serial_write_dec(ahci_dev->device_id);
+    serial_write_char('\n');
+    serial_write_dec(ahci_dev->device_id);
+    serial_write_char('\n');
+    serial_write_dec(ahci_dev->function);
+    serial_write_char('\n');
+    serial_write_dec(ahci_dev->prog_if);
+    serial_write_char('\n');
+    serial_write_dec(ahci_dev->subclass);
+    serial_write_char('\n');
+    serial_write_dec(ahci_dev->vendor_id);
+    serial_write_char('\n');
+}
+
 void ASMCALL kernel_main_trampoline(BootInfo* bootInfo) {
     x86_64_HAL_init();
     syscall_init();
@@ -167,8 +228,60 @@ void ASMCALL kernel_main_trampoline(BootInfo* bootInfo) {
     serial_write_char('\n');
     serial_write_char('\n');
 
-    kernel_setup_paging_and_heap();
-    run_user();
+    kernel_setup_paging();
+
+    pci_scan(); // find pci devices
+    PCI_Device* ahci_dev = pci_find_ahci(); // find AHCI device
+    if (ahci_dev == NULL) {
+        serial_write_str("Failed to find AHCI device!\n");
+        while(1);
+    }
+
+    serial_write_str("Found AHCI device: ");
+    print_ahci_info(ahci_dev);
+
+    if (!ahci_dev) {
+        serial_write_str("No AHCI\n");
+        while(1);
+    }
+
+    ahci_init(ahci_dev);
+    ahci_probe_ports();
+
+    // Pick first port
+    HBA_PORT* port = ahci_get_port(0);
+    ahci_port_init(port);
+
+    block_device boot_disk = {
+        .driver_data = (void*)port,
+        .read = ahci_block_read,
+    };
+
+    uint64_t part_lba;
+
+    if (!gpt_find_fat32(&boot_disk, &part_lba)) {
+        serial_write_str("No FAT32 partition found\n");
+        while (1);
+    }
+
+    FAT32_FS fs;
+    fat32_init(&fs, &boot_disk, part_lba);
+    fat32_list_root(&fs);
+
+    FAT32_FILE* f = fat32_open(&fs, "TEST.TXT");
+    if (!f) {
+        serial_write_str("Failed to find TEST.TXT on disk!\n");
+        while (1);
+    }
+
+    uint8_t buf[14];
+    if (fat32_read(f, buf, 14) != 0) {
+        for (int i = 0; i < 14; ++i) {
+            serial_write_char((char)buf[i]);
+        }
+    }
+        
+    // run_user();
     // run_graphics_demo(bootInfo);
     while(1);
 }

@@ -2,4 +2,4 @@
 
 #include <kernel.h>
 
-extern ASMCALL void syscall_init();
+extern void ASMCALL syscall_init();

@@ -1,5 +1,5 @@
 #include "graphics.h"
-#include <kernel_memory.h>
+#include <xlibc/stdlib.h>
 #include <arch/x86_64/io.h>
 
 // Basic 8x8 ASCII font for U+0000–U+007F
@@ -175,7 +175,7 @@ void graphics_init(Framebuffer* fb) {
     current_height = fb->Height;
     pixels_per_line = fb->PixelsPerScanLine;
     pixel_format = fb->PixelFormat;
-    backbuffer = (uint32_t*)kmalloc(pixels_per_line * current_height * bytes_per_pixel);
+    backbuffer = (uint32_t*)malloc(pixels_per_line * current_height * bytes_per_pixel);
     if (!backbuffer) {
         serial_write_str("Failed to allocate backbuffer!");
         while(1);

@@ -1,9 +1,5 @@
 #include "io.h"
 
-void x64_outb(u16 port, u8 byte) {
-    asm volatile ("outb %0, %1" : : "a"(byte), "Nd"(port));
-}
-
 void serial_write_char(char c) {
     x64_outb(SERIAL_COM1, c);
 }

@@ -2,9 +2,7 @@ global syscall_init
 extern syscall_handler
 extern kernel_stack_top
 
-; --------------------------------------------
-; Initialize SYSCALL/SYSRET
-; --------------------------------------------
+; extern void ASMCALL syscall_init();
 syscall_init:
     ; --- Enable SYSCALL (EFER.SCE = bit 0) ---
     mov rcx, 0xC0000080

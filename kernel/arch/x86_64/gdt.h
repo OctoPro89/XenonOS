@@ -1,4 +1,4 @@
 #pragma once
-#include <xstdint.h>
+#include <xlibc/xstdint.h>
 
 void gdt_init(void);

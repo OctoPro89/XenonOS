@@ -13,6 +13,20 @@ void* alloc_page(void) {
     return page;
 }
 
+void* alloc_and_map_identity(void) {
+    void* phys = (void*)next_free_page;
+    next_free_page += 0x1000;
+
+    // zero it
+    for (int i = 0; i < 4096; i++)
+        ((uint8_t*)phys)[i] = 0;
+
+    map_page(current_pml4, (uint64_t)phys, (uint64_t)phys,
+        PAGE_PRESENT | PAGE_WRITABLE);
+
+    return phys;
+}
+
 void map_page(uint64_t* pml4, uint64_t virt, uint64_t phys, uint64_t flags) {
     uint64_t* pdpt;
     uint64_t* pd;
@@ -53,7 +67,7 @@ void map_page(uint64_t* pml4, uint64_t virt, uint64_t phys, uint64_t flags) {
     flags |
     PAGE_PRESENT;
 
-pt[PT_INDEX(virt)] &= ~(1ULL << 63);
+    pt[PT_INDEX(virt)] &= ~(1ULL << 63);
 }
 
 uint64_t* create_address_space(uint64_t* kernel_pml4) {

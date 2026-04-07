@@ -1,5 +1,6 @@
 global enter_user_mode
 
+; extern void ASMCALL enter_user_mode(u64 entry, u64 stack); 
 enter_user_mode:
     ; rdi = entry point
     ; rsi = user stack top

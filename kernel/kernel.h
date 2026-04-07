@@ -1,6 +1,6 @@
 #pragma once
 
-#include <xstdint.h>
+#include <xlibc/xstdint.h>
 
 #define XENON_KERNEL
 

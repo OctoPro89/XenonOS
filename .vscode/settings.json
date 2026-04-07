@@ -1,6 +1,7 @@
 {
     "makefile.configureOnOpen": false,
     "files.associations": {
-        "*.asm": "c" // trick vscode into thinking you can debug asm files
+        // "*.asm": "c" // trick vscode into thinking you can debug asm files
+        "*.asm": "asm-intel-x86-generic" // trick vscode into thinking you can debug asm files
     }
 }

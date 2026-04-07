@@ -1,6 +1,6 @@
 #pragma once
 #include "../../shared/gop.h"
-#include <xstdint.h>
+#include <xlibc/xstdint.h>
 
 void graphics_init(Framebuffer* fb);
 void graphics_swap_buffers(Framebuffer* fb);

@@ -61,13 +61,49 @@ image: build/BOOTX64.EFI build/kernel.elf
 
 # --- Run ---
 run: image
+	# Create empty 64 MB raw image
+	dd if=/dev/zero of=image/disk.img bs=1M count=64
+
+	sudo parted image/disk.img --script \
+    mklabel gpt \
+    mkpart ESP fat32 1MiB 100% \
+    set 1 esp on
+
+	sudo losetup -Pf image/disk.img
+
+	# Format it as FAT32
+	sudo mkfs.fat -F 32 /dev/loop0p1
+
+	# Mount the image to copy files
+	sudo mount /dev/loop0p1 /mnt
+	sudo mkdir -p /mnt/EFI/BOOT
+	sudo cp build/BOOTX64.EFI /mnt/EFI/BOOT/
+	sudo cp build/kernel.elf /mnt/
+	sudo cp test.txt /mnt/
+	sudo umount /mnt
+
+	sudo losetup -d /dev/loop0
+
 	qemu-system-x86_64 \
-	-drive format=raw,file=fat:rw:image \
-	-bios /usr/share/ovmf/OVMF_CODE.fd \
-	-serial stdio \
+    -drive if=none,id=disk0,format=raw,file=image/disk.img \
+    -device ahci,id=ahci \
+    -device ide-hd,bus=ahci.0,drive=disk0 \
+    -bios /usr/share/ovmf/OVMF_CODE.fd \
+    -boot order=c \
+    -serial stdio \
  	-S -gdb tcp::1234 \
- 	-no-reboot
-# 	-no-shutdown
+	-no-reboot \
+ 	-no-shutdown \
+  	-d int
+
+# 	qemu-system-x86_64 \
+# 	-drive format=raw,file=fat:rw:image \
+# 	-bios /usr/share/ovmf/OVMF_CODE.fd \
+# 	-serial stdio
+
+# 	-S -gdb tcp::1234 \
+#	-no-reboot \
+# 	-no-shutdown \
 #  	-d int
 
 # --- Clean ---
