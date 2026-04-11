@@ -6,6 +6,7 @@ KERNEL_LMA = 0x00200000;
 SECTIONS
 {
     . = KERNEL_VMA;
+    __kernel_start = .;
 
     .text : AT(KERNEL_LMA)
     {
@@ -26,4 +27,6 @@ SECTIONS
     {
         *(.bss*)
     }
+
+    __kernel_end = .;
 }

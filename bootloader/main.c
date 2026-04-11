@@ -7,6 +7,8 @@
 #define KERNEL_VMA 0xFFFFFFFF80000000ULL
 #define KERNEL_LMA 0x00200000ULL
 
+#define HHDM_OFFSET 0xFFFF800000000000ULL
+
 typedef uint64_t Elf64_Addr;
 typedef uint64_t Elf64_Off;
 typedef uint16_t Elf64_Half;
@@ -283,24 +285,53 @@ EFI_STATUS efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable)
         pdpt[i] = ((uint64_t)pd[i]) | PAGE_PRESENT | PAGE_WRITABLE;
     }
 
-
     uint64_t pml4_index = (KERNEL_VMA >> 39) & 0x1FF;
-uint64_t pdpt_index = (KERNEL_VMA >> 30) & 0x1FF;
+    uint64_t pdpt_index = (KERNEL_VMA >> 30) & 0x1FF;
 
     pml4[pml4_index] = ((uint64_t)pdpt) | PAGE_PRESENT | PAGE_WRITABLE;
 
-// allocate PD for kernel
-addr = 0;
-SystemTable->BootServices->AllocatePages(AllocateAnyPages, EfiLoaderData, 1, &addr);
-uint64_t* kernel_pd = (uint64_t*)addr;
+    // allocate PD for kernel
+    addr = 0;
+    SystemTable->BootServices->AllocatePages(AllocateAnyPages, EfiLoaderData, 1, &addr);
+    uint64_t* kernel_pd = (uint64_t*)addr;
 
-// map first ~1GB of phys at high half
-for (int j = 0; j < 512; j++) {
-    uint64_t phys = KERNEL_LMA + j * 0x200000;
-    kernel_pd[j] = phys | PAGE_PRESENT | PAGE_WRITABLE | PAGE_PS;
-}
+    // map first ~1GB of phys at high half
+    for (int j = 0; j < 512; j++) {
+        uint64_t phys = KERNEL_LMA + j * 0x200000;
+        kernel_pd[j] = phys | PAGE_PRESENT | PAGE_WRITABLE | PAGE_PS;
+    }
 
-pdpt[pdpt_index] = ((uint64_t)kernel_pd) | PAGE_PRESENT | PAGE_WRITABLE;
+    pdpt[pdpt_index] = ((uint64_t)kernel_pd) | PAGE_PRESENT | PAGE_WRITABLE;
+
+    uint64_t hhdm_index = (HHDM_OFFSET >> 39) & 0x1FF;
+
+    // allocate new PDPT for HHDM
+    addr = 0;
+    SystemTable->BootServices->AllocatePages(AllocateAnyPages, EfiLoaderData, 1, &addr);
+    uint64_t* hhdm_pdpt = (uint64_t*)addr;
+
+    // zero it (IMPORTANT)
+    for (int i = 0; i < 512; i++) hhdm_pdpt[i] = 0;
+
+    // hook into PML4
+    pml4[hhdm_index] = ((uint64_t)hhdm_pdpt) | PAGE_PRESENT | PAGE_WRITABLE;
+
+    // map physical memory
+    for (int i = 0; i < 512; i++) {
+        addr = 0;
+        SystemTable->BootServices->AllocatePages(AllocateAnyPages, EfiLoaderData, 1, &addr);
+        uint64_t* pd = (uint64_t*)addr;
+
+        // zero PD
+        for (int k = 0; k < 512; k++) pd[k] = 0;
+
+        hhdm_pdpt[i] = ((uint64_t)pd) | PAGE_PRESENT | PAGE_WRITABLE;
+
+        for (int j = 0; j < 512; j++) {
+            uint64_t phys = (uint64_t)i * 0x40000000ULL + (uint64_t)j * 0x200000ULL;
+            pd[j] = phys | PAGE_PRESENT | PAGE_WRITABLE | PAGE_PS;
+        }
+    }
 
     SystemTable->ConOut->OutputString(SystemTable->ConOut, L"pd set\r\n");
 

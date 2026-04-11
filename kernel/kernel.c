@@ -13,53 +13,126 @@
 #include <filesystem/vfs/vfs.h>
 #include <filesystem/vfs/vfs_fat32.h>
 #include <graphics/graphics.h>
-#include "paging.h"
-#include "heap.h"
+#include <memory/paging.h>
+#include <memory/pmm.h>
+#include <memory/vmm.h>
+#include <memory/heap.h>
 #include "kernel.h"
 
 #define KERNEL_VMA 0xFFFFFFFF80000000ULL
 #define KERNEL_PMA 0x00200000ULL
 
-u64* current_pml4;
 
-void kernel_setup_paging() {
-    current_pml4 = alloc_page();
-    u64* old_pml4;
-    asm volatile("mov %%cr3, %0" : "=r"(old_pml4));
+void fat32_list_root(FAT32_FS* fs) {
+    u32 cluster = fs->root_cluster;
 
-    // Copy identity map (first 4 entries for safety)
-    for (int i = 0; i < 4; i++) {
-        current_pml4[i] = old_pml4[i];
+    u32 cluster_size = fs->sectors_per_cluster * 512;
+    u8* buf = malloc(cluster_size);
+
+    while (cluster < 0x0FFFFFF8) {
+        fat32_read_cluster(fs, cluster, buf);
+
+        for (u32 i = 0; i < cluster_size; i += 32) {
+            FAT32_DIRECTORY_ENTRY* ent = (FAT32_DIRECTORY_ENTRY*)(buf + i);
+
+            if (ent->name[0] == 0x00) return;
+            if (ent->name[0] == 0xE5) continue;
+            if (ent->attr == 0x0F) continue; // skip LFN
+
+            char name[12];
+            memcpy(name, ent->name, 11);
+            name[11] = 0;
+
+            serial_write_str("File: ");
+            serial_write_str(name);
+            serial_write_str(" Size: ");
+            serial_write_dec(ent->size);
+            serial_write_char('\n');
+        }
+
+        cluster = fat32_read_fat_entry(fs, cluster);
     }
-
-    u64 kernel_start = KERNEL_VMA;
-    u64 phys_start   = KERNEL_PMA;
-
-    // map a gb for now
-    for (u64 off = 0; off < 0x40000000; off += 0x1000) {
-        map_page(current_pml4,
-            kernel_start + off,
-            phys_start + off,
-            PAGE_WRITABLE
-        );
-    }
-
-    u64 rsp;
-    asm volatile("mov %%rsp, %0" : "=r"(rsp));
-
-    u64 stack_base = rsp & ~0xFFF;
-
-    for (int i = 0; i < 16; i++) {
-        map_page(current_pml4,
-            stack_base - i * 0x1000,
-            (stack_base - i * 0x1000) - KERNEL_VMA + KERNEL_PMA,
-            PAGE_WRITABLE
-        );
-    }
-
-    // Map test page
-    asm volatile("mov %0, %%cr3" :: "r"(current_pml4));
 }
+
+void ASMCALL kernel_main_trampoline(BootInfo* bootInfo) {
+    x86_64_HAL_init();
+    syscall_init();
+
+    pmm_init(bootInfo);
+    kernel_space.pml4 = (pte_t*)(bootInfo->PML4 + HHDM_OFFSET);
+
+    pci_scan(); // find pci devices
+    PCI_Device* ahci_dev = pci_find_ahci(); // find AHCI device
+    if (ahci_dev == NULL) {
+        serial_write_str("Failed to find AHCI device!\n");
+        while(1);
+    }
+
+    serial_write_str("Found AHCI device: ");
+
+    if (!ahci_dev) {
+        serial_write_str("No AHCI\n");
+        while(1);
+    }
+
+    ahci_init(ahci_dev);
+    ahci_probe_ports();
+
+    // Pick first port
+    HBA_PORT* port = ahci_get_port(0);
+
+    block_device boot_disk = {
+        .driver_data = (void*)port,
+        .read = ahci_block_read,
+    };
+
+    u64 part_lba;
+
+    if (!gpt_find_fat32(&boot_disk, &part_lba)) {
+        serial_write_str("No FAT32 partition found\n");
+        while (1);
+    }
+
+    FAT32_FS fs;
+    fat32_init(&fs, &boot_disk, part_lba);
+    fat32_list_root(&fs);
+
+    vfs_mount_root(&fat32_ops, (void*)&fs);
+
+    FILE* f = fopen("testlongfilename.txt", "r");
+    if (!f) {
+        serial_write_str("Failed to open file!\n");
+        while(1);
+    }
+
+    fseek(f, 0, SEEK_END);
+    u32 size = ftell(f);
+    fseek(f, 0, SEEK_SET);
+    serial_write_str("Filesize: ");
+    serial_write_dec((u64)size);
+    serial_write_str(" bytes\n");
+
+    u8* buffer = kmalloc(26);
+    fread(buffer, 10, 1, f);
+    for (int i = 0; i < 10; ++i) { serial_write_char((char)buffer[i]); }
+
+    serial_write_char('\n');
+
+    fread(buffer, 16, 1, f);
+    for (int i = 0; i < 16; ++i) { serial_write_char((char)buffer[i]); }
+
+    fseek(f, -20, SEEK_CUR);
+
+    fread(buffer, 16, 1, f);
+    for (int i = 0; i < 16; ++i) { serial_write_char((char)buffer[i]); }
+
+    free(buffer);
+    fclose(f);
+    
+    while(1);
+}
+
+/*
 
 void run_graphics_demo(BootInfo* bootInfo) {
     u32 red   = convert_color(255,0,0);
@@ -162,37 +235,6 @@ void run_user() {
     while (1);
 }
 
-void fat32_list_root(FAT32_FS* fs) {
-    u32 cluster = fs->root_cluster;
-
-    u32 cluster_size = fs->sectors_per_cluster * 512;
-    u8* buf = malloc(cluster_size);
-
-    while (cluster < 0x0FFFFFF8) {
-        fat32_read_cluster(fs, cluster, buf);
-
-        for (u32 i = 0; i < cluster_size; i += 32) {
-            FAT32_DIRECTORY_ENTRY* ent = (FAT32_DIRECTORY_ENTRY*)(buf + i);
-
-            if (ent->name[0] == 0x00) return;
-            if (ent->name[0] == 0xE5) continue;
-            if (ent->attr == 0x0F) continue; // skip LFN
-
-            char name[12];
-            memcpy(name, ent->name, 11);
-            name[11] = 0;
-
-            serial_write_str("File: ");
-            serial_write_str(name);
-            serial_write_str(" Size: ");
-            serial_write_dec(ent->size);
-            serial_write_char('\n');
-        }
-
-        cluster = fat32_read_fat_entry(fs, cluster);
-    }
-}
-
 void print_ahci_info(PCI_Device* ahci_dev) {
     for (int i = 0; i < 6; ++i) {
         serial_write_hex(ahci_dev->bar[i]);
@@ -218,93 +260,4 @@ void print_ahci_info(PCI_Device* ahci_dev) {
     serial_write_char('\n');
 }
 
-void ASMCALL kernel_main_trampoline(BootInfo* bootInfo) {
-    x86_64_HAL_init();
-    syscall_init();
-
-    serial_write_char('\n');
-    serial_write_char('\n');
-    u64 rip;
-    serial_write_str("Kernel RIP: ");
-    asm volatile ("lea (%%rip), %0" : "=r"(rip));
-    serial_write_hex(rip);
-    serial_write_char('\n');
-
-    serial_write_char('\n');
-    serial_write_char('\n');
-
-    kernel_setup_paging();
-
-    pci_scan(); // find pci devices
-    PCI_Device* ahci_dev = pci_find_ahci(); // find AHCI device
-    if (ahci_dev == NULL) {
-        serial_write_str("Failed to find AHCI device!\n");
-        while(1);
-    }
-
-    serial_write_str("Found AHCI device: ");
-    // print_ahci_info(ahci_dev);
-
-    if (!ahci_dev) {
-        serial_write_str("No AHCI\n");
-        while(1);
-    }
-
-    ahci_init(ahci_dev);
-    ahci_probe_ports();
-
-    // Pick first port
-    HBA_PORT* port = ahci_get_port(0);
-    ahci_port_init(port);
-
-    block_device boot_disk = {
-        .driver_data = (void*)port,
-        .read = ahci_block_read,
-    };
-
-    u64 part_lba;
-
-    if (!gpt_find_fat32(&boot_disk, &part_lba)) {
-        serial_write_str("No FAT32 partition found\n");
-        while (1);
-    }
-
-    FAT32_FS fs;
-    fat32_init(&fs, &boot_disk, part_lba);
-    fat32_list_root(&fs);
-
-    vfs_mount_root(&fat32_ops, (void*)&fs);
-
-    FILE* f = fopen("testlongfilename.txt", "r");
-    if (!f) {
-        serial_write_str("Failed to open file!\n");
-        while(1);
-    }
-
-    fseek(f, 0, SEEK_END);
-    u32 size = ftell(f);
-    fseek(f, 0, SEEK_SET);
-    serial_write_str("Filesize: ");
-    serial_write_dec((u64)size);
-    serial_write_str(" bytes\n");
-
-    u8 buffer[26];
-    fread(buffer, 10, 1, f);
-    for (int i = 0; i < 10; ++i) { serial_write_char((char)buffer[i]); }
-
-    serial_write_char('\n');
-
-    fread(buffer, 16, 1, f);
-    for (int i = 0; i < 16; ++i) { serial_write_char((char)buffer[i]); }
-
-    fseek(f, -20, SEEK_CUR);
-
-    fread(buffer, 16, 1, f);
-    for (int i = 0; i < 16; ++i) { serial_write_char((char)buffer[i]); }
-
-    fclose(f);
-
-    // run_user();
-    // run_graphics_demo(bootInfo);
-    while(1);
-}
+*/

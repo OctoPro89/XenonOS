@@ -1,6 +1,7 @@
 #include "gpt.h"
 #include <arch/x86_64/io.h>
 #include <xlibc/string.h>
+#include <memory/heap.h>
 
 // EFI System Partition GUID:
 const static uint8_t ESP_GUID[16] = {
@@ -12,7 +13,7 @@ const static uint8_t ESP_GUID[16] = {
 };
 
 int gpt_find_fat32(block_device* dev, uint64_t* out_lba) {
-    uint8_t sector[512];
+    void* sector = kmalloc(512);
 
     // Read GPT header
     if (!dev->read(dev->driver_data, 1, 1, sector))
@@ -43,6 +44,8 @@ int gpt_find_fat32(block_device* dev, uint64_t* out_lba) {
             return 1;
         }
     }
+
+    kfree(sector);
 
     return 0;
 }

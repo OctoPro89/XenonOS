@@ -1,9 +1,12 @@
 #include "ahci.h"
-#include <paging.h>
+#include <memory/paging.h>
+#include <memory/vmm.h>
+#include <memory/pmm.h>
+#include <memory/allocators/dma_allocator.h>
 #include <arch/x86_64/io.h>
 #include <xlibc/string.h>
 
-#define AHCI_VIRT_BASE 0xFFFF800000000000ULL
+#define AHCI_VIRT_BASE 0xFFFFC00000000000ULL
 
 // drive types
 #define SATA_SIG_ATA 0x00000101
@@ -30,8 +33,8 @@ void ahci_init(PCI_Device* dev) {
     u64 phys = dev->bar[5] & ~0xF;
 
     // Map ABAR (map 4KB for now)
-    u64 virt = AHCI_VIRT_BASE;
-    map_page(current_pml4, virt, phys, PAGE_PRESENT | PAGE_WRITABLE);
+    VIRTUAL_ADDRESS virt = AHCI_VIRT_BASE;
+    vmm_map_mmio(&kernel_space, virt, (PHYSICAL_ADDRESS)phys, PAGE_SIZE);
 
     abar = (HBA_MEM*)virt;
 
@@ -85,29 +88,29 @@ void ahci_port_init(HBA_PORT* port) {
     ahci_stop_port(port);
 
     // Command list (1KB)
-    void* clb = alloc_page();
-    memset(clb, 0, 1024);
+    dma_region_t clb = dma_alloc(1024);
+    memset((void*)clb.virt, 0, 1024);
 
-    port->clb = (uint32_t)(uint64_t)clb;
-    port->clbu = 0;
+    port->clb = (uint32_t)clb.phys;
+    port->clbu = (uint32_t)(clb.phys >> 32);
 
     // FIS (256 bytes)
-    void* fb = alloc_page();
-    memset(fb, 0, 256);
+    dma_region_t fb = dma_alloc(256);
+    memset((void*)fb.virt, 0, 256);
 
-    port->fb = (uint32_t)(uint64_t)fb;
-    port->fbu = 0;
+    port->fb = (uint32_t)fb.phys;
+    port->fbu = (uint32_t)(fb.phys >> 32);
 
-    HBA_CMD_HEADER* cmdheader = (HBA_CMD_HEADER*)clb;
+    HBA_CMD_HEADER* cmdheader = (HBA_CMD_HEADER*)clb.virt;
 
     for (int i = 0; i < 32; i++) {
         cmdheader[i].prdtl = 1;
 
-        void* tbl = alloc_page();
-        memset(tbl, 0, 256);
+        dma_region_t tbl = dma_alloc(256);
+        memset((void*)tbl.virt, 0, 256);
 
-        cmdheader[i].ctba = (uint32_t)(uint64_t)tbl;
-        cmdheader[i].ctbau = 0;
+        cmdheader[i].ctba = (uint32_t)tbl.phys;
+        cmdheader[i].ctbau = (uint32_t)(tbl.phys >> 32);
     }
 
     ahci_start_port(port);
@@ -136,7 +139,7 @@ int ahci_find_cmdslot(HBA_PORT* port) {
     return -1;
 }
 
-int ahci_read_sector(HBA_PORT* port, uint64_t lba, void* buffer) {
+int ahci_read_sector(HBA_PORT* port, uint64_t lba, PHYSICAL_CONTIGUOUS_BUFFER buffer) {
     port->is = (uint32_t)-1; // clear interrupts
 
     int slot = ahci_find_cmdslot(port);
@@ -145,7 +148,7 @@ int ahci_read_sector(HBA_PORT* port, uint64_t lba, void* buffer) {
         return 0;
     }
 
-    HBA_CMD_HEADER* cmdheader = (HBA_CMD_HEADER*)(uint64_t)(port->clb);
+    HBA_CMD_HEADER* cmdheader = (HBA_CMD_HEADER*)(uint64_t)phys_to_hhdm(port->clb);
     cmdheader += slot;
 
     cmdheader->cfl = sizeof(FIS_REG_H2D) / sizeof(uint32_t); // command FIS size
@@ -153,16 +156,14 @@ int ahci_read_sector(HBA_PORT* port, uint64_t lba, void* buffer) {
     cmdheader->prdtl = 1;
 
     // Command table
-    HBA_CMD_TBL* cmdtbl = (HBA_CMD_TBL*)(uint64_t)(
-        ((uint64_t)cmdheader->ctba)
-    );
+    HBA_CMD_TBL* cmdtbl = (HBA_CMD_TBL*)(phys_to_hhdm((uint64_t)cmdheader->ctba));
 
     // Clear command table
     memset(cmdtbl, 0, sizeof(HBA_CMD_TBL));
 
     // Setup PRDT (data buffer)
-    cmdtbl->prdt_entry[0].dba = (uint32_t)(uint64_t)buffer;
-    cmdtbl->prdt_entry[0].dbau = 0;
+    cmdtbl->prdt_entry[0].dba = (uint32_t)buffer;
+    cmdtbl->prdt_entry[0].dbau = (uint32_t)(buffer >> 32);
     cmdtbl->prdt_entry[0].dbc = 512 - 1; // 1 sector
     cmdtbl->prdt_entry[0].i = 1;
 
@@ -207,13 +208,21 @@ int ahci_read_sector(HBA_PORT* port, uint64_t lba, void* buffer) {
     return 1;
 }
 
-int ahci_block_read(void* drv, uint64_t lba, uint32_t count, void* buffer) {
+int ahci_block_read(void* drv, uint64_t lba, uint32_t count, void* buffer)
+{
     HBA_PORT* port = (HBA_PORT*)drv;
 
+    // allocate physically contiguous buffer
+    dma_region_t dma = dma_alloc(count * 512);
+
     for (uint32_t i = 0; i < count; i++) {
-        if (!ahci_read_sector(port, lba + i, (uint8_t*)buffer + i * 512)) {
+        if (!ahci_read_sector(port, lba + i, dma.phys + i * 512)) {
             return 0;
         }
     }
+
+    // copy back into virtual buffer
+    memcpy(buffer, (const void*)dma.virt, count * 512);
+
     return 1;
 }
