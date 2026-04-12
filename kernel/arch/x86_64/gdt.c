@@ -57,10 +57,7 @@ struct {
 
 struct GDTPtr gdt_ptr;
 
-__attribute__((aligned(16)))
-uint8_t kernel_stack[8192];
-
-uint64_t kernel_stack_top = (uint64_t)(kernel_stack + sizeof(kernel_stack));
+extern uint64_t kernel_stack_top;
 
 void gdt_init(void) {
     // Null descriptor
@@ -109,7 +106,7 @@ void gdt_init(void) {
 
     asm volatile ("lgdt %0" : : "m"(gdt_ptr));
 
-    // Load TSS (selector = 0x18)
+    // Load TSS (selector = 0x28)
     asm volatile ("ltr %0" : : "r"((uint16_t)0x28));
 
     // Far jump to reload CS and DS/SS properly

@@ -22,6 +22,9 @@
 #define KERNEL_VMA 0xFFFFFFFF80000000ULL
 #define KERNEL_PMA 0x00200000ULL
 
+#define KERNEL_STACK_SIZE 8192
+static u8 kernel_stack[KERNEL_STACK_SIZE] __attribute__((aligned(16)));
+uint64_t kernel_stack_top = (u64)(((u8*)kernel_stack) + KERNEL_STACK_SIZE);
 
 void fat32_list_root(FAT32_FS* fs) {
     u32 cluster = fs->root_cluster;
@@ -52,6 +55,52 @@ void fat32_list_root(FAT32_FS* fs) {
 
         cluster = fat32_read_fat_entry(fs, cluster);
     }
+}
+
+uint8_t user_code[] = {
+	0xb8, 0x01, 0x00, 0x00, 0x00, 0x48, 0x8d, 0x3d, 
+	0x1c, 0x00, 0x00, 0x00, 0xbe, 0x0c, 0x00, 0x00, 
+	0x00, 0x0f, 0x05, 0xb8, 0x01, 0x00, 0x00, 0x00, 
+	0x48, 0x8d, 0x3d, 0x15, 0x00, 0x00, 0x00, 0xbe, 
+	0x03, 0x00, 0x00, 0x00, 0x0f, 0x05, 0xeb, 0xfe, 
+	0x48, 0x65, 0x6c, 0x6c, 0x6f, 0x20, 0x57, 0x6f, 
+	0x72, 0x6c, 0x64, 0x0a, 0x48, 0x69, 0x0a, 
+};
+
+#define USER_CODE_START  0x0000000000400000ULL
+#define USER_STACK_TOP   0x0000000000800000ULL
+#define USER_STACK_SIZE  (4 * PAGE_SIZE)
+
+void setup_user_memory(vmm_space_t* space) {
+    // Code
+    PHYSICAL_ADDRESS code_phys = pmm_alloc_page();
+    void* code_virt = (void*)phys_to_hhdm(code_phys);
+
+    memcpy(code_virt, user_code, sizeof(user_code));
+
+    u64 flags = PAGE_PRESENT | PAGE_USER | PAGE_WRITABLE;
+    flags &= ~(1ULL << 63);
+    vmm_map(space, USER_CODE_START, code_phys, flags);
+
+    // Stack
+    for (int i = 0; i < 4; i++) {
+        PHYSICAL_ADDRESS stack_phys = pmm_alloc_page();
+
+        vmm_map(space,
+            USER_STACK_TOP - (i + 1) * PAGE_SIZE,
+            stack_phys,
+            PAGE_PRESENT | PAGE_USER | PAGE_WRITABLE);
+    }
+}
+
+extern void ASMCALL enter_user_mode(u64 entry, u64 stack);
+
+void run_user(vmm_space_t* space) {
+    setup_user_memory(space);
+    vmm_switch(space);
+    enter_user_mode(USER_CODE_START, USER_STACK_TOP & ~0xF); // align stack
+
+    while (1);
 }
 
 void ASMCALL kernel_main_trampoline(BootInfo* bootInfo) {
@@ -128,6 +177,13 @@ void ASMCALL kernel_main_trampoline(BootInfo* bootInfo) {
 
     free(buffer);
     fclose(f);
+
+    serial_write_char('\n');
+    serial_write_char('\n');
+
+    vmm_space_t* space = vmm_create_space();
+    space->user_mode = true;
+    run_user(space);
     
     while(1);
 }
@@ -180,59 +236,6 @@ void run_graphics_demo(BootInfo* bootInfo) {
         //for (volatile int i = 0; i < 1000000; i++);
         graphics_swap_buffers(&bootInfo->fb);
     }
-}
-
-u8 user_code[] = {
-	0xb8, 0x01, 0x00, 0x00, 0x00, 0x48, 0x8d, 0x3d, 
-	0x1c, 0x00, 0x00, 0x00, 0xbe, 0x0c, 0x00, 0x00, 
-	0x00, 0x0f, 0x05, 0xb8, 0x01, 0x00, 0x00, 0x00, 
-	0x48, 0x8d, 0x3d, 0x15, 0x00, 0x00, 0x00, 0xbe, 
-	0x03, 0x00, 0x00, 0x00, 0x0f, 0x05, 0xeb, 0xfe, 
-	0x48, 0x65, 0x6c, 0x6c, 0x6f, 0x20, 0x57, 0x6f, 
-	0x72, 0x6c, 0x64, 0x0a, 0x48, 0x69, 0x0a, 
-};
-
-#define USER_CODE_ADDR 0x400000
-#define USER_STACK_TOP 0x800000
-
-void setup_user_memory(u64* pml4) {
-    void* code_page = alloc_page();
-
-    // copy code
-    for (int i = 0; i < sizeof(user_code); i++)
-        ((u8*)code_page)[i] = user_code[i];
-
-    for (int i = 0; i < 4; i++) {
-        void* stack_page = alloc_page();
-        map_page(pml4, USER_STACK_TOP - (i+1)*0x1000, (u64)stack_page,
-                PAGE_PRESENT | PAGE_WRITABLE | PAGE_USER);
-    }
-
-    for (u64 i = 0; i < 0x10000000; i += 0x1000) {
-        map_page(pml4, i, i,
-            PAGE_PRESENT | PAGE_WRITABLE | PAGE_USER);
-    }
-
-    map_page(pml4, USER_CODE_ADDR, (u64)code_page,
-        PAGE_PRESENT | PAGE_USER | PAGE_WRITABLE);
-}
-
-extern void ASMCALL enter_user_mode(u64 entry, u64 stack);
-
-void run_user() {
-    u64* old_pml4;
-    asm volatile("mov %%cr3, %0" : "=r"(old_pml4));
-
-    u64* user_pml4 = create_address_space(current_pml4);
-
-    setup_user_memory(user_pml4);
-
-    // Switch
-    asm volatile("mov %0, %%cr3" :: "r"(user_pml4));
-
-    enter_user_mode(USER_CODE_ADDR, USER_STACK_TOP - 8);
-
-    while (1);
 }
 
 void print_ahci_info(PCI_Device* ahci_dev) {

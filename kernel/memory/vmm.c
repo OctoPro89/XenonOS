@@ -1,5 +1,7 @@
 #include "vmm.h"
 #include <memory/paging.h>
+#include <xlibc/string.h>
+#include <memory/heap.h>
 
 vmm_space_t kernel_space;
 
@@ -12,7 +14,13 @@ static pte_t* get_table(vmm_space_t* space, pte_t* table, uint16_t index, int cr
 
         for (int i = 0; i < 512; i++) { virt[i] = 0; }
 
-        table[index] = phys | PAGE_PRESENT | PAGE_WRITABLE;
+        u64 flags = PAGE_PRESENT | PAGE_WRITABLE;
+
+        if (space->user_mode) {
+            flags |= PAGE_USER;
+        }
+
+        table[index] = phys | flags;
     }
 
     PHYSICAL_ADDRESS phys = table[index] & ~0xFFFULL;
@@ -26,8 +34,25 @@ static pte_t* get_table_noalloc(pte_t* table, uint16_t index) {
     return (pte_t*)phys_to_hhdm(phys);
 }
 
-void vmm_init(vmm_space_t* space, pte_t* kernel_pml4) {
-    space->pml4 = kernel_pml4;
+vmm_space_t* vmm_create_space() {
+    PHYSICAL_ADDRESS phys = pmm_alloc_page();
+    pte_t* new_pml4 = (pte_t*)phys_to_hhdm(phys);
+
+    memset((void*)new_pml4, 0, PAGE_SIZE);
+
+    // copy kernel half (higher half entries)
+    for (int i = 256; i < 512; i++) {
+        new_pml4[i] = kernel_space.pml4[i];
+    }
+
+    vmm_space_t* space = kmalloc(sizeof(vmm_space_t));
+    space->pml4 = new_pml4;
+
+    return space;
+}
+
+void vmm_switch(vmm_space_t* space) {
+    asm volatile("mov %0, %%cr3" :: "r"(hhdm_to_phys((u64)space->pml4)));
 }
 
 void vmm_map(vmm_space_t* space, VIRTUAL_ADDRESS virt, PHYSICAL_ADDRESS phys, uint64_t flags)

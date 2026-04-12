@@ -20,7 +20,7 @@ VFS_FILE* fat32_vfs_open(void* fs_data, const char* path) {
     FAT32_FILE* f = fat32_open(fs, path);
     if (!f) { return NULL; }
 
-    VFS_FILE* vf = malloc(sizeof(VFS_FILE));
+    VFS_FILE* vf = kmalloc(sizeof(VFS_FILE));
     vf->internal = f;
     vf->fs = &fat32_ops; // set later
 

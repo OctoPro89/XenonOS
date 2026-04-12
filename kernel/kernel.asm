@@ -1,17 +1,20 @@
 section .text
 
 extern kernel_main_trampoline
+extern kernel_stack_top
+
 global kernel_start
 
 kernel_start:
-    ; send 0x47 to COM1
-    ; mov al, 0x47
-    ; mov dx, 0x3F8
-    ; out dx, al
+    ; switch to kernel stack
+    mov rsp, [rel kernel_stack_top]
+    xor rbp, rbp
 
-    ; BootInfo* argument is in RDI from the bootloader, pass it along to trampoline
+    ; now safe to call C code
+    ; BootInfo* in RDI from bootloader
     call kernel_main_trampoline
 
-    ; This should never happen
+.hang:
     cli
     hlt
+    jmp .hang

@@ -38,7 +38,7 @@ void pmm_init(BootInfo* boot)
     bitmap_size = (total_pages + 7) / 8; // make sure divide doesn't fail
 
     // 2. place bitmap in HHDM (temporary simple placement)
-    bitmap = (uint8_t*)phys_to_virt(0x100000); // TEMP safe region
+    bitmap = (uint8_t*)phys_to_hhdm(0x100000); // TEMP safe region
 
     memset(bitmap, 0xFF, bitmap_size);
 
@@ -51,8 +51,8 @@ void pmm_init(BootInfo* boot)
         }
     }
 
-    PHYSICAL_ADDRESS kstart = virt_to_phys((VIRTUAL_ADDRESS)__kernel_start);
-    PHYSICAL_ADDRESS kend   = virt_to_phys((VIRTUAL_ADDRESS)__kernel_end);
+    PHYSICAL_ADDRESS kstart = hhdm_to_phys((VIRTUAL_ADDRESS)__kernel_start);
+    PHYSICAL_ADDRESS kend   = hhdm_to_phys((VIRTUAL_ADDRESS)__kernel_end);
 
     // align to pages
     kstart &= ~(PAGE_SIZE - 1);
@@ -65,7 +65,7 @@ void pmm_init(BootInfo* boot)
     pmm_mark_used(boot->MemoryMap, boot->MemoryMapSize);
 
     // reserve bitmap itself
-    pmm_mark_used(virt_to_phys((VIRTUAL_ADDRESS)bitmap), bitmap_size);
+    pmm_mark_used(hhdm_to_phys((VIRTUAL_ADDRESS)bitmap), bitmap_size);
 }
 
 PHYSICAL_ADDRESS pmm_alloc_page(void)

@@ -5,11 +5,14 @@
 
 typedef struct vmm_space {
     pte_t* pml4;
+    b8 user_mode;
 } vmm_space_t;
 
 extern vmm_space_t kernel_space;
 
-void vmm_init(vmm_space_t* space, pte_t* kernel_pml4);
+vmm_space_t* vmm_create_space();
+
+void vmm_switch(vmm_space_t* space);
 
 void vmm_map(vmm_space_t* space, VIRTUAL_ADDRESS virt, PHYSICAL_ADDRESS phys, uint64_t flags);
 void vmm_unmap(vmm_space_t* space, VIRTUAL_ADDRESS virt);

@@ -150,19 +150,19 @@ FAT32_FILE* fat32_open(FAT32_FS* fs, const char* path) {
         else break;
     }
 
-    FAT32_FILE* f = malloc(sizeof(FAT32_FILE));
+    FAT32_FILE* f = kmalloc(sizeof(FAT32_FILE));
     f->fs = fs;
     f->first_cluster = fat32_entry_cluster(&ent);
     f->size = ent.size;
     f->pos = 0;
     u32 cluster_size = f->fs->sectors_per_cluster * 512;
-    f->cluster_buffer = malloc(cluster_size);
+    f->cluster_buffer = kmalloc(cluster_size);
 
     return f;
 }
 
 void fat32_close(FAT32_FILE* f) {
-    free(f);
+    kfree(f);
 }
 
 u32 fat32_read(FAT32_FILE* f, void* buffer, u32 size) {
@@ -217,7 +217,7 @@ int fat32_find_in_dir(FAT32_FS* fs, u32 start_cluster, const char* name, FAT32_D
     u32 cluster = start_cluster;
     u32 cluster_size = fs->sectors_per_cluster * 512;
 
-    u8* buf = malloc(cluster_size);
+    u8* buf = kmalloc(cluster_size);
 
     char lfn_parts[MAX_LFN_PARTS][14]; // each entry max 13 chars + null
     int lfn_count = 0;
@@ -228,7 +228,7 @@ int fat32_find_in_dir(FAT32_FS* fs, u32 start_cluster, const char* name, FAT32_D
         for (u32 i = 0; i < cluster_size; i += 32) {
             FAT32_DIRECTORY_ENTRY* ent = (void*)(buf + i);
 
-            if (ent->name[0] == 0x00) { free(buf); return 0; }
+            if (ent->name[0] == 0x00) { kfree(buf); return 0; }
             if (ent->name[0] == 0xE5) continue;
 
             // LFN entry
@@ -290,7 +290,7 @@ int fat32_find_in_dir(FAT32_FS* fs, u32 start_cluster, const char* name, FAT32_D
 
             if (match) {
                 memcpy(out, ent, sizeof(*out));
-                free(buf);
+                kfree(buf);
                 return 1;
             }
 
@@ -302,7 +302,7 @@ int fat32_find_in_dir(FAT32_FS* fs, u32 start_cluster, const char* name, FAT32_D
         cluster = fat32_read_fat_entry(fs, cluster);
     }
 
-    free(buf);
+    kfree(buf);
     return 0;
 }
 
