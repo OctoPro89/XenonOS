@@ -2,6 +2,7 @@
 #include <memory/vmm.h>
 #include <memory/pmm.h>
 #include <xlibc/string.h>
+#include <xlibc/xassert.h>
 
 #define HEAP_START 0xFFFFA00000000000ULL
 #define HEAP_END   0xFFFFA00010000000ULL
@@ -18,7 +19,9 @@ static VIRTUAL_ADDRESS heap_ptr = HEAP_START;
 static void* heap_expand(size_t size)
 {
     size_t total = size + sizeof(heap_block);
-    size_t pages = (total + 0xFFF) / 0x1000;
+    size_t pages = (total + 0xFFF) / PAGE_SIZE;
+
+    xassert(heap_ptr + pages * PAGE_SIZE < HEAP_END, "Invalid heap_expand()");
 
     VIRTUAL_ADDRESS start = heap_ptr;
 
@@ -27,11 +30,11 @@ static void* heap_expand(size_t size)
 
         vmm_map(&kernel_space, heap_ptr, phys, PAGE_PRESENT | PAGE_WRITABLE);
 
-        heap_ptr += 0x1000;
+        heap_ptr += PAGE_SIZE;
     }
 
     heap_block* block = (heap_block*)start;
-    block->size = pages * 0x1000 - sizeof(heap_block);
+    block->size = pages * PAGE_SIZE - sizeof(heap_block);
     block->free = 1;
     block->next = NULL;
 

@@ -11,6 +11,7 @@
         serial_write_str(" msg: "); \
         serial_write_str(msg); \
         serial_write_char('\n'); \
+        while(1); \
     }
 #else
     #define xassert(x, msg)

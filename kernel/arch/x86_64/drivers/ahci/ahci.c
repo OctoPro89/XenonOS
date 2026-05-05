@@ -24,10 +24,7 @@ HBA_MEM* abar = 0;
 
 void ahci_init(PCI_Device* dev) {
     // Enable PCI bus mastering
-    u32 cmd = pci_config_read(dev->bus, dev->device, dev->function, 0x04);
-    cmd |= (1 << 2); // bus master
-    cmd |= (1 << 1); // memory space
-    pci_config_write(dev->bus, dev->device, dev->function, 0x04, cmd);
+    pci_enable_bus_master(dev);
 
     // Get BAR5 (ABAR)
     u64 phys = dev->bar[5] & ~0xF;
