@@ -15,3 +15,7 @@ int fclose(FILE* stream);
 int fgetc(FILE* f);
 u32 ftell(FILE* f);
 int fseek(FILE* stream, int offset, int whence);
+
+void putc(char c);
+void puts(const char* str);
+void printf(const char* fmt, ...);

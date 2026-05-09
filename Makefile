@@ -88,6 +88,7 @@ run: image
     -drive if=none,id=disk0,format=raw,file=image/disk.img \
     -device ahci,id=ahci \
     -device ide-hd,bus=ahci.0,drive=disk0 \
+	-device qemu-xhci,p3=2 \
     -bios /usr/share/ovmf/OVMF_CODE.fd \
     -boot order=c \
     -serial stdio \

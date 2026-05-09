@@ -3,8 +3,8 @@
 #include <memory/vmm.h>
 #include <memory/pmm.h>
 #include <memory/allocators/dma_allocator.h>
-#include <arch/x86_64/io.h>
 #include <xlibc/string.h>
+#include <xlibc/stdio.h>
 
 #define AHCI_VIRT_BASE 0xFFFFC00000000000ULL
 
@@ -27,18 +27,17 @@ void ahci_init(PCI_Device* dev) {
     pci_enable_bus_master(dev);
 
     // Get BAR5 (ABAR)
-    u64 phys = dev->bar[5] & ~0xF;
+    paddr_t phys = dev->bar[5].base;
 
     // Map ABAR (map 4KB for now)
-    VIRTUAL_ADDRESS virt = AHCI_VIRT_BASE;
-    vmm_map_mmio(&kernel_space, virt, (PHYSICAL_ADDRESS)phys, PAGE_SIZE);
+    vaddr_t virt = AHCI_VIRT_BASE;
+    vmm_map_mmio(&kernel_space, virt, phys, PAGE_SIZE);
 
     abar = (HBA_MEM*)virt;
 
-    serial_write_str("AHCI mapped\n");
-    serial_write_str("Version: ");
-    serial_write_hex(abar->vs);
-    serial_write_char('\n');
+    printf("\tAHCI mapped\n");
+    printf("\tVersion: ");
+    printf("\t%u\n", abar->vs);
 }
 
 void ahci_probe_ports() {
@@ -49,9 +48,8 @@ void ahci_probe_ports() {
             HBA_PORT* p = ahci_get_port(i);
 
             if (ahci_port_has_device(p)) {
-                serial_write_str("Active SATA port: ");
-                serial_write_dec(i);
-                serial_write_char('\n');
+                printf("\tActive SATA port: ");
+                printf("\t%d\n", i);
 
                 ahci_port_init(p);
                 break;
@@ -112,7 +110,7 @@ void ahci_port_init(HBA_PORT* port) {
 
     ahci_start_port(port);
 
-    serial_write_str("Port initialized\n");
+    printf("Port initialized\n");
 }
 
 int ahci_port_has_device(HBA_PORT* port) {
@@ -141,7 +139,7 @@ int ahci_read_sector(HBA_PORT* port, uint64_t lba, PHYSICAL_CONTIGUOUS_BUFFER bu
 
     int slot = ahci_find_cmdslot(port);
     if (slot == -1) {
-        serial_write_str("No free command slot\n");
+        printf("No free command slot\n");
         return 0;
     }
 
@@ -197,7 +195,7 @@ int ahci_read_sector(HBA_PORT* port, uint64_t lba, PHYSICAL_CONTIGUOUS_BUFFER bu
         }
 
         if (port->is & (1 << 30)) {
-            serial_write_str("Read disk error\n");
+            printf("Read disk error\n");
             return 0;
         }
     }

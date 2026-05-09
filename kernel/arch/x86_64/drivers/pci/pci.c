@@ -29,6 +29,46 @@ void pci_config_write(u8 bus, u8 device, u8 function, u8 offset, u32 value) {
     x64_outl(PCI_CONFIG_DATA, value);
 }
 
+static void pci_probe_bar(PCI_Device* dev, u8 bar_index) {
+    u8 offset = 0x10 + bar_index * 4;
+
+    u32 original = pci_config_read(dev->bus, dev->device, dev->function, offset);
+
+    if (original == 0 || original == 0xFFFFFFFF) {
+        dev->bar[bar_index].valid = 0;
+        return;
+    }
+
+    pci_config_write(dev->bus, dev->device, dev->function, offset, 0xFFFFFFFF);
+    u32 mask = pci_config_read(dev->bus, dev->device, dev->function, offset);
+    pci_config_write(dev->bus, dev->device, dev->function, offset, original);
+
+    dev->bar[bar_index].is_io = original & 1;
+    dev->bar[bar_index].valid = 1;
+
+    if (original & 1) {
+        // I/O BAR
+        mask &= ~0x3;
+        dev->bar[bar_index].base = original & ~0x3;
+        dev->bar[bar_index].size = (~mask) + 1;
+    } else {
+        // Memory BAR
+        mask &= ~0xF;
+        dev->bar[bar_index].base = original & ~0xF;
+        dev->bar[bar_index].size = (~mask) + 1;
+
+        if (((original >> 1) & 0x3) == 0x2) {
+            // 64-bit BAR uses next register
+            u32 high = pci_config_read(dev->bus, dev->device, dev->function, offset + 4);
+
+            dev->bar[bar_index].base |= ((u64)high << 32);
+
+            // skip next BAR
+            dev->bar[bar_index + 1].valid = 0;
+        }
+    }
+}
+
 void pci_add_device(u8 bus, u8 device, u8 function) {
     if (pci_bus.count >= PCI_MAX_DEVICES) return;
 
@@ -54,7 +94,8 @@ void pci_add_device(u8 bus, u8 device, u8 function) {
 
     // Read BAR0-BAR5
     for (int i = 0; i < 6; i++) {
-        dev->bar[i] = pci_config_read(bus, device, function, 0x10 + i * 4);
+        // dev->bar[i] = pci_config_read(bus, device, function, 0x10 + i * 4);
+        pci_probe_bar(dev, i);
     }
 }
 
@@ -81,6 +122,17 @@ PCI_Device* pci_find_ahci() {
     for (uint32_t i = 0; i < pci_bus.count; i++) {
         PCI_Device *dev = &pci_bus.devices[i];
         if (dev->class_code == 0x01 && dev->subclass == 0x06 && dev->prog_if == 0x01) {
+            return dev;
+        }
+    }
+    return NULL;
+}
+
+PCI_Device* pci_find_xhci() {
+    for (u32 i = 0; i < pci_bus.count; i++) {
+        PCI_Device* dev = &pci_bus.devices[i];
+
+        if (dev->class_code == 0x0C && dev->subclass == 0x03 && dev->prog_if == 0x30) {
             return dev;
         }
     }

@@ -7,7 +7,7 @@
 #include <xlibc/xstdint.h>
 #include <filesystem/block_device/block_device.h>
 
-typedef struct __attribute__((packed)) {
+typedef struct __packed__ {
     u8  jmp[3];
     u8  oem[8];
 
@@ -57,7 +57,7 @@ typedef struct {
     u32 root_cluster;
 } FAT32_FS;
 
-typedef struct __attribute__((packed)) {
+typedef struct __packed__ {
     u8  name[11];
     u8  attr;
     u8  nt_reserved;
@@ -74,7 +74,7 @@ typedef struct __attribute__((packed)) {
     u32 size;
 } FAT32_DIRECTORY_ENTRY;
 
-typedef struct __attribute__((packed)) {
+typedef struct __packed__ {
     u8 order;
     u16 name1[5];
     u8 attr;

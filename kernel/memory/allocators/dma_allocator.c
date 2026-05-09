@@ -5,31 +5,54 @@
 
 #define KERNEL_DMA_BASE 0xFFFFA00000000000ULL
 
-static VIRTUAL_ADDRESS dma_next = KERNEL_DMA_BASE;
+static vaddr_t dma_next = KERNEL_DMA_BASE;
 
 dma_region_t dma_alloc(size_t size)
 {
-    xassert(size < PAGE_SIZE, "dma_alloc(): DMA memory must be contiguous and therefore may not be bigger than PAGE_SIZE bytes!");
-    size = (size + 0xFFF) & ~0xFFF;
+    size_t aligned = (size + PAGE_SIZE - 1) & ~(PAGE_SIZE - 1);
+    size_t pages = aligned / PAGE_SIZE;
 
-    VIRTUAL_ADDRESS vaddr = dma_next;
-    dma_next += size;
+    vaddr_t vaddr = dma_next;
+    dma_next += aligned;
 
-    PHYSICAL_ADDRESS first_phys = 0;
+    paddr_t phys = pmm_alloc_contiguous_pages(pages);
 
-    for (size_t off = 0; off < size; off += 0x1000) {
-        PHYSICAL_ADDRESS phys = pmm_alloc_page();
+    xassert(phys != 0, "dma_alloc(): out of physical memory");
 
-        if (off == 0) { first_phys = phys; }
-
-        vmm_map(&kernel_space, vaddr + off, phys, PAGE_WRITABLE);
+    for (size_t i = 0; i < pages; i++) {
+        vmm_map(
+            &kernel_space,
+            vaddr + i * PAGE_SIZE,
+            phys + i * PAGE_SIZE,
+            PAGE_PRESENT | PAGE_WRITABLE
+        );
     }
+
+    // optional but useful for safety
+    // memset((void*)vaddr, 0, aligned);
 
     dma_region_t region = {
         .virt = vaddr,
-        .phys = first_phys,
-        .size = size
+        .phys = phys,
+        .size = aligned
     };
 
     return region;
 }
+
+// TODO: don't use bump allocator, dma_next isn't decreased
+/*
+void dma_free(dma_region_t region)
+{
+    size_t pages = region.size / PAGE_SIZE;
+
+    for (size_t i = 0; i < pages; i++) {
+        vmm_unmap(
+            &kernel_space,
+            region.virt + i * PAGE_SIZE
+        );
+    }
+
+    pmm_free_pages(region.phys, pages);
+}
+*/

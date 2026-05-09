@@ -1,19 +1,11 @@
 #include <xlibc/xstdint.h>
+#include <arch/x86_64/irq.h>
 
 void serial_write_str(const char*);
 void serial_write_hex(uint64_t);
 void serial_write_dec(uint64_t);
 
-struct regs {
-    uint64_t r15, r14, r13, r12, r11, r10, r9, r8;
-    uint64_t rbp, rdi, rsi, rdx, rcx, rbx, rax;
-    
-    uint64_t int_no, err_code;
-
-    uint64_t rip, cs, rflags, user_rsp, ss; 
-};
-
-void isr_common_handler(struct regs* r) {
+static void exception_panic(struct regs* r) {
     static const char* exception_names[] = {
         "Divide-by-zero Error", "Debug", "Non-maskable Interrupt", "Breakpoint",
         "Overflow", "Bound Range Exceeded", "Invalid Opcode", "Device Not Available",
@@ -77,4 +69,13 @@ void isr_common_handler(struct regs* r) {
     serial_write_str("R14: "); serial_write_hex(r->r14); serial_write_str("\r\n");
     serial_write_str("R15: "); serial_write_hex(r->r15); serial_write_str("\r\n");
     while(1); // halt
+}
+
+void isr_common_handler(struct regs* r) {
+    if (r->int_no < 32) {
+        exception_panic(r);
+        return;
+    }
+
+    irq_dispatch(r);
 }

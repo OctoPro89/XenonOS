@@ -9,11 +9,11 @@ struct IDTEntry {
     uint16_t offset_mid;
     uint32_t offset_high;
     uint32_t zero;
-} __attribute__((packed));
+} __packed__;
 
 struct IDTR {
     uint16_t limit;
     uint64_t base;
-} __attribute__((packed));
+} __packed__;
 
 void idt_init(void);

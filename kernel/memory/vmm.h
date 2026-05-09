@@ -14,9 +14,15 @@ vmm_space_t* vmm_create_space();
 
 void vmm_switch(vmm_space_t* space);
 
-void vmm_map(vmm_space_t* space, VIRTUAL_ADDRESS virt, PHYSICAL_ADDRESS phys, uint64_t flags);
-void vmm_unmap(vmm_space_t* space, VIRTUAL_ADDRESS virt);
+void vmm_map(vmm_space_t* space, vaddr_t virt, paddr_t phys, uint64_t flags);
+void vmm_unmap(vmm_space_t* space, vaddr_t virt);
 
-void vmm_map_mmio(vmm_space_t* space, VIRTUAL_ADDRESS virt, PHYSICAL_ADDRESS phys, size_t size);
+vaddr_t vmm_alloc_virtual_pages(size_t pages);
+void vmm_free_virtual_pages(vaddr_t addr, size_t pages);
+vaddr_t vmm_map_physically_contiguous_pages(vmm_space_t* space, paddr_t addr, size_t pages, uint64_t flags);
+void vmm_unmap_pages(vmm_space_t* space, vaddr_t virt, size_t pages);
 
-PHYSICAL_ADDRESS vmm_virt_to_phys(vmm_space_t* space, VIRTUAL_ADDRESS virt);
+vaddr_t vmm_map_physical_page(vmm_space_t* space, paddr_t phys, uint64_t flags);
+void vmm_map_mmio(vmm_space_t* space, vaddr_t virt, paddr_t phys, size_t size);
+
+paddr_t vmm_virt_to_phys(vmm_space_t* space, vaddr_t virt);

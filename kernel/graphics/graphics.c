@@ -146,7 +146,7 @@ static uint32_t dirty_y2 = 0;
 static volatile uint32_t* backbuffer;
 static uint32_t current_width, current_height, pixels_per_line, pixel_format;
 const static uint32_t bytes_per_pixel = 4;
-static PHYSICAL_ADDRESS framebuffer_phys;
+static paddr_t framebuffer_phys;
 
 static inline void mark_dirty(uint32_t x, uint32_t y, uint32_t w, uint32_t h) {
     if (x < dirty_x1) dirty_x1 = x;
@@ -178,7 +178,7 @@ void graphics_init(Framebuffer* fb) {
     current_height = fb->Height;
     pixels_per_line = fb->PixelsPerScanLine;
     pixel_format = fb->PixelFormat;
-    framebuffer_phys = (PHYSICAL_ADDRESS)fb->BaseAddress;
+    framebuffer_phys = (paddr_t)fb->BaseAddress;
 
     size_t framebuffer_size = pixels_per_line * current_height * bytes_per_pixel;
     vmm_map_mmio(&kernel_space, FRAMBUFFER_VIRT_BASE, framebuffer_phys, framebuffer_size);
@@ -200,7 +200,7 @@ void graphics_shutdown() {
     pixel_format = 0;
     framebuffer_phys = 0;
     // TODO: Unmap MMIO
-    if (backbuffer) { kfree(backbuffer); }
+    // if (backbuffer) { kfree(backbuffer); }
 }
 
 void graphics_swap_buffers() {
@@ -292,5 +292,38 @@ void graphics_draw_string(const char* str, uint32_t x, uint32_t y, uint32_t colo
             x += 8;
         }
         str++;
+    }
+}
+
+void graphics_draw_hex(uint64_t val, uint32_t x, uint32_t y, uint32_t color) {
+    const char* hex = "0123456789ABCDEF";
+
+    serial_write_str("0x");
+
+    for (int i = 60; i >= 0; i -= 4) {
+        uint8_t nibble = (val >> i) & 0xF;
+        graphics_draw_char(hex[nibble], x, y, color);
+    }
+}
+
+void graphics_draw_decimal(uint64_t val, uint32_t x, uint32_t y, uint32_t color) {
+    char buf[21]; // max for uint64_t = 20 digits + null
+    int i = 0;
+
+    // Special case: 0
+    if (val == 0) {
+        graphics_draw_char('0', x, y, color);
+        return;
+    }
+
+    // Build digits in reverse
+    while (val > 0) {
+        buf[i++] = '0' + (val % 10);
+        val /= 10;
+    }
+
+    // Print in correct order
+    while (i > 0) {
+        graphics_draw_char(buf[--i], x, y, color);
     }
 }

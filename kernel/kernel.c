@@ -1,22 +1,36 @@
 #include "../shared/boot_info.h"
+
 #include <xlibc/string.h>
 #include <xlibc/stdlib.h>
 #include <xlibc/stdio.h>
+
+#include <acpi/acpi.h>
+
 #include <arch/x86_64/hal.h>
 #include <arch/x86_64/io.h>
 #include <arch/x86_64/syscall.h>
+#include <arch/x86_64/irq.h>
 #include <arch/x86_64/drivers/pci/pci.h>
 #include <arch/x86_64/drivers/ahci/ahci.h>
+
+#include <drivers/usb/xhci.h>
+#include <drivers/usb/xhci_mem.h>
+
 #include <filesystem/block_device/block_device.h>
 #include <filesystem/gpt/gpt.h>
 #include <filesystem/fat32/fat32.h>
 #include <filesystem/vfs/vfs.h>
 #include <filesystem/vfs/vfs_fat32.h>
+
 #include <graphics/graphics.h>
+
 #include <memory/paging.h>
 #include <memory/pmm.h>
 #include <memory/vmm.h>
 #include <memory/heap.h>
+
+#include <time/time.h>
+
 #include "kernel.h"
 
 #define KERNEL_VMA 0xFFFFFFFF80000000ULL
@@ -40,17 +54,13 @@ void fat32_list_root(FAT32_FS* fs) {
 
             if (ent->name[0] == 0x00) return;
             if (ent->name[0] == 0xE5) continue;
-            if (ent->attr == 0x0F) continue; // skip LFN
+            if (ent->attr == 0x0F) continue; // skip LFN5
 
             char name[12];
             memcpy(name, ent->name, 11);
             name[11] = 0;
 
-            serial_write_str("File: ");
-            serial_write_str(name);
-            serial_write_str(" Size: ");
-            serial_write_dec(ent->size);
-            serial_write_char('\n');
+            printf("\tFile: %s Size: %u\n", name, ent->size);
         }
 
         cluster = fat32_read_fat_entry(fs, cluster);
@@ -73,7 +83,7 @@ uint8_t user_code[] = {
 
 void setup_user_memory(vmm_space_t* space) {
     // Code
-    PHYSICAL_ADDRESS code_phys = pmm_alloc_page();
+    paddr_t code_phys = pmm_alloc_page();
     void* code_virt = (void*)phys_to_hhdm(code_phys);
 
     memcpy(code_virt, user_code, sizeof(user_code));
@@ -84,7 +94,7 @@ void setup_user_memory(vmm_space_t* space) {
 
     // Stack
     for (int i = 0; i < 4; i++) {
-        PHYSICAL_ADDRESS stack_phys = pmm_alloc_page();
+        paddr_t stack_phys = pmm_alloc_page();
 
         vmm_map(space,
             USER_STACK_TOP - (i + 1) * PAGE_SIZE,
@@ -103,15 +113,10 @@ void run_user(vmm_space_t* space) {
     while (1);
 }
 
-void draw_string(const char* str) {
-    static u32 xoff = 200;
-    static u32 yoff = 200;
-    static u32 spacing = 10;
-
-    graphics_draw_string(str, xoff, yoff, 0xFFFFFFFF);
-    yoff += spacing;
-    graphics_swap_buffers();
-}
+// TODO: task scheduler
+void timer_handler(struct regs* r) {
+    ktimer_sched_irq_global_tick();
+} 
 
 void ASMCALL kernel_main_trampoline(BootInfo* bootInfo) {
     x86_64_HAL_init();
@@ -120,30 +125,59 @@ void ASMCALL kernel_main_trampoline(BootInfo* bootInfo) {
     pmm_init(bootInfo);
     kernel_space.pml4 = (pte_t*)(bootInfo->PML4 + HHDM_OFFSET);
 
+    acpi_enumerate_acpi_tables((void*)bootInfo->AcpiRsdp);
+    irq_register_handler(IRQ0, &timer_handler);
+
     graphics_init(&bootInfo->fb);
     graphics_clear_screen(0);
 
-    draw_string("XenonOS v0.1");
-    draw_string("Scanning for PCI devices...");
+    printf("XenonOS v0.1\n");
+    printf("Scanning for PCI devices...\n");
 
     pci_scan(); // find pci devices
+
+    PCI_Device* xhci_dev = pci_find_xhci(); // find XHCI device
+    if (xhci_dev == NULL) {
+        printf("Failed to find XHCI device!\n");
+        while(1);
+    }
+
+    printf("\n");
+    printf("Found XHCI device\n");
+
+    printf("Initializing XHCI driver\n");
+    xhci_driver_t xhci_driver;
+    xhci_driver.name = "Default XHCI Controller Driver";
+    xhci_driver.pci_device = xhci_dev;
+    if (!xhci_driver_init_device(&xhci_driver)) {
+        printf("Failed to initialize XHCI driver!\n");
+        while(1);
+    }
+
+    printf("XHCI Controller Mapping Info:\n");
+
+    printf("    Virtual Base: ");
+    printf("%p\n", xhci_driver.xhc_base);
+    printf("\n");
+    printf("    BAR Address: ");
+    printf("%p\n", xhci_driver.pci_device->bar[0].base);
+    printf("\n");
+
+    xhci_driver_log_capability_registers(&xhci_driver);
+
+    printf("XHCI Driver initialized successfully\n");
+    printf("\n");
+
     PCI_Device* ahci_dev = pci_find_ahci(); // find AHCI device
     if (ahci_dev == NULL) {
-        serial_write_str("Failed to find AHCI device!\n");
-        draw_string("Failed to find AHCI device!");
+        printf("Failed to find AHCI device!\n");
         while(1);
     }
 
-    serial_write_str("Found AHCI device: ");
-    draw_string("Found AHCI device");
+    printf("Found AHCI device\n");
 
-    if (!ahci_dev) {
-        serial_write_str("No AHCI\n");
-        draw_string("No AHCI\n");
-        while(1);
-    }
-
-    draw_string("Initializing AHCI driver");
+    printf("Initializing AHCI driver\n");
+    printf("AHCI Info:\n");
 
     ahci_init(ahci_dev);
     ahci_probe_ports();
@@ -151,72 +185,71 @@ void ASMCALL kernel_main_trampoline(BootInfo* bootInfo) {
     // Pick first port
     HBA_PORT* port = ahci_get_port(0);
 
-    draw_string("AHCI driver initialized successfully");
+    printf("AHCI driver initialized successfully\n");
+
+    printf("\n");
 
     block_device boot_disk = {
         .driver_data = (void*)port,
         .read = ahci_block_read,
     };
 
-    draw_string("Finding FAT32 partition");
+    printf("Finding FAT32 partition\n");
 
     u64 part_lba;
 
     if (!gpt_find_fat32(&boot_disk, &part_lba)) {
-        serial_write_str("No FAT32 partition found\n");
-        draw_string("No FAT32 partition found");
+        printf("No FAT32 partition found\n");
         while (1);
     }
 
-    draw_string("Found FAT32 partition successfully");
+    printf("Found FAT32 partition successfully\n");
 
-    draw_string("Initializing FAT32 driver");
+    printf("Initializing FAT32 driver\n");
 
     FAT32_FS fs;
     fat32_init(&fs, &boot_disk, part_lba);
     fat32_list_root(&fs);
 
-    draw_string("Initialized FAT32 driver successfully");
+    printf("Initialized FAT32 driver successfully\n");
+    printf("\n");
 
-    draw_string("Setting up Virtual File System");
+    printf("Setting up Virtual File System\n");
 
     vfs_mount_root(&fat32_ops, (void*)&fs);
 
-    draw_string("Set up Virtual File System successfully");
+    printf("Set up Virtual File System successfully\n");
 
     FILE* f = fopen("testlongfilename.txt", "r");
     if (!f) {
-        serial_write_str("Failed to open file!\n");
-        draw_string("Failed to open file!");
+        printf("Failed to open file!\n");
         while(1);
     }
 
     fseek(f, 0, SEEK_END);
     u32 size = ftell(f);
     fseek(f, 0, SEEK_SET);
-    serial_write_str("Filesize: ");
-    serial_write_dec((u64)size);
-    serial_write_str(" bytes\n");
+    printf("Filesize: %u bytes\n", size);
 
     u8* buffer = kmalloc(26);
     fread(buffer, 10, 1, f);
-    for (int i = 0; i < 10; ++i) { serial_write_char((char)buffer[i]); }
+    for (int i = 0; i < 10; ++i) { putc((char)buffer[i]); }
 
-    serial_write_char('\n');
+    printf("\n");
 
     fread(buffer, 16, 1, f);
-    for (int i = 0; i < 16; ++i) { serial_write_char((char)buffer[i]); }
+    for (int i = 0; i < 16; ++i) { putc((char)buffer[i]); }
 
     fseek(f, -20, SEEK_CUR);
 
     fread(buffer, 16, 1, f);
-    for (int i = 0; i < 16; ++i) { serial_write_char((char)buffer[i]); }
+    for (int i = 0; i < 16; ++i) { putc((char)buffer[i]); }
 
     free(buffer);
     fclose(f);
 
-    serial_write_char('\n');
-    serial_write_char('\n');
+    printf("\n");
+    printf("\n");
 
     vmm_space_t* space = vmm_create_space();
     space->user_mode = true;

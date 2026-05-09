@@ -55,6 +55,20 @@ EFI_GUID gEfiSimpleFileSystemProtocolGuid =
 #define PAGE_WRITABLE (1ULL << 1)
 #define PAGE_PS       (1ULL << 7)
 
+static int guid_equal(EFI_GUID* a, EFI_GUID* b) {
+    if (a->Data1 != b->Data1) return 0;
+    if (a->Data2 != b->Data2) return 0;
+    if (a->Data3 != b->Data3) return 0;
+
+    for (int i = 0; i < 8; ++i) {
+        if (a->Data4[i] != b->Data4[i]) {
+            return 0;
+        }
+    }
+
+    return 1;
+}
+
 void print_hex(EFI_SYSTEM_TABLE *st, uint64_t value) {
     CHAR16 hex[18]; // "0x" + 16 hex digits
     hex[0] = L'0';
@@ -348,6 +362,21 @@ EFI_STATUS efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable)
 print_hex(SystemTable, ehdr.e_entry);
 SystemTable->ConOut->OutputString(SystemTable->ConOut, L"\r\n");
 
+    EFI_GUID acpi20 = ACPI_20_TABLE_GUID;
+    EFI_GUID acpi10 = ACPI_TABLE_GUID;
+
+    void* rsdp = NULL;
+
+    for (UINTN i = 0; i < SystemTable->NumberOfTableEntries; ++i) {
+        EFI_CONFIGURATION_TABLE* table =
+            &SystemTable->ConfigurationTable[i];
+
+        if (guid_equal(&table->VendorGuid, &acpi20)) {
+            rsdp = table->VendorTable;
+            break;
+        }
+    }
+
     // First call
     status = SystemTable->BootServices->GetMemoryMap(&mapSize, NULL, &mapKey, &descSize, &descVersion);
     if (status != EFI_BUFFER_TOO_SMALL) {
@@ -396,6 +425,7 @@ SystemTable->ConOut->OutputString(SystemTable->ConOut, L"\r\n");
     bootInfo.MemoryMapSize = mapSize;
     bootInfo.MemoryDescriptorSize = descSize;
     bootInfo.PML4 = pml4_phys;
+    bootInfo.AcpiRsdp = (uint64_t)rsdp;
 
     // Exit boot services
     status = SystemTable->BootServices->ExitBootServices(ImageHandle, mapKey);

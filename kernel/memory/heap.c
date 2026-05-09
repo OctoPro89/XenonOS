@@ -14,7 +14,7 @@ typedef struct heap_block {
 } heap_block;
 
 static heap_block* heap_head = NULL;
-static VIRTUAL_ADDRESS heap_ptr = HEAP_START;
+static vaddr_t heap_ptr = HEAP_START;
 
 static void* heap_expand(size_t size)
 {
@@ -23,10 +23,10 @@ static void* heap_expand(size_t size)
 
     xassert(heap_ptr + pages * PAGE_SIZE < HEAP_END, "Invalid heap_expand()");
 
-    VIRTUAL_ADDRESS start = heap_ptr;
+    vaddr_t start = heap_ptr;
 
     for (size_t i = 0; i < pages; i++) {
-        PHYSICAL_ADDRESS phys = pmm_alloc_page();
+        paddr_t phys = pmm_alloc_page();
 
         vmm_map(&kernel_space, heap_ptr, phys, PAGE_PRESENT | PAGE_WRITABLE);
 

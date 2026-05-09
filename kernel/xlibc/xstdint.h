@@ -12,8 +12,8 @@
 #define i32 int32_t
 #define i64 int64_t
 
-#define b8 uint8_t
-#define b32 uint32_t
+typedef uint8_t b8;
+typedef uint32_t b32;
 
 #define f32 float
 #define f64 double

@@ -1,7 +1,20 @@
 #include "vmm.h"
-#include <memory/paging.h>
+#include <xlibc/xassert.h>
 #include <xlibc/string.h>
 #include <memory/heap.h>
+#include <memory/paging.h>
+
+#define VMM_ALLOC_BASE  0xFFFFE00000000000ULL
+#define VMM_ALLOC_SIZE  (1024ULL * 1024ULL * 1024ULL) // 1 GiB
+
+#define VMM_PAGE_COUNT  (VMM_ALLOC_SIZE / PAGE_SIZE)
+#define BITMAP_SIZE     (VMM_PAGE_COUNT / 8)
+
+#define BIT_SET(i)   (vmm_bitmap[(i)/8] |=  (1 << ((i)%8)))
+#define BIT_CLEAR(i) (vmm_bitmap[(i)/8] &= ~(1 << ((i)%8)))
+#define BIT_TEST(i)  (vmm_bitmap[(i)/8] &   (1 << ((i)%8)))
+
+static uint8_t vmm_bitmap[BITMAP_SIZE];
 
 vmm_space_t kernel_space;
 
@@ -9,7 +22,7 @@ static pte_t* get_table(vmm_space_t* space, pte_t* table, uint16_t index, int cr
     if (!(table[index] & PAGE_PRESENT)) {
         if (!create) return NULL;
 
-        PHYSICAL_ADDRESS phys = pmm_alloc_page();
+        paddr_t phys = pmm_alloc_page();
         pte_t* virt = (pte_t*)phys_to_hhdm(phys);
 
         for (int i = 0; i < 512; i++) { virt[i] = 0; }
@@ -23,19 +36,19 @@ static pte_t* get_table(vmm_space_t* space, pte_t* table, uint16_t index, int cr
         table[index] = phys | flags;
     }
 
-    PHYSICAL_ADDRESS phys = table[index] & ~0xFFFULL;
+    paddr_t phys = table[index] & ~0xFFFULL;
     return (pte_t*)phys_to_hhdm(phys);
 }
 
 static pte_t* get_table_noalloc(pte_t* table, uint16_t index) {
     if (!(table[index] & PAGE_PRESENT)) { return NULL; }
 
-    PHYSICAL_ADDRESS phys = table[index] & ~0xFFFULL;
+    paddr_t phys = table[index] & ~0xFFFULL;
     return (pte_t*)phys_to_hhdm(phys);
 }
 
 vmm_space_t* vmm_create_space() {
-    PHYSICAL_ADDRESS phys = pmm_alloc_page();
+    paddr_t phys = pmm_alloc_page();
     pte_t* new_pml4 = (pte_t*)phys_to_hhdm(phys);
 
     memset((void*)new_pml4, 0, PAGE_SIZE);
@@ -55,8 +68,7 @@ void vmm_switch(vmm_space_t* space) {
     asm volatile("mov %0, %%cr3" :: "r"(hhdm_to_phys((u64)space->pml4)));
 }
 
-void vmm_map(vmm_space_t* space, VIRTUAL_ADDRESS virt, PHYSICAL_ADDRESS phys, uint64_t flags)
-{
+void vmm_map(vmm_space_t* space, vaddr_t virt, paddr_t phys, uint64_t flags) {
     pte_t* pml4 = space->pml4;
 
     pte_t* pdpt = get_table(space, pml4, pml4_index(virt), 1);
@@ -68,8 +80,7 @@ void vmm_map(vmm_space_t* space, VIRTUAL_ADDRESS virt, PHYSICAL_ADDRESS phys, ui
     asm volatile("invlpg (%0)" :: "r"(virt) : "memory");
 }
 
-void vmm_unmap(vmm_space_t* space, VIRTUAL_ADDRESS virt)
-{
+void vmm_unmap(vmm_space_t* space, vaddr_t virt) {
     pte_t* pml4 = space->pml4;
 
     pte_t* pdpt = get_table_noalloc(pml4, pml4_index(virt));
@@ -86,8 +97,84 @@ void vmm_unmap(vmm_space_t* space, VIRTUAL_ADDRESS virt)
     asm volatile("invlpg (%0)" :: "r"(virt) : "memory");
 }
 
-void vmm_map_mmio(vmm_space_t* space, VIRTUAL_ADDRESS virt, PHYSICAL_ADDRESS phys, size_t size)
-{
+vaddr_t vmm_alloc_virtual_pages(size_t pages) {
+    size_t run = 0;
+    size_t start = 0;
+
+    for (size_t i = 0; i < VMM_PAGE_COUNT; i++) {
+
+        if (!BIT_TEST(i)) {
+
+            if (run == 0) {
+                start = i;
+            }
+
+            run++;
+
+            if (run == pages) {
+
+                for (size_t j = start; j < start + pages; j++) {
+                    BIT_SET(j);
+                }
+
+                return VMM_ALLOC_BASE + (start * PAGE_SIZE);
+            }
+
+        } else {
+            run = 0;
+        }
+    }
+
+    return 0;
+}
+
+void vmm_free_virtual_pages(vaddr_t addr, size_t pages) {
+    size_t index = (addr - VMM_ALLOC_BASE) / PAGE_SIZE;
+
+    for (size_t i = 0; i < pages; i++) {
+        BIT_CLEAR(index + i);
+    }
+}
+
+vaddr_t vmm_map_physically_contiguous_pages(vmm_space_t* space, paddr_t addr, size_t pages, uint64_t flags) {
+    vaddr_t virt = vmm_alloc_virtual_pages(pages);
+
+    if (!virt) {
+        return 0;
+    }
+
+    for (size_t i = 0; i < pages; i++) {
+
+        vmm_map(
+            space,
+            virt + (i * PAGE_SIZE),
+            addr + (i * PAGE_SIZE),
+            flags
+        );
+    }
+
+    return virt;
+}
+
+void vmm_unmap_pages(vmm_space_t* space, vaddr_t virt, size_t pages){
+    for (size_t i = 0; i < pages; i++) {
+        vmm_unmap(space, virt + (i * PAGE_SIZE));
+    }
+
+    vmm_free_virtual_pages(virt, pages);
+}
+
+vaddr_t vmm_map_physical_page(vmm_space_t* space, paddr_t phys, uint64_t flags) {
+    vaddr_t virt_page = vmm_alloc_virtual_pages(1);
+    if (!virt_page) {
+        return 0;
+    }
+
+    vmm_map(space, virt_page, phys, flags);
+    return virt_page;
+}
+
+void vmm_map_mmio(vmm_space_t* space, vaddr_t virt, paddr_t phys, size_t size){
     size = (size + 0xFFF) & ~0xFFF;
 
     for (size_t off = 0; off < size; off += 0x1000) {
@@ -95,7 +182,7 @@ void vmm_map_mmio(vmm_space_t* space, VIRTUAL_ADDRESS virt, PHYSICAL_ADDRESS phy
     }
 }
 
-PHYSICAL_ADDRESS vmm_virt_to_phys(vmm_space_t* space, VIRTUAL_ADDRESS virt) {
+paddr_t vmm_virt_to_phys(vmm_space_t* space, vaddr_t virt) {
     pte_t* pml4 = space->pml4;
 
     pte_t* pdpt = get_table_noalloc(pml4, pml4_index(virt));

@@ -1,7 +1,5 @@
-#ifndef XHCI_COMMON_H
-#define XHCI_COMMON_H
-
-#include <common.h>
+#pragma once
+#include <xlibc/xstdint.h>
 
 // Configuration Definitions
 #define XHCI_COMMAND_RING_TRB_COUNT     256
@@ -1307,5 +1305,3 @@ fields of a PSI Dword.
 // (TO-DO: Find spec page)
 #define XHCI_DOORBELL_TARGET_COMMAND_RING       0
 #define XHCI_DOORBELL_TARGET_CONTROL_EP_RING    1
-
-#endif // XHCI_COMMON_H

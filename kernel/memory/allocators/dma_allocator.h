@@ -4,7 +4,7 @@
 #include <memory/memory_types.h>
 
 typedef struct {
-    VIRTUAL_ADDRESS virt;
+    vaddr_t virt;
     PHYSICAL_CONTIGUOUS_BUFFER phys;
     size_t size;
 } dma_region_t;

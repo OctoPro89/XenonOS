@@ -13,7 +13,7 @@
 static uint8_t* bitmap = 0;
 static size_t bitmap_size = 0;
 
-static PHYSICAL_ADDRESS memory_base = 0;
+static paddr_t memory_base = 0;
 static size_t total_pages = 0;
 static size_t used_pages = 0;
 
@@ -22,7 +22,7 @@ void pmm_init(BootInfo* boot)
     EFI_MEMORY_DESCRIPTOR* map = (EFI_MEMORY_DESCRIPTOR*)boot->MemoryMap;
     size_t entries = boot->MemoryMapSize / boot->MemoryDescriptorSize;
 
-    PHYSICAL_ADDRESS highest = 0;
+    paddr_t highest = 0;
 
     // 1. compute max address
     for (size_t i = 0; i < entries; i++) {
@@ -51,8 +51,8 @@ void pmm_init(BootInfo* boot)
         }
     }
 
-    PHYSICAL_ADDRESS kstart = hhdm_to_phys((VIRTUAL_ADDRESS)__kernel_start);
-    PHYSICAL_ADDRESS kend   = hhdm_to_phys((VIRTUAL_ADDRESS)__kernel_end);
+    paddr_t kstart = hhdm_to_phys((vaddr_t)__kernel_start);
+    paddr_t kend   = hhdm_to_phys((vaddr_t)__kernel_end);
 
     // align to pages
     kstart &= ~(PAGE_SIZE - 1);
@@ -65,10 +65,10 @@ void pmm_init(BootInfo* boot)
     pmm_mark_used(boot->MemoryMap, boot->MemoryMapSize);
 
     // reserve bitmap itself
-    pmm_mark_used(hhdm_to_phys((VIRTUAL_ADDRESS)bitmap), bitmap_size);
+    pmm_mark_used(hhdm_to_phys((vaddr_t)bitmap), bitmap_size);
 }
 
-PHYSICAL_ADDRESS pmm_alloc_page(void)
+paddr_t pmm_alloc_page(void)
 {
     for (size_t i = 0; i < total_pages; i++) {
         if (!BIT_TEST(bitmap, i) && (i * PAGE_SIZE >= PMM_MIN_ADDR)) {
@@ -81,7 +81,7 @@ PHYSICAL_ADDRESS pmm_alloc_page(void)
     return 0; // out of memory
 }
 
-void pmm_free_page(PHYSICAL_ADDRESS page)
+void pmm_free_page(paddr_t page)
 {
     size_t index = page / PAGE_SIZE;
 
@@ -91,9 +91,50 @@ void pmm_free_page(PHYSICAL_ADDRESS page)
     }
 }
 
-void pmm_mark_used(PHYSICAL_ADDRESS start, size_t size)
+paddr_t pmm_alloc_contiguous_pages(size_t count)
 {
-    PHYSICAL_ADDRESS end = start + size;
+    size_t run = 0;
+    size_t start = 0;
+
+    for (size_t i = PMM_MIN_ADDR / PAGE_SIZE; i < total_pages; i++) {
+        if (!BIT_TEST(bitmap, i)) {
+            if (run == 0) {
+                start = i;
+            }
+
+            run++;
+
+            if (run == count) {
+                for (size_t j = start; j < start + count; j++) {
+                    BIT_SET(bitmap, j);
+                    used_pages++;
+                }
+
+                return start * PAGE_SIZE;
+            }
+        } else {
+            run = 0;
+        }
+    }
+
+    return 0;
+}
+
+void pmm_free_countiguous_pages(paddr_t addr, size_t count)
+{
+    size_t start = addr / PAGE_SIZE;
+
+    for (size_t i = start; i < start + count; i++) {
+        if (BIT_TEST(bitmap, i)) {
+            BIT_CLEAR(bitmap, i);
+            used_pages--;
+        }
+    }
+}
+
+void pmm_mark_used(paddr_t start, size_t size)
+{
+    paddr_t end = start + size;
 
     size_t start_page = start / PAGE_SIZE;
     size_t end_page = (end + PAGE_SIZE - 1) / PAGE_SIZE;
@@ -106,9 +147,9 @@ void pmm_mark_used(PHYSICAL_ADDRESS start, size_t size)
     }
 }
 
-void pmm_mark_free(PHYSICAL_ADDRESS start, size_t size)
+void pmm_mark_free(paddr_t start, size_t size)
 {
-    PHYSICAL_ADDRESS end = start + size;
+    paddr_t end = start + size;
 
     size_t start_page = start / PAGE_SIZE;
     size_t end_page = (end + PAGE_SIZE - 1) / PAGE_SIZE;

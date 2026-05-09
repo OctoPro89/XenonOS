@@ -6,11 +6,14 @@
 
 void pmm_init(BootInfo* boot);
 
-PHYSICAL_ADDRESS pmm_alloc_page(void);
-void pmm_free_page(PHYSICAL_ADDRESS page);
+paddr_t pmm_alloc_page(void);
+void pmm_free_page(paddr_t page);
 
-void pmm_mark_used(PHYSICAL_ADDRESS start, size_t size);
-void pmm_mark_free(PHYSICAL_ADDRESS start, size_t size);
+paddr_t pmm_alloc_contiguous_pages(size_t count);
+void pmm_free_countiguous_pages(paddr_t addr, size_t count);
+
+void pmm_mark_used(paddr_t start, size_t size);
+void pmm_mark_free(paddr_t start, size_t size);
 
 size_t pmm_total_pages(void);
 size_t pmm_used_pages(void);

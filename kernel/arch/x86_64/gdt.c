@@ -1,8 +1,9 @@
 #include <xlibc/xstdint.h>
+#include <kernel.h>
 #include "gdt.h"
 
 // 8-byte code/data descriptors
-struct __attribute__((packed)) GDTEntry {
+struct __packed__ GDTEntry {
     uint16_t limit_low;
     uint16_t base_low;
     uint8_t base_mid;
@@ -12,7 +13,7 @@ struct __attribute__((packed)) GDTEntry {
 };
 
 // 16-byte TSS descriptor
-struct __attribute__((packed)) GDTEntryTSS {
+struct __packed__ GDTEntryTSS {
     uint16_t limit_low;
     uint16_t base_low;
     uint8_t base_mid;
@@ -24,13 +25,13 @@ struct __attribute__((packed)) GDTEntryTSS {
 };
 
 // GDTPtr
-struct __attribute__((packed)) GDTPtr {
+struct __packed__ GDTPtr {
     uint16_t limit;
     uint64_t base;
 };
 
 // TSS
-struct __attribute__((packed)) TSS {
+struct __packed__ TSS {
     uint32_t reserved0;
     uint64_t rsp0;
     uint64_t rsp1;
@@ -50,7 +51,7 @@ struct TSS tss = {0};
 struct {
     struct GDTEntry entries[5];
     struct GDTEntryTSS tss;
-} __attribute__((packed)) gdt_full;
+} __packed__ gdt_full;
 
 #define gdt (gdt_full.entries)
 #define gdt_tss (gdt_full.tss)

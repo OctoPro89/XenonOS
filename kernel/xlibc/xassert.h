@@ -1,6 +1,12 @@
 #pragma once
 
 #ifdef XENONOS_DEBUG
+    #define ___CONCAT_IMPL___(x, y) x##y
+    #define ___CONCAT___(x, y) ___CONCAT_IMPL___(x, y)
+
+    #define STATIC_ASSERT(condition) \
+        typedef char ___CONCAT___(static_assertion_, __LINE__)[(condition) ? 1 : -1]
+
     extern void serial_write_char(char c);
     extern void serial_write_str(const char* s);
     extern void serial_write_hex(uint64_t val);
@@ -14,5 +20,6 @@
         while(1); \
     }
 #else
+    #define STATIC_ASSERT(condition)
     #define xassert(x, msg)
 #endif
