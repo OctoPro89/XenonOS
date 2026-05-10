@@ -36,6 +36,7 @@ ISR_NOERR i
 %assign i i+1
 %endrep
 
+; TODO: this may not suffice later on with FPU/SSE segment regs etc
 global isr_common_stub
 isr_common_stub:
     ; Save registers
@@ -55,9 +56,32 @@ isr_common_stub:
     push r14
     push r15
 
-    mov rdi, rsp    ; pass pointer to register frame
+    ; First arg = regs*
+    mov rdi, rsp
 
     call isr_common_handler
+
+    ; Restore registers
+    pop r15
+    pop r14
+    pop r13
+    pop r12
+    pop r11
+    pop r10
+    pop r9
+    pop r8
+    pop rbp
+    pop rdi
+    pop rsi
+    pop rdx
+    pop rcx
+    pop rbx
+    pop rax
+
+    ; Remove int_no + err_code
+    add rsp, 16
+
+    iretq
 
 .hang:
     cli

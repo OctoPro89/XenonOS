@@ -1,5 +1,7 @@
 #pragma once
 #include <xlibc/xstdint.h>
+#include <xlibc/xstdarg.h>
+#include <xlibc/xstddef.h>
 
 #define SEEK_SET 0
 #define SEEK_CUR 1
@@ -18,4 +20,9 @@ int fseek(FILE* stream, int offset, int whence);
 
 void putc(char c);
 void puts(const char* str);
-void printf(const char* fmt, ...);
+
+int printf(const char* fmt, ...);
+int vprintf(const char* fmt, va_list args);
+
+int snprintf(char* buffer, size_t size, const char* fmt, ...);
+int vsnprintf(char* buffer, size_t size, const char* fmt, va_list args);

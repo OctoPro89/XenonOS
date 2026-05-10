@@ -10,6 +10,8 @@
 #include <arch/x86_64/io.h>
 #include <arch/x86_64/syscall.h>
 #include <arch/x86_64/irq.h>
+#include <arch/x86_64/apic/lapic.h>
+#include <arch/x86_64/apic/apic_timer.h>
 #include <arch/x86_64/drivers/pci/pci.h>
 #include <arch/x86_64/drivers/ahci/ahci.h>
 
@@ -116,6 +118,7 @@ void run_user(vmm_space_t* space) {
 // TODO: task scheduler
 void timer_handler(struct regs* r) {
     ktimer_sched_irq_global_tick();
+    lapic_complete_irq();
 } 
 
 void ASMCALL kernel_main_trampoline(BootInfo* bootInfo) {
@@ -127,6 +130,11 @@ void ASMCALL kernel_main_trampoline(BootInfo* bootInfo) {
 
     acpi_enumerate_acpi_tables((void*)bootInfo->AcpiRsdp);
     irq_register_handler(IRQ0, &timer_handler);
+
+    lapic_init();
+
+    ktimer_calibrate_cpu_timer(4);
+    ktimer_start_cpu_periodic_timer(); // get timer interrupts
 
     graphics_init(&bootInfo->fb);
     graphics_clear_screen(0);
@@ -251,9 +259,22 @@ void ASMCALL kernel_main_trampoline(BootInfo* bootInfo) {
     printf("\n");
     printf("\n");
 
-    vmm_space_t* space = vmm_create_space();
-    space->user_mode = true;
-    run_user(space);
+    u64 nowtime = ktimer_get_system_time_in_seconds();
+    while (1) {
+        if (nowtime != ktimer_get_system_time_in_seconds()) {
+            char buf[100];
+            snprintf(buf, 100, "System Uptime (seconds): %llu", ktimer_get_system_time_in_seconds());
+            
+            graphics_draw_rect(500, 100, 200, 100, 0x0);
+            graphics_draw_string(buf, 500, 100, 0xFFFF);
+            graphics_swap_buffers();
+            nowtime = ktimer_get_system_time_in_seconds();
+        }
+    }
+
+    // vmm_space_t* space = vmm_create_space();
+    // space->user_mode = true;
+    // run_user(space);
     
     while(1);
 }

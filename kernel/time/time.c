@@ -26,7 +26,7 @@ void ktimer_calibrate_cpu_timer(u64 milliseconds) {
     u64 hpet_start = hpet_read_counter(&hpet_global);
     u64 rdtsc_start = __rdtsc__();
 
-    // wait for 1 second
+    // Wait 1 second
     while (hpet_read_counter(&hpet_global) - hpet_start < hardware_frequency) {
         asm volatile ("nop");
     }
