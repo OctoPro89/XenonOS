@@ -2,11 +2,11 @@
 #include <xlibc/xstdint.h>
 #include <kernel.h>
 
-extern __FORCEINLINE ASMCALL u64 __rdtsc__();
+extern __force_inline__ ASMCALL u64 __rdtsc__();
 
 void ktimer_init();
 void ktimer_calibrate_cpu_timer(u64 milliseconds);
-void ktimer_start_cpu_periodic_timer();
+void ktimer_start_cpu_periodic_timer(u8 irq_vector);
 u64 ktimer_get_high_precision_system_time();
 u64 ktimer_get_system_time_in_nanoseconds();
 u64 ktimer_get_system_time_in_milliseconds();

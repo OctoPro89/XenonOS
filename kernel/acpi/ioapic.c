@@ -29,6 +29,7 @@ __PRIVILEGED_CODE static ioapic_t ioapic_init(u64 physbase, u64 gsib) {
 
     ioapic.redirection_entry_count = (ioapic_read(&ioapic, IOAPICVER) >> 16) + 1;
     ioapic.global_intr_base = gsib;
+    return ioapic;
 }
 
 __PRIVILEGED_CODE void ioapic_create(u64 physbase, u64 gsib) {

@@ -9,7 +9,7 @@
 #define __PRIVILEGED_CODE
 #define __PRIVILEGED_DATA
 
-#define __HINTINLINE inline
-#define __FORCEINLINE __attribute__((always_inline))
+#define __hint_inline__ inline
+#define __force_inline__ __attribute__((always_inline))
 
 #define __packed__ __attribute__((packed))

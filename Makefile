@@ -12,7 +12,8 @@ KERNCFLAGS = -I$(EFI_INCLUDE) -I$(EFI_INCLUDE)/$(EFI_ARCH) \
          -fno-stack-protector \
          -fshort-wchar \
          -mno-red-zone \
-         -c -g -O0 -D XENONOS_DEBUG=1
+         -c -g -O0 -D XENONOS_DEBUG=1 \
+		 -Werror=return-type
 
 ASMFLAGS = -f elf64 -g -F dwarf
 
@@ -93,6 +94,7 @@ run: image
     -boot order=c \
     -serial stdio \
  	-S -gdb tcp::1234 \
+	-trace usb_xhci_* -D xhci.log \
 	-no-reboot \
  	-no-shutdown
 #   	-d int

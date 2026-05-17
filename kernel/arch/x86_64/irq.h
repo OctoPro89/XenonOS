@@ -78,7 +78,8 @@ struct regs {
     uint64_t rip, cs, rflags, user_rsp, ss; 
 };
 
-typedef void (*irq_handler_t)(struct regs* r);
+typedef void (*irq_handler_t)(struct regs* r, void* user_data);
 
-void irq_register_handler(uint8_t vec, irq_handler_t fn);
+void irq_register_handler(uint8_t vec, irq_handler_t fn, void* user_data);
 void irq_dispatch(struct regs* r);
+u8 irq_alloc_vector();

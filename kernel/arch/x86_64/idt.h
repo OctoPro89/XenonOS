@@ -1,4 +1,5 @@
 #pragma once
+#include <kernel.h>
 #include <xlibc/xstdint.h>
 
 struct IDTEntry {

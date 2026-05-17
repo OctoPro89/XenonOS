@@ -116,9 +116,8 @@ void run_user(vmm_space_t* space) {
 }
 
 // TODO: task scheduler
-void timer_handler(struct regs* r) {
+void timer_handler(struct regs* r, void*) {
     ktimer_sched_irq_global_tick();
-    lapic_complete_irq();
 } 
 
 void ASMCALL kernel_main_trampoline(BootInfo* bootInfo) {
@@ -129,12 +128,14 @@ void ASMCALL kernel_main_trampoline(BootInfo* bootInfo) {
     kernel_space.pml4 = (pte_t*)(bootInfo->PML4 + HHDM_OFFSET);
 
     acpi_enumerate_acpi_tables((void*)bootInfo->AcpiRsdp);
-    irq_register_handler(IRQ0, &timer_handler);
+
+    u8 timer_irq_vector = irq_alloc_vector();
+    irq_register_handler(timer_irq_vector, &timer_handler, NULL);
 
     lapic_init();
 
     ktimer_calibrate_cpu_timer(4);
-    ktimer_start_cpu_periodic_timer(); // get timer interrupts
+    ktimer_start_cpu_periodic_timer(timer_irq_vector); // get timer interrupts
 
     graphics_init(&bootInfo->fb);
     graphics_clear_screen(0);
@@ -157,7 +158,7 @@ void ASMCALL kernel_main_trampoline(BootInfo* bootInfo) {
     xhci_driver_t xhci_driver;
     xhci_driver.name = "Default XHCI Controller Driver";
     xhci_driver.pci_device = xhci_dev;
-    if (!xhci_driver_init_device(&xhci_driver)) {
+    if (!xhci_driver_init_device(&xhci_driver) || !xhci_driver_start_device(&xhci_driver)) {
         printf("Failed to initialize XHCI driver!\n");
         while(1);
     }
@@ -265,7 +266,7 @@ void ASMCALL kernel_main_trampoline(BootInfo* bootInfo) {
             char buf[100];
             snprintf(buf, 100, "System Uptime (seconds): %llu", ktimer_get_system_time_in_seconds());
             
-            graphics_draw_rect(500, 100, 200, 100, 0x0);
+            graphics_draw_rect(500, 100, 220, 50, 0x0);
             graphics_draw_string(buf, 500, 100, 0xFFFF);
             graphics_swap_buffers();
             nowtime = ktimer_get_system_time_in_seconds();

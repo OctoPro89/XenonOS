@@ -4,11 +4,11 @@
 
 hpet_t hpet_global;
 
-static __HINTINLINE u64 hpet_read_hpet_register(const hpet_t* hpet, u64 offset) {
+static __hint_inline__ u64 hpet_read_hpet_register(const hpet_t* hpet, u64 offset) {
     return *(volatile u64*)(hpet->base + offset);
 }
 
-static __HINTINLINE u64 hpet_write_hpet_register(hpet_t* hpet, u64 offset, u64 value) {
+static __hint_inline__ void hpet_write_hpet_register(hpet_t* hpet, u64 offset, u64 value) {
     *(volatile u64*)(hpet->base + offset) = value;
 }
 

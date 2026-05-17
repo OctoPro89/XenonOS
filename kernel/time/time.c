@@ -44,8 +44,8 @@ void ktimer_calibrate_cpu_timer(u64 milliseconds) {
     configured_apic_interval_ms = milliseconds;
 }
 
-void ktimer_start_cpu_periodic_timer() {
-    apic_timer_setup_periodic(&apic_timer_global, IRQ0, 1, apic_ticks_calibrated_frequency);
+void ktimer_start_cpu_periodic_timer(u8 irq_vector) {
+    apic_timer_setup_periodic(&apic_timer_global, irq_vector, 1, apic_ticks_calibrated_frequency);
     apic_timer_start(&apic_timer_global);
 }
 
@@ -105,13 +105,49 @@ void sleep(u32 seconds) {
 }
 
 void msleep(u32 milliseconds) {
+    u64 start = hpet_read_counter(&hpet_global);
+    u64 target = start + (milliseconds * (hardware_frequency / 1000ULL));
 
+    while (true) {
+        u64 current = hpet_read_counter(&hpet_global);
+        if (current < start) { // wraparound detected
+            start = current;
+            target = start + (milliseconds * (hardware_frequency / 1000ULL));
+        }
+        if (current >= target) break;
+
+        asm volatile("pause");
+    }
 }
 
 void usleep(u32 microseconds) {
+    u64 start = hpet_read_counter(&hpet_global);
+    u64 target = start + (microseconds * (hardware_frequency / 1000000ULL));
 
+    while (true) {
+        u64 current = hpet_read_counter(&hpet_global);
+        if (current < start) { // wraparound detected
+            start = current;
+            target = start + (microseconds * (hardware_frequency / 1000000ULL));
+        }
+        if (current >= target) break;
+
+        asm volatile("pause");
+    }
 }
 
 void nanosleep(u32 nanoseconds) {
+    u64 start = hpet_read_counter(&hpet_global);
+    u64 target = start + (nanoseconds * (hardware_frequency / 1000000000ULL));
 
+    while (true) {
+        u64 current = hpet_read_counter(&hpet_global);
+        if (current < start) { // wraparound detected
+            start = current;
+            target = start + (nanoseconds * (hardware_frequency / 1000000000ULL));
+        }
+        if (current >= target) break;
+
+        asm volatile("pause");
+    }
 }

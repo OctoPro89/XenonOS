@@ -4,6 +4,7 @@
 */
 
 #pragma once
+#include <kernel.h>
 #include <xlibc/xstdint.h>
 #include <filesystem/block_device/block_device.h>
 
