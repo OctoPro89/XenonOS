@@ -266,8 +266,8 @@ void ASMCALL kernel_main_trampoline(BootInfo* bootInfo) {
             char buf[100];
             snprintf(buf, 100, "System Uptime (seconds): %llu", ktimer_get_system_time_in_seconds());
             
-            graphics_draw_rect(500, 100, 220, 50, 0x0);
-            graphics_draw_string(buf, 500, 100, 0xFFFF);
+            graphics_draw_rect(500, 50, 220, 50, 0x0);
+            graphics_draw_string(buf, 500, 50, 0xFFFF);
             graphics_swap_buffers();
             nowtime = ktimer_get_system_time_in_seconds();
         }

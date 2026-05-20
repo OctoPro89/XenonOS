@@ -1,6 +1,7 @@
 #pragma once
 #include <xlibc/xstdint.h>
 #include <arch/x86_64/drivers/pci/pci.h>
+#include <drivers/usb/xhci_ext_cap.h>
 #include <drivers/usb/xhci_rings.h>
 #include <drivers/usb/xhci_regs.h>
 
@@ -11,6 +12,9 @@ typedef struct {
     volatile xhci_capability_registers_t* cap_regs; // NOTE: MUST be defined as volatile because controller will change values behind scenes
     volatile xhci_operational_registers_t* op_regs;
     volatile xhci_runtime_registers_t* runtime_regs;
+
+    // linked list of extended capabilities
+    xhci_extended_capability_t extended_capabilities_head;
 
     // CAPLENGTH
     u8 capability_regs_length;
@@ -53,6 +57,10 @@ typedef struct {
     volatile u8 command_irq_completed;
 
     u8 irq_vector;
+
+    // USB3.x specific ports (zero-based)
+    u8 usb3_ports[255];
+    u8 usb3_port_count;
 } xhci_driver_t;
 
 b8 xhci_driver_init_device(xhci_driver_t* driver);
@@ -60,6 +68,8 @@ b8 xhci_driver_start_device(xhci_driver_t* driver);
 b8 xhci_driver_shutdown_device(xhci_driver_t* driver);
 
 void xhci_driver_parse_capability_registers(xhci_driver_t* driver);
+void xhci_driver_parse_extended_capabilities(xhci_driver_t* driver);
 void xhci_driver_log_capability_registers(xhci_driver_t* driver);
 
 b8 xhci_driver_reset_host_controller(xhci_driver_t* driver);
+b8 xhci_driver_reset_port(xhci_driver_t* driver, u8 port_num);

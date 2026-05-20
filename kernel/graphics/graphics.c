@@ -252,14 +252,14 @@ static inline void put_pixel(uint32_t x, uint32_t y, uint32_t color) {
     }
         */
     // ((volatile uint32_t*)backbuffer)[y * pixels_per_line + x] = color;
-    ((uint32_t*)backbuffer)[y * pixels_per_line + x] = color; // regular RAM buffer doesn't need volatile
+    ((volatile uint32_t*)backbuffer)[y * pixels_per_line + x] = color; // regular RAM buffer doesn't need volatile
 }
 
 void graphics_draw_rect(uint32_t x, uint32_t y, uint32_t w, uint32_t h, uint32_t color) {
     for (uint32_t j = 0; j < h; j++) {
-        uint32_t* row = (uint32_t*)backbuffer + (y + j) * pixels_per_line + x;
+        volatile uint32_t* row = (uint32_t*)backbuffer + (y + j) * pixels_per_line + x;
         uint64_t packed = ((uint64_t)color << 32) | color;
-        memset_fast_qword(row, packed, w / 2);
+        memset_fast_qword((void*)row, packed, w / 2);
         if (w & 1) row[w - 1] = color;
     }
     mark_dirty(x, y, w, h);
@@ -270,7 +270,7 @@ void graphics_draw_char(char c, uint32_t x, uint32_t y, uint32_t color) {
     const uint8_t* glyph = font8x8_basic[(uint8_t)c];  // no -32
     for (uint32_t row = 0; row < 8; row++) {
         uint8_t bits = glyph[row];
-        uint32_t* row_ptr = backbuffer + (y + row) * pixels_per_line + x;
+        volatile uint32_t* row_ptr = backbuffer + (y + row) * pixels_per_line + x;
 
         for (uint32_t col1 = 0; col1 < 8; col1++) {
             if (bits & (1 << col1)) {

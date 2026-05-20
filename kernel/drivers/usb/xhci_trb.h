@@ -7,7 +7,7 @@ typedef struct __packed__ xhci_transfer_request_block {
     u64 parameter; // trb-specific parameter
     u32 status; // status information
     union {
-        struct {
+        struct __packed__ {
             u32 cycle_bit   : 1;
             u32 rsvd0       : 9;
             u32 trb_type    : 6;
@@ -21,11 +21,11 @@ STATIC_ASSERT(sizeof(xhci_trb_t) == sizeof(u32) * 4);
 
 typedef struct __packed__ {
     u64 command_trb_pointer;
-    struct {
+    struct __packed__ {
         u32 rsvd0           : 24;
         u32 completion_code : 8;
     };
-    struct {
+    struct __packed__ {
         u32 cycle_bit       : 1;
         u32 rsvd1           : 9;
         u32 trb_type        : 6;

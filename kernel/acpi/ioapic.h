@@ -21,8 +21,8 @@ enum {
     IOAPIC_DESTINATION_MODE_LOGICAL = 1,
 };
 
-typedef union {
-    struct {
+typedef union __packed__ {
+    struct __packed__ {
         uint64_t vector        : 8;
         uint64_t delv_mode     : 3;
         uint64_t dest_mode     : 1;

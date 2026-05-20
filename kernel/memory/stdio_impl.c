@@ -7,7 +7,7 @@ static u32 max_chars_per_line = 100;
 
 void stdio_impl_putchr(char c) {
     static u32 xoff = 100;
-    static u32 yoff = 100;
+    static u32 yoff = 50;
     static u32 spacingx = 8;
     static u32 spacingy = 10;
 

@@ -13,7 +13,8 @@ KERNCFLAGS = -I$(EFI_INCLUDE) -I$(EFI_INCLUDE)/$(EFI_ARCH) \
          -fshort-wchar \
          -mno-red-zone \
          -c -g -O0 -D XENONOS_DEBUG=1 \
-		 -Werror=return-type
+		 -Werror=return-type \
+		 -Werror=incompatible-pointer-types
 
 ASMFLAGS = -f elf64 -g -F dwarf
 
@@ -89,7 +90,8 @@ run: image
     -drive if=none,id=disk0,format=raw,file=image/disk.img \
     -device ahci,id=ahci \
     -device ide-hd,bus=ahci.0,drive=disk0 \
-	-device qemu-xhci,p3=2 \
+	-device qemu-xhci,p3=2,id=xhci \
+	-device usb-kbd,bus=xhci.0 \
     -bios /usr/share/ovmf/OVMF_CODE.fd \
     -boot order=c \
     -serial stdio \

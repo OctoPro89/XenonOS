@@ -183,12 +183,47 @@ static void xhci_driver_configure_runtime_registers(xhci_driver_t* driver) {
     xhci_driver_acknowledge_irq(driver, 0);
 }
 
+static xhci_portsc_register_t xhci_driver_read_portsc_reg(xhci_driver_t* driver, u8 port_num) {
+    u64 reg_base = (u64)(driver->op_regs) + (0x400 + (0x10 * port_num));
+
+    xhci_portsc_register_t reg;
+    reg.raw = *(volatile u32*)(reg_base);
+
+    return reg;
+}
+
+static void xhci_driver_write_portsc_reg(xhci_driver_t* driver, xhci_portsc_register_t reg, u8 port_num) {
+    u64 reg_base = (u64)(driver->op_regs) + (0x400 + (0x10 * port_num));
+    *(volatile u32*)(reg_base) = reg.raw;
+}
+
+// TODO: probably not the best performing way, but XHCI controller doesn't support a huge number of devices
+static b8 xhci_driver_is_usb3_port(xhci_driver_t* driver, u8 port_num) {
+    for (u8 i = 0; i < driver->usb3_port_count; ++i) {
+        if (driver->usb3_ports[i] == port_num) { return true; }
+    }
+
+    return false;
+}
+
+static const char* usb_speed_strings[7] = {
+    "Invalid",
+    "Full Speed (12 Mbits/s - USB 2.0)",
+    "Low Speed (1.5 Mbits/s - USB 2.0)",
+    "High Speed (480 Mbits/s - USB 2.0)",
+    "Super Speed (5 Gbits/s - USB 3.0)",
+    "Super Speed Plus (10 Gbits/s - USB 3.1)",
+    "Undefined"
+};
+
 b8 xhci_driver_init_device(xhci_driver_t* driver) {
     pci_bar_t* bar = &driver->pci_device->bar[0];
     driver->xhc_base = xhci_map_mmio(bar->base, bar->size);
 
     pci_enable_bus_master(driver->pci_device);
     xhci_driver_parse_capability_registers(driver);
+
+    xhci_driver_parse_extended_capabilities(driver);
 
     if (!xhci_driver_reset_host_controller(driver)) { return false; }
 
@@ -215,11 +250,21 @@ b8 xhci_driver_start_device(xhci_driver_t* driver) {
         return false;
     }
 
-    xhci_trb_t trb;
-    memset(&trb, 0, sizeof(trb));
-    trb.trb_type = XHCI_TRB_TYPE_ENABLE_SLOT_CMD;
+    // controller started //
 
-    xhci_command_completion_trb_t* completion_trb = xhci_driver_send_command_trb(driver, &trb, 200);
+    for (u8 port = 0; port < driver->max_ports; ++port) {
+        xhci_portsc_register_t portsc = xhci_driver_read_portsc_reg(driver, port);
+        if (portsc.csc && portsc.ccs) {
+            b8 reset_successful = xhci_driver_reset_port(driver, port);
+            if (reset_successful) {
+                printf("[XHCI Driver]: Device connected on port %u - %s\n", port, usb_speed_strings[portsc.port_speed]);
+                // proceed to device setup
+            }
+            else {
+                printf("[XHCI Driver]: Failed to reset port %u after connection detection\n", port);
+            }
+        }
+    }
 
     return true;
 }
@@ -276,6 +321,35 @@ void xhci_driver_log_capability_registers(xhci_driver_t* driver) {
     printf("\n");
 }
 
+void xhci_driver_parse_extended_capabilities(xhci_driver_t* driver) {
+    volatile u32* head_cap_ptr = (volatile u32*)(driver->xhc_base + driver->extended_capabilities_offset);
+    driver->extended_capabilities_head = xhci_extended_capability_init(head_cap_ptr);
+
+    xhci_extended_capability_t* node = &driver->extended_capabilities_head;
+    
+    while (node) {
+        if (node->entry.id == (u8)XHCI_EXTENDED_CAPABILITY_CODE_SUPPORTED_PROTOCOL) {
+            xhci_usb_supported_protocol_capability_t cap = xhci_usb_supported_protocol_capability_init(node->base);
+
+            // make the ports zero-based
+            u8 first_port = cap.compatible_port_offset - 1;
+            u8 last_port = first_port + cap.compatible_port_count - 1;
+
+            // usb3
+            if (cap.major_revision_version == 3) {
+                for (u8 port = first_port; port <= last_port; ++port) {
+                    xassert(driver->usb3_port_count + 1 < 255, "XHCI: Max amount of supported devices is 255!");
+                    // keep track of usb3 ports
+                    driver->usb3_ports[driver->usb3_port_count] = port;
+                    ++driver->usb3_port_count;
+                }
+            } 
+        }
+        
+        node = node->next;
+    }
+}
+
 b8 xhci_driver_reset_host_controller(xhci_driver_t* driver) {
     // according to spec:
     // read full 32 bit value of cmd reg
@@ -320,5 +394,83 @@ b8 xhci_driver_reset_host_controller(xhci_driver_t* driver) {
     if (driver->op_regs->dcbaap != 0) { return false; }
     if (driver->op_regs->config != 0) { return false; }
 
+    return true;
+}
+
+b8 xhci_driver_reset_port(xhci_driver_t* driver, u8 port_num) {
+    xhci_portsc_register_t portsc = xhci_driver_read_portsc_reg(driver, port_num);
+
+    b8 is_usb3_port = xhci_driver_is_usb3_port(driver, port_num);
+
+    // power on the port if necessary
+    if (portsc.pp == 0) {
+        portsc.pp = 1;
+        xhci_driver_write_portsc_reg(driver, portsc, port_num);
+        msleep(20); // wait for power stabilization
+        portsc = xhci_driver_read_portsc_reg(driver, port_num);
+
+        if (portsc.pp == 0) {
+            // port failed to power on
+            return false;
+        }
+    }
+
+    // clear any lingering status change bits before initiating the reset
+    // VERY MUCH needed on real hardware
+    portsc.csc = 1;
+    portsc.pec = 1;
+    portsc.prc = 1;
+    xhci_driver_write_portsc_reg(driver, portsc, port_num);
+
+    // initiate the port reset
+    if (is_usb3_port) {
+        portsc.wpr = 1; // warm reset for USB 3.0
+    }
+    else {
+        portsc.pr = 1; // standard port reset for USB 2.0
+    }
+    xhci_driver_write_portsc_reg(driver, portsc, port_num);
+
+    // wait for the reset to complete
+    int timeout = 100;
+    while (timeout > 0) {
+        portsc = xhci_driver_read_portsc_reg(driver, port_num);
+
+        if ((is_usb3_port && portsc.wrc) || (!is_usb3_port && portsc.prc)) {
+            break; // reset complete
+        }
+
+        --timeout;
+        msleep(1);
+    }
+
+    if (timeout == 0) {
+        // failed to reset
+        return false;
+    }
+
+    msleep(3); // give the hardware time to settle
+
+    // clear the reset completion and status change bits
+    // NOTE: VERY IMPORTANT, DO NOT REMOVE
+    portsc.prc = 1;
+    portsc.wrc = 1;
+    portsc.csc = 1;
+    portsc.pec = 1;
+    portsc.ped = 0;
+    xhci_driver_write_portsc_reg(driver, portsc, port_num);
+
+    msleep(3); // give the hardware time to settle
+
+    // re-read the register to check if the port is enabled
+    portsc = xhci_driver_read_portsc_reg(driver, port_num);
+
+    // this case could happen when the port has been reset after a device
+    // disconnect event, and no device has connected since that
+    if (portsc.ped == 0) {
+        return false;
+    }
+
+    // successful port reset
     return true;
 }
