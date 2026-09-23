@@ -28,7 +28,7 @@ dma_region_t dma_alloc(size_t size)
         );
     }
 
-    // optional but useful for safety
+    // TODO: optional but useful for safety
     // memset((void*)vaddr, 0, aligned);
 
     dma_region_t region = {

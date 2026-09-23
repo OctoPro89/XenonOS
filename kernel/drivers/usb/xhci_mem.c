@@ -22,6 +22,7 @@ dma_region_t xhci_alloc_memory(size_t size, size_t alignment, size_t boundary) {
     return memblock;
 }
 
+// TODO:
 void xhci_free_memory(void* ptr) {
     // dma_free(ptr);
 }

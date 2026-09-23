@@ -1,5 +1,8 @@
 #include <drivers/usb/xhci_rings.h>
+#include <arch/x86_64/barrier.h>
 #include <memory/paging.h>
+
+// TODO: allocation checking
 
 xhci_command_ring_t xhci_command_ring_init(size_t max_trbs) {
     xhci_command_ring_t cmdring;
@@ -132,4 +135,62 @@ void xhci_event_ring_dequeue_events(xhci_event_ring_t* er, xhci_trb_t** trbs, u6
 
 void xhci_event_ring_flush_unprocessed_events(xhci_event_ring_t* er) {
     xhci_event_ring_dequeue_events(er, NULL, NULL);
+}
+
+void xhci_event_ring_finish_procecssing(xhci_event_ring_t* er) {
+    u64 dequeue_addr = er->physical_base + (er->dequeue_ptr * sizeof(xhci_trb_t));
+    barrier_dma_write();
+    er->interrupter_regs->erdp = (u64)(dequeue_addr | XHCI_ERDP_EHB);
+    (void)er->interrupter_regs->iman; // read-back flushes posted PCIe writes
+}
+
+xhci_transfer_ring_t xhci_transfer_ring_init(size_t max_trbs, u8 doorbell_id) {
+    xhci_transfer_ring_t tr;
+    tr.max_trb_count = max_trbs;
+    tr.rcs_bit = 1;
+    tr.dequeue_ptr = 0;
+    tr.enqueue_ptr = 0;
+    tr.doorbell_id = doorbell_id;
+
+    const size_t ring_size = max_trbs * sizeof(xhci_trb_t);
+
+    // craete the transfer ring memory block
+    dma_region_t trbs_region = xhci_alloc_memory(ring_size, XHCI_TRANSFER_RING_SEGMENTS_ALIGNMENT, XHCI_TRANSFER_RING_SEGMENTS_BOUNDARY);
+    tr.trbs = (xhci_trb_t*)trbs_region.virt;
+    tr.physical_base = trbs_region.phys;
+
+    // set the last trb as a link trb to point back to the first trb
+    tr.trbs[tr.max_trb_count - 1].parameter = tr.physical_base;
+    tr.trbs[tr.max_trb_count - 1].control = (XHCI_TRB_TYPE_LINK << XHCI_TRB_TYPE_SHIFT) | XHCI_LINK_TRB_TC_BIT | tr.rcs_bit;
+
+    return tr;
+}
+
+paddr_t xhci_transfer_ring_get_enqueue_phys(xhci_transfer_ring_t* tr) {
+    return (paddr_t)(tr->physical_base + tr->enqueue_ptr * sizeof(xhci_trb_t));
+}
+
+b8 xhci_transfer_ring_can_enqueue(xhci_transfer_ring_t* tr, size_t n) {
+    // usable slots = m_max_trb_count - 1 (last slot is the link trb)
+    size_t usable = tr->max_trb_count - 1;
+    size_t available = (tr->enqueue_ptr < usable) ? (usable - tr->enqueue_ptr) : 0;
+    return n <= available;
+}
+
+void xhci_transfer_ring_enqueue(xhci_transfer_ring_t* tr, xhci_trb_t* trb) {
+    // adjust the trbs's cycle bit to the current rcs
+    trb->cycle_bit = tr->rcs_bit;
+
+    // Insert the TRB into the ring
+    tr->trbs[tr->enqueue_ptr] = *trb;
+
+    // Advance and possibly wrap the enqueue pointer if needed.
+    // maxTrbCount - 1 accounts for the LINK_TRB.
+    if (++tr->enqueue_ptr == tr->max_trb_count - 1) {
+        // Only now update the Link TRB, syncing its cycle bit and setting the TC flag.
+        tr->trbs[tr->max_trb_count - 1].control = (XHCI_TRB_TYPE_LINK << XHCI_TRB_TYPE_SHIFT) | XHCI_LINK_TRB_TC_BIT | tr->rcs_bit;
+
+        tr->enqueue_ptr = 0;
+        tr->rcs_bit = !tr->rcs_bit;
+    }
 }

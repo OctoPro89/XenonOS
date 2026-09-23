@@ -228,3 +228,8 @@ void xhci_doorbell_manager_ring_command_doorbell(xhci_doorbell_manager_t* db_man
 void xhci_doorbell_manager_ring_control_endpoint_doorbell(xhci_doorbell_manager_t* db_manager, u8 doorbell);
 
 xhci_extended_capability_t xhci_extended_capability_init(volatile u32* cap_ptr);
+
+// PORTSC RW1C change bits (bits 17-23): writing 1 clears these status bits.
+// Always mask these out on normal PORTSC writes to avoid accidental clearing.
+// Use explicit writes with these bits set only when intentionally acknowledging changes.
+#define PORTSC_RW1C_BITS (u32)((1u << 1) | (1u << 17) | (1u << 18) | (1u << 19) | (1u << 20) | (1u << 21) | (1u << 22) | (1u << 23))

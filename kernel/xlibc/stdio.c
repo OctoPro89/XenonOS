@@ -220,7 +220,6 @@ static void printf_signed(printf_emit_fn emit, void* ctx, long long number, int 
     }
 }
 
-
 static int vprintf_internal(printf_emit_fn emit_fn, void* emit_ctx, const char* fmt, va_list args) {
     printf_context_t out;
     out.emit = emit_fn;
@@ -422,6 +421,7 @@ int vprintf(const char* fmt, va_list args) {
     return vprintf_internal(printf_console_emit, NULL, fmt, args);
 }
 
+// TODO: needs support for field width, i.e. %04x, differentiate %x from %X (lowercase & uppercase), maybe zero-padded representations
 int printf(const char* fmt, ...) {
     va_list args;
     va_start(args, fmt);

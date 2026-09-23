@@ -2,6 +2,7 @@
 #include <xlibc/xstdint.h>
 #include <arch/x86_64/drivers/pci/pci.h>
 #include <drivers/usb/xhci_ext_cap.h>
+#include <drivers/usb/xhci_device.h>
 #include <drivers/usb/xhci_rings.h>
 #include <drivers/usb/xhci_regs.h>
 
@@ -61,9 +62,12 @@ typedef struct {
     // USB3.x specific ports (zero-based)
     u8 usb3_ports[255];
     u8 usb3_port_count;
+
+    xhci_device_t** port_devices;
+    xhci_device_t** slot_devices;
 } xhci_driver_t;
 
-b8 xhci_driver_init_device(xhci_driver_t* driver);
+b8 xhci_driver_init_driver(xhci_driver_t* driver);
 b8 xhci_driver_start_device(xhci_driver_t* driver);
 b8 xhci_driver_shutdown_device(xhci_driver_t* driver);
 
@@ -73,3 +77,8 @@ void xhci_driver_log_capability_registers(xhci_driver_t* driver);
 
 b8 xhci_driver_reset_host_controller(xhci_driver_t* driver);
 b8 xhci_driver_reset_port(xhci_driver_t* driver, u8 port_num);
+
+/**
+ * @note This function assumes host controller has already been started successfully
+ */
+void xhci_driver_run_loop(xhci_driver_t* driver);

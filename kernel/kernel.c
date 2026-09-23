@@ -158,7 +158,7 @@ void ASMCALL kernel_main_trampoline(BootInfo* bootInfo) {
     xhci_driver_t xhci_driver;
     xhci_driver.name = "Default XHCI Controller Driver";
     xhci_driver.pci_device = xhci_dev;
-    if (!xhci_driver_init_device(&xhci_driver) || !xhci_driver_start_device(&xhci_driver)) {
+    if (!xhci_driver_init_driver(&xhci_driver) || !xhci_driver_start_device(&xhci_driver)) {
         printf("Failed to initialize XHCI driver!\n");
         while(1);
     }
@@ -262,6 +262,10 @@ void ASMCALL kernel_main_trampoline(BootInfo* bootInfo) {
 
     u64 nowtime = ktimer_get_system_time_in_seconds();
     while (1) {
+        if (nowtime != ktimer_get_system_time_in_milliseconds()) {
+            xhci_driver_run_loop(&xhci_driver);
+        }
+
         if (nowtime != ktimer_get_system_time_in_seconds()) {
             char buf[100];
             snprintf(buf, 100, "System Uptime (seconds): %llu", ktimer_get_system_time_in_seconds());

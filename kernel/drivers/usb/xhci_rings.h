@@ -6,6 +6,8 @@
 #include <xlibc/xstddef.h>
 #include <kernel.h>
 
+// TODO: destroy functions
+
 #define XHCI_RINGS_MAX_DEQUEUEABLE_EVENTS 512
 
 typedef struct {
@@ -47,3 +49,20 @@ static __hint_inline__ b8 xhci_event_ring_has_unprocessed_events(xhci_event_ring
  */
 void xhci_event_ring_dequeue_events(xhci_event_ring_t* er, xhci_trb_t** trbs, u64* out_dequeued);
 void xhci_event_ring_flush_unprocessed_events(xhci_event_ring_t* er);
+void xhci_event_ring_finish_procecssing(xhci_event_ring_t* er);
+
+typedef struct {
+    size_t max_trb_count; // Number of valid TRBs in the ring including the LINK_TRB
+    size_t dequeue_ptr;   // Transfer ring consumer dequeue pointer
+    size_t enqueue_ptr;   // Transfer ring producer enqueue pointer
+    xhci_trb_t* trbs; // Base address of the ring buffer
+    paddr_t physical_base;
+    u8 rcs_bit; // Dequeue cycle state
+    u8 doorbell_id; // ID of the doorbell associated with the ring
+} xhci_transfer_ring_t;
+
+xhci_transfer_ring_t xhci_transfer_ring_init(size_t max_trbs, u8 doorbell_id);
+
+paddr_t xhci_transfer_ring_get_enqueue_phys(xhci_transfer_ring_t* tr);
+b8 xhci_transfer_ring_can_enqueue(xhci_transfer_ring_t* tr, size_t n);
+void xhci_transfer_ring_enqueue(xhci_transfer_ring_t* tr, xhci_trb_t* trb);

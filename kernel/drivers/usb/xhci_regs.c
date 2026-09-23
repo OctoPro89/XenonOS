@@ -9,6 +9,7 @@ xhci_doorbell_manager_t xhci_doorbell_manager_init(vaddr_t base) {
 }
 
 void xhci_doorbell_manager_ring_doorbell(xhci_doorbell_manager_t* db_manager, u8 doorbell, u8 target) {
+    // TODO: possibly put barrier_dma_write here
     db_manager->doorbell_registers[doorbell].raw = (u32)target;
 }
 
@@ -24,6 +25,12 @@ static xhci_extended_capability_t ext_nexts[16]; // TODO: could probably use a b
 static u8 ext_next_count = 0;
 
 static void xhci_extended_capability_read_next_ext_caps(xhci_extended_capability_t* ext) {
+    if (ext_next_count >= 16) {
+        // TODO: throw error
+        xassert(false, "");
+        return;
+    }
+    
     if (ext->entry.next) {
         volatile u32* next_cap_ptr = XHCI_NEXT_EXT_CAP_PTR(ext->base, ext->entry.next);
         ext_nexts[ext_next_count] = xhci_extended_capability_init(next_cap_ptr);
