@@ -96,9 +96,9 @@ run: image
     -boot order=c \
     -serial stdio \
  	-S -gdb tcp::1234 \
-	-trace usb_xhci_* -D xhci.log \
 	-no-reboot \
  	-no-shutdown
+# 	-trace usb_xhci_* -D xhci.log
 #   	-d int
 
 # 	qemu-system-x86_64 \
