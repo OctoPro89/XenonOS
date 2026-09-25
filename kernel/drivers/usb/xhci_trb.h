@@ -424,17 +424,17 @@ typedef struct __packed__ xhci_transfer_completion_request_block {
 
 STATIC_ASSERT(sizeof(xhci_transfer_completion_trb_t) == sizeof(u32) * 4);
 
-typedef struct xhci_port_status_change_request_block {
-    struct {
+typedef struct __packed__ xhci_port_status_change_request_block {
+    struct __packed__ {
         u32 rsvd0   : 24;
         u32 port_id : 8;
     };
     u32 rsvd1;
-    struct {
+    struct __packed__ {
         u32 rsvd2           : 24;
         u32 completion_code : 8;
     };
-    struct {
+    struct __packed__ {
         u32 cycle_bit  : 1;
         u32 rsvd3      : 9;
         u32 trb_type   : 6;
@@ -444,10 +444,10 @@ typedef struct xhci_port_status_change_request_block {
 
 STATIC_ASSERT(sizeof(xhci_port_status_change_trb_t) == sizeof(u32) * 4);
 
-typedef struct xhci_evaluate_context_command_request_block {
+typedef struct __packed__ xhci_evaluate_context_command_request_block {
     u64 input_context_physical_base;
     u32 rsvd0;
-    struct {
+    struct __packed__ {
         u32 cycle_bit  : 1;
         u32 rsvd1      : 8;
         u32 rsvd2      : 1;
@@ -458,5 +458,20 @@ typedef struct xhci_evaluate_context_command_request_block {
 } xhci_evaluate_context_command_trb_t;
 
 STATIC_ASSERT(sizeof(xhci_evaluate_context_command_trb_t) == sizeof(u32) * 4);
+
+typedef struct __packed__ xhci_configure_endpoint_command_request_block {
+    u64 input_context_physical_base;
+    u32 rsvd0;
+    struct __packed__ {
+        u32 cycle_bit    : 1;
+        u32 rsvd1        : 8;
+        u32 deconfigure  : 1;
+        u32 trb_type     : 6;
+        u32 rsvd3        : 8;
+        u32 slot_id      : 8;
+    };
+} xhci_configure_endpoint_command_trb_t;
+
+STATIC_ASSERT(sizeof(xhci_configure_endpoint_command_trb_t) == sizeof(u32) * 4);
 
 const char* xhci_trb_completion_code_to_string(u8 completion_code);

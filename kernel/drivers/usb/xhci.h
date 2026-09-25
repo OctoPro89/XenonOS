@@ -33,7 +33,7 @@ typedef struct {
     // HCCPARAMS1
     b8 sixty_four_bit_addressing_capability;
     b8 bandwidth_negotiation_capability;
-    b8 sixty_four_byte_context_size;
+    b8 sixty_four_byte_context_size; // CSZ
     b8 port_power_control;
     b8 port_indicators;
     b8 light_reset_capability;

@@ -3,6 +3,7 @@
 #include <drivers/usb/xhci_common.h>
 #include <drivers/usb/xhci_device_ctx.h>
 #include <drivers/usb/usb_descriptors.h>
+#include <drivers/usb/core/usb_core.h>
 #include <memory/paging.h>
 #include <memory/heap.h>
 #include <time/time.h>
@@ -41,6 +42,11 @@ static void xhci_driver_configure_ctrl_ep_input_context(xhci_driver_t* driver, x
 static xhci_command_completion_trb_t* xhci_driver_address_device(xhci_driver_t* driver, xhci_device_t* device, b8 bsr);
 static b8 xhci_driver_send_control_transfer(xhci_driver_t* driver, xhci_device_t* device, xhci_device_request_packet_t* req, void* buffer, u16 length);
 static b8 xhci_driver_get_device_descriptor(xhci_driver_t* driver, xhci_device_t* device, void* out, u16 length);
+static b8 xhci_driver_get_configuration_descriptor(xhci_driver_t* driver, xhci_device_t* device, usb_configuration_descriptor_t* desc_out, u8 config_index);
+static xhci_endpoint_t* xhci_driver_create_endpoint(xhci_driver_t* driver, xhci_device_t* device, const usb_endpoint_descriptor_t* desc);
+static void xhci_driver_configure_endpoint_context(xhci_driver_t* driver, xhci_device_t* device, xhci_endpoint_t* ep);
+static xhci_command_completion_trb_t*  xhci_driver_configure_endpoints(xhci_driver_t* driver, xhci_device_t* device);
+static b8 xhci_driver_set_configuration(xhci_driver_t* driver, xhci_device_t* device, u8 config_value);
 static void xhci_driver_configure_device(xhci_driver_t* driver, xhci_device_t* device, const usb_device_descriptor_t* desc);
 static void xhci_driver_setup_device(xhci_driver_t* driver, u8 port);
 
@@ -546,18 +552,201 @@ static b8 xhci_driver_get_device_descriptor(xhci_driver_t* driver, xhci_device_t
     return xhci_driver_send_control_transfer(driver, device, &req, out, length);
 }
 
+static b8 xhci_driver_get_configuration_descriptor(xhci_driver_t* driver, xhci_device_t* device, usb_configuration_descriptor_t* desc_out, u8 config_index) {
+    xhci_device_request_packet_t req;
+    memset(&req, 0, sizeof(xhci_device_request_packet_t));
+    req.bRequestType = 0x80;
+    req.bRequest = 6; // GET_DESCRIPTOR
+    req.wValue = USB_DESCRIPTOR_REQUEST(USB_DESCRIPTOR_CONFIGURATION, config_index);
+    req.wIndex = 0;
+
+    // first pass, read the 9-byte config descriptor header to get wTotalLength
+    const u16 CONFIG_HDR_SIZE = 9; // bLength + bDescriptorType + wTotalLength + 5 fields
+    req.wLength = CONFIG_HDR_SIZE;
+    if (!xhci_driver_send_control_transfer(driver, device, &req, desc_out, CONFIG_HDR_SIZE)) {
+        xassert(false, "");
+        return false;
+    }
+
+    // second pass, read the full descriptor
+    u16 total_length = desc_out->wTotalLength;
+    if (total_length > sizeof(usb_configuration_descriptor_t)) {
+        printf("[XHCI DRIVER]: Config descriptor too large (%u bytes), clamping\n", total_length);
+        total_length = sizeof(usb_configuration_descriptor_t);
+        xassert(false, "");
+    }
+
+    req.wLength = total_length;
+    return xhci_driver_send_control_transfer(driver, device, &req, desc_out, total_length);
+}
+
+static xhci_endpoint_t* xhci_driver_create_endpoint(xhci_driver_t* driver, xhci_device_t* device, const usb_endpoint_descriptor_t* desc) {
+    xhci_endpoint_t* ep = (xhci_endpoint_t*)kmalloc(sizeof(xhci_endpoint_t));
+    if (!ep) {
+        printf("[XHCI DRIVER]: Failed to allocate endpoint for slot %u\n", device->slot);
+        xassert(false, "");
+        return NULL;
+    }
+
+    *ep = xhci_endpoint_init(device->slot, desc);
+
+    device->endpoints[ep->dci] = ep;
+
+    printf("[XHCI DRIVER]: EP%u %s (DCI %u), maxPacket=%u\n",
+            XHCI_ENDPOINT_NUM(*ep),
+            XHCI_ENDPOINT_IS_IN(*ep) ? "IN" : "OUT",
+            ep->dci, ep->max_packet_size);
+
+    return ep;
+}
+
+static void xhci_driver_configure_endpoint_context(xhci_driver_t* driver, xhci_device_t* device, xhci_endpoint_t* ep) {
+    xhci_input_control_context32_t* input_ctrl = xhci_device_get_input_ctrl_ctx(device);
+    xhci_slot_context32_t* slot_ctx = xhci_device_get_input_slot_ctx(device);
+
+    // set the add flag for this endpoint's DCI
+    input_ctrl->add_flags |= (1u << ep->dci);
+
+    // update context_entries to the highest DCI
+    if (ep->dci > slot_ctx->context_entries) {
+        slot_ctx->context_entries = ep->dci;
+    }
+
+    // zero the endpoint context before filling to clear any stale data
+    xhci_endpoint_context32_t* ep_ctx = xhci_device_get_input_ep_ctx(device, ep->dci);
+    size_t ep_ctx_size = driver->sixty_four_byte_context_size ? sizeof(xhci_input_context64_t) : sizeof(xhci_input_context32_t);
+    memset(ep_ctx, 0, ep_ctx_size);
+
+    // compute xHCI interval from USB bInterval
+    // for hs/ss interrupt/isoch: xHCI interval = bInterval - 1
+    // for fs/ls interrupt: use raw bInterval (clamped to valid range)
+    u8 xhci_interval = ep->interval;
+    u8 speed = device->speed;
+    if (speed == XHCI_USB_SPEED_HIGH_SPEED || speed == XHCI_USB_SPEED_SUPER_SPEED || speed == XHCI_USB_SPEED_SUPER_SPEED_PLUS) {
+        if (xhci_interval > 0) {
+            xhci_interval--;
+        }
+    }
+
+    ep_ctx->endpoint_state = XHCI_ENDPOINT_STATE_DISABLED;
+    ep_ctx->endpoint_type = ep->xhc_ep_type;
+    ep_ctx->max_packet_size = ep->max_packet_size;
+    ep_ctx->max_burst_size = 0;
+    ep_ctx->error_count = 3;
+    ep_ctx->interval = xhci_interval;
+    ep_ctx->average_trb_length = ep->max_packet_size;
+    ep_ctx->max_esit_payload_lo = ep->max_packet_size;
+    ep_ctx->max_esit_payload_hi = 0;
+    ep_ctx->transfer_ring_dequeue_ptr = ep->ring->physical_base;
+    ep_ctx->dcs = ep->ring->rcs_bit;
+}
+
+static xhci_command_completion_trb_t* xhci_driver_configure_endpoints(xhci_driver_t* driver, xhci_device_t* device) {
+    // ensure slot context is included in the input context
+    xhci_input_control_context32_t* input_ctrl = xhci_device_get_input_ctrl_ctx(device);
+    input_ctrl->add_flags |= (1u << 0);
+    input_ctrl->drop_flags = 0;
+
+    xhci_configure_endpoint_command_trb_t trb;
+    memset(&trb, 0, sizeof(xhci_configure_endpoint_command_trb_t));
+    trb.trb_type = XHCI_TRB_TYPE_CONFIGURE_ENDPOINT_CMD;
+    trb.input_context_physical_base = device->input_ctx.phys;
+    trb.slot_id = device->slot;
+
+    return xhci_driver_send_command_trb(driver, (xhci_trb_t*)(&trb), 5000 /* just a guess... */);
+}
+
+static b8 xhci_driver_set_configuration(xhci_driver_t* driver, xhci_device_t* device, u8 config_value) {
+    xhci_device_request_packet_t req;
+    memset(&req, 0, sizeof(xhci_device_request_packet_t));
+    req.bRequestType = 0x00; // Host to Device, Standard, Device
+    req.bRequest = 9;        // SET_CONFIGURATION
+    req.wValue = config_value;
+    req.wIndex = 0;
+    req.wLength = 0;
+
+    return xhci_driver_send_control_transfer(driver, device, &req, NULL, 0);
+}
+
 static void xhci_driver_configure_device(xhci_driver_t* driver, xhci_device_t* device, const usb_device_descriptor_t* desc) {
-    /*
     u8 slot_id = device->slot;
 
     usb_configuration_descriptor_t config;
-    if (!xhci_driver_get_configuration_descriptor(driver, device, &config)) {
+    if (!xhci_driver_get_configuration_descriptor(driver, device, &config, 0)) {
         printf("[XHCI DRIVER]: Failed to read config descriptor for slot %u\n", slot_id);
         return;
     }
     
     printf("[XHCI DRIVER]: slot %u config: %u interface(s), totalLength=%u\n", slot_id, config.bNumInterfaces, config.wTotalLength);
-    */
+    
+    // sync the input context with the xHCI's current output context
+    // so the slot and EP0 state are up to date before adding new endpoints
+    xhci_device_sync_input_ctx(device);
+
+    // reset input control context flags (clear stale bits from ADDRESS_DEVICE)
+    xhci_input_control_context32_t* input_ctrl = xhci_device_get_input_ctrl_ctx(device);
+    input_ctrl->add_flags = (1u << 0); // start with slot context only
+    input_ctrl->drop_flags = 0;
+
+    // parse descriptors: track interfaces and associate endpoints
+    u16 offset = 0;
+    u16 data_length = config.wTotalLength > 9 ? config.wTotalLength - 9 : 0;
+    if (data_length > sizeof(config.data)) {
+        data_length = sizeof(config.data);
+    }
+
+    xhci_interface_info_t* current_iface = NULL;
+
+    while (offset < data_length) {
+        usb_descriptor_header_t* hdr = (usb_descriptor_header_t*)(&config.data[offset]);
+        if (hdr->bLength == 0) { break; }
+
+        if (hdr->bDescriptorType == USB_DESCRIPTOR_INTERFACE) {
+            if (device->num_interfaces < XHCI_DEVICE_MAX_INTERFACES) {
+                usb_interface_descriptor_t* iface_desc = (usb_interface_descriptor_t*)hdr;
+                u8 idx = device->num_interfaces;
+                device->num_interfaces = idx + 1;
+                current_iface = &device->interfaces[idx];
+                current_iface->interface_number = iface_desc->bInterfaceNumber;
+                current_iface->alternate_setting = iface_desc->bAlternateSetting;
+                current_iface->interface_class = iface_desc->bInterfaceClass;
+                current_iface->interface_subclass = iface_desc->bInterfaceSubClass;
+                current_iface->interface_protocol = iface_desc->bInterfaceProtocol;
+                current_iface->num_endpoints = 0;
+                printf("[XHCI DRIVER]: interface %u: class=0x%x subclass=0x%x protocol=0x%x\n",
+                        iface_desc->bInterfaceNumber,
+                        iface_desc->bInterfaceClass,
+                        iface_desc->bInterfaceSubClass,
+                        iface_desc->bInterfaceProtocol);
+            }
+        } else if (hdr->bDescriptorType == USB_DESCRIPTOR_ENDPOINT) {
+            usb_endpoint_descriptor_t* ep_desc = (usb_endpoint_descriptor_t*)hdr;
+            xhci_endpoint_t* ep = xhci_driver_create_endpoint(driver, device, ep_desc);
+            if (ep) {
+                xhci_driver_configure_endpoint_context(driver, device, ep);
+                if (current_iface && current_iface->num_endpoints < 16) {
+                    current_iface->endpoint_dcis[current_iface->num_endpoints++] = ep->dci;
+                }
+            }
+        }
+
+        offset += hdr->bLength;
+    }
+
+    if (xhci_driver_configure_endpoints(driver, device) == NULL) {
+        xassert(false, "");
+        return;
+    }
+
+    if (!xhci_driver_set_configuration(driver, device, config.bConfigurationValue)) {
+        xassert(false, "");
+        return;
+    }
+
+    printf("[XHCI DRIVER]: Slot %u configured\n", slot_id);
+
+    // hand off to USB core for driver matching and binding
+    usb_core_device_configured(driver, device, desc);
 }
 
 static void xhci_driver_setup_device(xhci_driver_t* driver, u8 port) {
@@ -677,8 +866,7 @@ static void xhci_driver_setup_device(xhci_driver_t* driver, u8 port) {
             (u32)desc.idVendor, (u32)desc.idProduct, (u32)desc.bMaxPacketSize0,
             (u32)desc.bNumConfigurations);
 
-    // TODO:
-    // xhci_driver_configure_device(driver, device, &desc);
+    xhci_driver_configure_device(driver, device, &desc);
 }
 
 b8 xhci_driver_init_driver(xhci_driver_t* driver) {
