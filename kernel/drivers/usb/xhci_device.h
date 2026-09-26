@@ -53,5 +53,7 @@ xhci_slot_context32_t* xhci_device_get_input_slot_ctx(xhci_device_t* device);
 xhci_endpoint_context32_t* xhci_device_get_input_ctrl_ep_ctx(xhci_device_t* device);
 xhci_endpoint_context32_t* xhci_device_get_input_ep_ctx(xhci_device_t* device, u8 endpoint_num);
 
+xhci_endpoint_t* xhci_device_endpoint_by_address(xhci_device_t* device, u8 address);
+
 // Copies data from the output device context into the input context
 void xhci_device_sync_input_ctx(xhci_device_t* device);

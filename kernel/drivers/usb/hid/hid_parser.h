@@ -1,5 +1,6 @@
 #pragma once
 #include <drivers/usb/hid/hid_constants.h>
+#include <xlibc/xstddef.h>
 
 // TODO: CHECK THIS WHOLE FILE
 // TODO: consider static inline functions

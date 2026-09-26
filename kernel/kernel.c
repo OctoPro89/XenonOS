@@ -18,6 +18,9 @@
 #include <drivers/usb/xhci.h>
 #include <drivers/usb/xhci_mem.h>
 
+#include <drivers/usb/core/usb_core.h>
+#include <drivers/usb/hid/hid_driver.h>
+
 #include <filesystem/block_device/block_device.h>
 #include <filesystem/gpt/gpt.h>
 #include <filesystem/fat32/fat32.h>
@@ -116,9 +119,13 @@ void run_user(vmm_space_t* space) {
 }
 
 // TODO: task scheduler
-void timer_handler(struct regs* r, void*) {
+void timer_handler(struct regs* r, void* _) {
     ktimer_sched_irq_global_tick();
 } 
+
+void kernel_assign_usb_drivers() {
+    usb_core_register_driver("USB-HID KEYBOARD DRIVER", USB_MAKE_MATCH(USB_CLASS_HID, USB_MATCH_ANY, USB_MATCH_ANY), hid_driver_factory);
+}
 
 void ASMCALL kernel_main_trampoline(BootInfo* bootInfo) {
     x86_64_HAL_init();
@@ -136,6 +143,8 @@ void ASMCALL kernel_main_trampoline(BootInfo* bootInfo) {
 
     ktimer_calibrate_cpu_timer(4);
     ktimer_start_cpu_periodic_timer(timer_irq_vector); // get timer interrupts
+
+    kernel_assign_usb_drivers();
 
     graphics_init(&bootInfo->fb);
     graphics_clear_screen(0);
@@ -263,7 +272,7 @@ void ASMCALL kernel_main_trampoline(BootInfo* bootInfo) {
     u64 nowtime = ktimer_get_system_time_in_seconds();
     while (1) {
         if (nowtime != ktimer_get_system_time_in_milliseconds()) {
-            xhci_driver_run_loop(&xhci_driver);
+            xhci_driver_run(&xhci_driver);
         }
 
         if (nowtime != ktimer_get_system_time_in_seconds()) {

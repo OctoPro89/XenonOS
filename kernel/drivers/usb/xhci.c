@@ -4,6 +4,7 @@
 #include <drivers/usb/xhci_device_ctx.h>
 #include <drivers/usb/usb_descriptors.h>
 #include <drivers/usb/core/usb_core.h>
+#include <drivers/usb/core/usb_transfer.h>
 #include <memory/paging.h>
 #include <memory/heap.h>
 #include <time/time.h>
@@ -49,6 +50,15 @@ static xhci_command_completion_trb_t*  xhci_driver_configure_endpoints(xhci_driv
 static b8 xhci_driver_set_configuration(xhci_driver_t* driver, xhci_device_t* device, u8 config_value);
 static void xhci_driver_configure_device(xhci_driver_t* driver, xhci_device_t* device, const usb_device_descriptor_t* desc);
 static void xhci_driver_setup_device(xhci_driver_t* driver, u8 port);
+static b8 xhci_driver_submit_normal_transfer(xhci_driver_t* driver, xhci_device_t* device, xhci_endpoint_t* ep, void* buffer, u32 length);
+static void xhci_driver_finish_request(xhci_driver_t* driver, usb_transfer_request_t* request, usb_transfer_status_t status, u32 actual_length);
+static xhci_command_completion_trb_t* xhci_driver_stop_endpoint(xhci_driver_t* driver, xhci_device_t* device, u8 dci);
+static b8 xhci_driver_recover_stalled_control_endpoint(xhci_driver_t* driver, xhci_device_t* device);
+static xhci_command_completion_trb_t* xhci_driver_reset_endpoint(xhci_driver_t* driver, xhci_device_t* device, u8 dci);
+static xhci_command_completion_trb_t* xhci_driver_set_tr_dequeue_ptr(xhci_driver_t* driver, xhci_device_t* device, u8 dci, paddr_t new_dequeue_phys, u8 dcs);
+static void xhci_driver_clear_tt_buffer(xhci_driver_t* driver, xhci_device_t* device, u8 dev_addr);
+static b8 xhci_driver_queue_interrupt_in_stream_td(xhci_driver_t* driver, xhci_device_t* device, xhci_endpoint_t* ep, xhci_endpoint_async_state_t* state, b8 defer_doorbell);
+static void xhci_driver_queue_deferred_doorbell(xhci_driver_t* driver, u8 slot_id, u8 target);
 
 // TODO: check allocations, xhci free memory
 
@@ -140,8 +150,7 @@ static void xhci_driver_teardown_device(xhci_driver_t* driver, u8 port_index) {
         ep->completed = true;
     }
 
-    // TODO:
-    // usb_core_device_disconnected(driver, device);
+    usb_core_device_disconnected(driver, device);
 
     (void)xhci_driver_disable_slot(driver, slot_id); // tolerate failure (device may be gone)
 
@@ -869,6 +878,220 @@ static void xhci_driver_setup_device(xhci_driver_t* driver, u8 port) {
     xhci_driver_configure_device(driver, device, &desc);
 }
 
+static b8 xhci_driver_submit_normal_transfer(xhci_driver_t* driver, xhci_device_t* device, xhci_endpoint_t* ep, void* buffer, u32 length) {
+    if (!ep || !ep->ring || !ep->dma_buffer.virt) {
+        xassert(false, "");
+        return false;
+    }
+
+    if (length > PAGE_SIZE) {
+        printf("[XHCI DRIVER]: Normal transfer too large (%u bytes)\n", length);
+        return false;
+    }
+
+    // TODO: reset completion state before doorbell to avoid race with driver event dispatch
+    b8 state_rc = true;
+    if (ep->async_state && ep->async_state->async_enabled) {
+        state_rc = false;
+    }
+    ep->completed = false;
+
+    if (!state_rc) { return false; }
+
+    // copy OUT data into DMA buffer before enqueue
+    if (XHCI_ENDPOINT_IS_IN(*ep) && buffer && length > 0) {
+        memcpy((void*)ep->dma_buffer.virt, buffer, length);
+    }
+
+    if (!xhci_transfer_ring_can_enqueue(ep->ring, 1)) {
+        printf("[XHCI DRIVER]: Transfer ring full for EP%u\n", XHCI_ENDPOINT_NUM(*ep));
+        return false;
+    }
+
+    xhci_normal_trb_t normal;
+    memset(&normal, 0, sizeof(xhci_normal_trb_t));
+    normal.trb_type = XHCI_TRB_TYPE_NORMAL;
+    normal.data_buffer_physical_base = ep->dma_buffer.phys;
+    normal.trb_transfer_length = length;
+    normal.td_size = 0;
+    normal.interrupter_target = 0;
+    normal.ioc = 1;
+    normal.isp = XHCI_ENDPOINT_IS_IN(*ep) ? 1 : 0;
+    normal.chain = 0;
+
+    xhci_transfer_ring_enqueue(ep->ring, (xhci_trb_t*)&normal);
+    xhci_doorbell_manager_ring_doorbell(&driver->doorbell_manager, device->slot, ep->dci);
+
+    // TODO: wait for transfer completion (HCD task processes events and wakes)
+    while (!ep->completed) {
+        usleep(50); // TODO: no clue what to set this to
+    }
+
+    // copy IN data from DMA buffer to caller
+    if (XHCI_ENDPOINT_IS_IN(*ep) && buffer && length > 0) {
+        barrier_dma_read();
+        memcpy(buffer, (void*)ep->dma_buffer.virt, length);
+    }
+
+    if (ep->result.completion_code != XHCI_TRB_COMPLETION_CODE_SUCCESS && ep->result.completion_code != XHCI_TRB_COMPLETION_CODE_SHORT_PACKET) {
+        printf("[XHCI DRIVER]: Normal transfer failed on EP%u: %s\n", XHCI_ENDPOINT_NUM(*ep), xhci_trb_completion_code_to_string(ep->result.completion_code));
+        return false;
+    }
+
+    return true;
+}
+
+static void xhci_driver_finish_request(xhci_driver_t* driver, usb_transfer_request_t* request, usb_transfer_status_t status, u32 actual_length) {
+    request->status = status;
+    request->actual_length = actual_length;
+    request->pending = false;
+    request->next = NULL;
+    request->hcd_private = NULL;
+    // TODO: threading
+}
+
+static xhci_command_completion_trb_t* xhci_driver_stop_endpoint(xhci_driver_t* driver, xhci_device_t* device, u8 dci) {
+    xhci_stop_endpoint_command_trb_t trb;
+    memset(&trb, 0, sizeof(xhci_stop_endpoint_command_trb_t));
+    trb.trb_type = XHCI_TRB_TYPE_STOP_ENDPOINT_CMD;
+    trb.endpoint_id = dci;
+    trb.slot_id = device->slot;
+    return xhci_driver_send_command_trb(driver, (xhci_trb_t*)&trb, 5000 /* just a guess...*/);
+}
+
+static b8 xhci_driver_recover_stalled_control_endpoint(xhci_driver_t* driver, xhci_device_t* device) {
+    if (!driver || !device || !device->ctrl_ring) {
+        xassert(false, "");
+        return false;
+    }
+
+    // When a control transfer stalls, the next SETUP transaction clears the
+    // USB-level stall, but xHCI still needs its EP0 state repaired. Reset the
+    // endpoint and then advance the hardware dequeue pointer past the failed TD
+    // so the controller does not try to replay it on the next doorbell ring.
+    //
+    // Match Linux behavior: always proceed with Set TR Dequeue even if Reset
+    // Endpoint fails — the command will only fail if the endpoint wasn't
+    // halted, and in that case we still need the dequeue pointer advanced.
+    xhci_transfer_ring_t* ring = device->ctrl_ring;
+    paddr_t dequeue_phys = xhci_transfer_ring_get_enqueue_phys(ring);
+    u8 dequeue_cycle = ring->rcs_bit;
+
+    // VL805 quirk: the controller cannot handle Set TR
+    // Dequeue Pointer pointing at a Link TRB. If the enqueue pointer wrapped
+    // and is now at index 0, the physical address is the segment start which
+    // is safe; but if for any reason it points at the Link TRB slot, skip
+    // past it to the segment start with the toggled cycle bit.
+    paddr_t link_phys = ring->physical_base + (ring->max_trb_count - 1) * sizeof(xhci_trb_t);
+    if (dequeue_phys == link_phys) {
+        dequeue_phys = ring->physical_base;
+        dequeue_cycle = !dequeue_cycle;
+    }
+
+    b8 rc = xhci_driver_reset_endpoint(driver, device, 1) != NULL;
+    if (!rc) {
+        printf("[XHCI DRIVER]: recovering stalled EP0 slot %u: reset endpoint failed (ignored)", device->slot);
+    }
+
+    if (xhci_driver_set_tr_dequeue_ptr(driver, device, 1, dequeue_phys, dequeue_cycle) != 0) {
+        printf("[XHCI DRIVER]: recovering stalled EP0 slot %u: set dequeue pointer failed\n", device->slot);
+        return false;
+    }
+
+    // For FS/LS devices behind a HS hub, clear the hub's TT buffer so the
+    // shared Transaction Translator does not remain stuck from the stalled
+    // split transaction. Without this, a single-TT hub can block enumeration
+    // and traffic for all other downstream FS/LS devices.
+    if (device->output_ctx.virt) {
+        u8 dev_addr = 0;
+        if (driver->sixty_four_byte_context_size) {
+            xhci_device_context64_t* ctx = (xhci_device_context64_t*)(device->output_ctx.virt);
+            dev_addr = (u8)(ctx->slot_context.device_address);
+        } else {
+            xhci_device_context32_t* ctx = (xhci_device_context32_t*)(device->output_ctx.virt);
+            dev_addr = (u8)(ctx->slot_context.device_address);
+        }
+        xhci_driver_clear_tt_buffer(driver, device, dev_addr);
+    }
+
+    return true;
+}
+
+static xhci_command_completion_trb_t* xhci_driver_reset_endpoint(xhci_driver_t* driver, xhci_device_t* device, u8 dci) {
+    xhci_reset_endpoint_command_trb_t trb;
+    memset(&trb, 0, sizeof(xhci_reset_endpoint_command_trb_t));
+    trb.trb_type = XHCI_TRB_TYPE_RESET_ENDPOINT_CMD;
+    trb.endpoint_id = dci;
+    trb.slot_id = device->slot;
+    return xhci_driver_send_command_trb(driver, (xhci_trb_t*)&trb, 5000 /* just a guess */);
+}
+
+static xhci_command_completion_trb_t* xhci_driver_set_tr_dequeue_ptr(xhci_driver_t* driver, xhci_device_t* device, u8 dci, paddr_t new_dequeue_phys, u8 dcs) {
+    xhci_stop_endpoint_command_trb_t trb = {};
+    trb.trb_type = XHCI_TRB_TYPE_STOP_ENDPOINT_CMD;
+    trb.endpoint_id = dci;
+    trb.slot_id = device->slot;
+    return xhci_driver_send_command_trb(driver, (xhci_trb_t*)&trb, 5000 /* just a guess */);
+}
+
+static void xhci_driver_clear_tt_buffer(xhci_driver_t* driver, xhci_device_t* device, u8 dev_addr) {
+    // TODO: only for USB hubs
+}
+
+static b8 xhci_driver_queue_interrupt_in_stream_td(xhci_driver_t* driver, xhci_device_t* device, xhci_endpoint_t* ep, xhci_endpoint_async_state_t* state, b8 defer_doorbell) {
+    if (!device ||!ep || !state->interrupt_in_stream.active) {
+        xassert(false, "");
+        return false;
+    }
+
+    u32 length = state->interrupt_in_stream.payload_length;
+    if (length == 0 || length > PAGE_SIZE) {
+        xassert(false, "");
+        return false;
+    }
+
+    b8 rc = true;
+    xhci_normal_trb_t normal;
+    memset(&normal, 0, sizeof(xhci_normal_trb_t));
+    normal.trb_type = XHCI_TRB_TYPE_NORMAL;
+    normal.data_buffer_physical_base = ep->dma_buffer.phys;
+    normal.trb_transfer_length = length;
+    normal.td_size = 0;
+    normal.interrupter_target = 0;
+    normal.ioc = 1;
+    normal.isp = 1;
+    normal.chain = 0;
+
+    if (state->disconnecting || state->active_request || !ep->ring || !xhci_transfer_ring_can_enqueue(ep->ring, 1)) {
+        rc = false;
+    }
+    else {
+        xhci_transfer_ring_enqueue(ep->ring, (xhci_trb_t*)&normal);
+    }
+
+    if (!rc) {
+        return false;
+    }
+
+    if (defer_doorbell) {
+        xhci_driver_queue_deferred_doorbell(driver, device->slot, ep->dci);
+    }
+    else {
+        xhci_doorbell_manager_ring_doorbell(&driver->doorbell_manager, device->slot, ep->dci);
+    }
+
+    return true;
+}
+
+static void xhci_driver_queue_deferred_doorbell(xhci_driver_t* driver, u8 slot_id, u8 target) {
+    if (driver->pending_doorbell_count >= (sizeof(driver->pending_doorbells) / sizeof(driver->pending_doorbells[0]))) {
+        xhci_doorbell_manager_ring_doorbell(&driver->doorbell_manager, slot_id, target);
+        return;
+    }
+
+    driver->pending_doorbells[driver->pending_doorbell_count++] = (struct pending_doorbell){ .slot_id = slot_id, .target = target };
+}
+
 b8 xhci_driver_init_driver(xhci_driver_t* driver) {
     pci_bar_t* bar = &driver->pci_device->bar[0];
     driver->xhc_base = xhci_map_mmio(bar->base, bar->size);
@@ -916,6 +1139,10 @@ b8 xhci_driver_start_device(xhci_driver_t* driver) {
         return false;
     }
 
+    // let ports stabilize after the controller transitions to running
+    // real hardware needs time for link training and device detection before port status is meaningful
+    usleep(100000); // TODO: put on another thread
+
     // controller started //
 
     // scan for devices connected before controller was started
@@ -925,6 +1152,12 @@ b8 xhci_driver_start_device(xhci_driver_t* driver) {
             xhci_driver_setup_device(driver, port);
         }
     }
+
+    // flush deferred doorbells accumulated froim scanning ports
+    for (u8 i = 0; i < driver->pending_doorbell_count; ++i) {
+        xhci_doorbell_manager_ring_doorbell(&driver->doorbell_manager, driver->pending_doorbells[i].slot_id, driver->pending_doorbells[i].target);
+    }
+    driver->pending_doorbell_count = 0;
 
     return true;
 }
@@ -1135,7 +1368,368 @@ b8 xhci_driver_reset_port(xhci_driver_t* driver, u8 port_num) {
     return true;
 }
 
+b8 xhci_driver_usb_control_transfer(xhci_driver_t* driver, xhci_device_t* device, u8 request_type, u8 request, u16 value, u16 index, void* data, u16 length) {
+    // TODO: scheduling here
+
+    xhci_transfer_ring_t* ring = device->ctrl_ring;
+
+    dma_region_t dma_buffer = device->ctrl_transfer_buffer;
+    if (!dma_buffer.virt || !dma_buffer.phys) {
+        printf("[XHCI DRIVER]: Missing control transfer buffer for slot %u\n", device->slot);
+        return false;
+    }
+
+    if (length > PAGE_SIZE) {
+        printf("[XHCI DRIVER]: Control transfer too large (%u bytes)\n", length);
+        return false;
+    }
+
+    xhci_device_request_packet_t req;
+    memset(&req, 0, sizeof(xhci_device_request_packet_t));
+    req.bRequestType = request_type;
+    req.bRequest = request;
+    req.wValue = value;
+    req.wIndex = index;
+    req.wLength = length;
+
+    b8 is_in = (req.transfer_direction != 0);
+
+    if (length > 0 && !is_in && data) {
+        memcpy((void*)dma_buffer.virt, data, length);
+    }
+    else {
+        memset((void*)dma_buffer.virt, 0, length > 0 ? length : 1);
+    }
+
+    xhci_setup_stage_trb_t setup;
+    memset(&setup, 0, sizeof(xhci_setup_stage_trb_t));
+    setup.trb_type = XHCI_TRB_TYPE_SETUP_STAGE;
+    setup.request_packet = req;
+    setup.trb_transfer_length = 8;
+    setup.interrupter_target = 0;
+    setup.idt = 1;
+    setup.ioc = 0;
+    setup.trt = (length > 0) ? (is_in ? 3 : 2) : 0;
+
+    xhci_data_stage_trb_t data_trb;
+    memset(&data_trb, 0, sizeof(xhci_data_stage_trb_t));
+    if (length > 0) {
+        data_trb.trb_type = XHCI_TRB_TYPE_DATA_STAGE;
+        data_trb.data_buffer = dma_buffer.phys;
+        data_trb.trb_transfer_length = length;
+        data_trb.td_size = 0;
+        data_trb.interrupter_target = 0;
+        data_trb.dir = is_in ? 1 : 0;
+        data_trb.ioc = 0;
+        data_trb.idt = 0;
+        data_trb.chain = 0;
+    }
+
+    xhci_status_stage_trb_t status;
+    memset(&status, 0, sizeof(xhci_status_stage_trb_t));
+    status.trb_type = XHCI_TRB_TYPE_STATUS_STAGE;
+    status.interrupter_target = 0;
+    status.ioc = 1;
+    status.dir = (length > 0) ? (is_in ? 0 : 1) : 1;
+
+    // serialize EP0 enqueue + doorbell + wait against concurrent callers
+    // TODO: mutex lock
+
+    device->ctrl_completed = false;
+
+    xhci_transfer_ring_enqueue(ring, (xhci_trb_t*)&setup);
+    if (length > 0) {
+        xhci_transfer_ring_enqueue(ring, (xhci_trb_t*)&data_trb);
+    }
+    xhci_transfer_ring_enqueue(ring, (xhci_trb_t*)&status);
+
+    xhci_doorbell_manager_ring_doorbell(&driver->doorbell_manager, device->slot, XHCI_DOORBELL_TARGET_CONTROL_EP_RING);
+
+    while (!device->ctrl_completed) {
+        usleep(50); // TODO: no clue what to set this to
+    }
+
+    if (device->ctrl_result.completion_code != XHCI_TRB_COMPLETION_CODE_SUCCESS) {
+        if (device->ctrl_result.completion_code == XHCI_TRB_COMPLETION_CODE_STALL_ERROR) {
+            (void)xhci_driver_recover_stalled_control_endpoint(driver, device);
+        }
+        printf("[XHCI DRIVER]: Control transfer failed: %s\n", xhci_trb_completion_code_to_string(device->ctrl_result.completion_code));
+        return false;
+    }
+
+    if (data && length > 0 && is_in) {
+        barrier_dma_read();
+        memcpy(data, (void*)dma_buffer.virt, length);
+    }
+
+    return true;
+}
+
+b8 xhci_driver_usb_submit_transfer(xhci_driver_t* driver, xhci_device_t* device, u8 endpoint_addr, void* buffer, u32 length) {
+    if (!device || (!buffer && length > 0)) {
+        return false;
+    }
+
+    xhci_endpoint_t* ep = xhci_device_endpoint_by_address(device, endpoint_addr);
+    if (!ep) {
+        printf("[XHCI DRIVER]: No endpoint for address %u on slot %u\n", endpoint_addr, device->slot);
+        return false;
+    }
+
+    return xhci_driver_submit_normal_transfer(driver, device, ep, buffer, length);
+}
+
+void xhci_driver_usb_cancel_transfer(xhci_driver_t* driver, xhci_device_t* device, usb_transfer_request_t* request) {
+    if (!device || !driver) {
+        xassert(false, "");
+        return;
+    }
+
+    xhci_endpoint_t* ep = xhci_device_endpoint_by_address(device, request->endpoint_addr);
+    if (!ep || !ep->async_state) {
+        xassert(false, "");
+        return;
+    }
+
+    xhci_endpoint_async_state_t* state = ep->async_state;
+
+    usb_transfer_request_t* prev = NULL;
+    usb_transfer_request_t* crnt = NULL;
+    b8 queued = false;
+    b8 active = false;
+
+    crnt = state->pending_head;
+    while (crnt) {
+        if (crnt == request) {
+            if (prev) {
+                prev->next = crnt->next;
+            }
+            else {
+                state->pending_head = crnt->next;
+            }
+
+            if (state->pending_tail == crnt) {
+                state->pending_tail = prev;
+            }
+
+            crnt->next = NULL;
+            queued = true;
+            break;
+        }
+
+        prev = crnt;
+        crnt = crnt->next;
+    }
+
+    if (!queued && state->active_request == request) {
+        state->active_request_cancelled = true;
+        active = true;
+    }
+
+    if (queued) {
+        xhci_driver_finish_request(driver, request, USB_TRANSFER_STATUS_CANCELLED, 0);
+        if (!state->active_request && !state->pending_head &&
+            !state->interrupt_in_stream.active &&
+            !state->interrupt_in_stream.closing &&
+            !state->interrupt_in_stream.payloads &&
+            !state->interrupt_in_stream.payload_storage) {
+            state->async_enabled = false;
+        }
+    }
+    else if (active) {
+        printf("[XHCI DRIVER]: Cancel request for active transfer on EP%u, will complete when hardware retires it\n", XHCI_ENDPOINT_NUM(*ep));
+    }
+}
+
+b8 xhci_driver_usb_open_interrupt_in_stream(xhci_driver_t* driver, xhci_device_t* device, u8 endpoint_addr, u32 payload_length) {
+    if (!device || !driver) {
+        xassert(false, "");
+        return false;
+    }
+
+    xhci_endpoint_t* ep = xhci_device_endpoint_by_address(device, endpoint_addr);
+    if (!ep || !XHCI_ENDPOINT_IS_IN(*ep) || XHCI_ENDPOINT_TRANSFER_TYPE(*ep) != 3 || payload_length == 0 || payload_length > PAGE_SIZE) {
+        xassert(false, "");
+        return false;
+    }
+
+    xhci_endpoint_async_state_t* state = ep->async_state;
+    if (!state) {
+        xassert(false, "");
+        return false;
+    }
+
+    const u8 STREAM_QUEUE_DEPTH = 2;
+    xhci_interrupt_in_payload_t* payloads = (xhci_interrupt_in_payload_t*)kmalloc((size_t)(STREAM_QUEUE_DEPTH) * sizeof(xhci_interrupt_in_payload_t));
+    u8* storage = (u8*)kmalloc((size_t)(STREAM_QUEUE_DEPTH) * payload_length);
+    if (!payloads || !storage) {
+        if (payloads) { kfree(payloads); }
+        if (storage) { kfree(storage); }
+        xassert(false, "");
+        return false;
+    }
+
+    b8 rc = true;
+    if (state->disconnecting || state->active_request || state->pending_head ||
+        state->interrupt_in_stream.active || state->interrupt_in_stream.closing ||
+        state->interrupt_in_stream.payloads || state->interrupt_in_stream.payload_storage) {
+        rc = false;
+    } else {
+        state->async_enabled = true;
+        state->interrupt_in_stream.active = true;
+        state->interrupt_in_stream.closing = false;
+        state->interrupt_in_stream.payload_length = payload_length;
+        state->interrupt_in_stream.queue_depth = STREAM_QUEUE_DEPTH;
+        state->interrupt_in_stream.payloads = payloads;
+        state->interrupt_in_stream.payload_storage = storage;
+        state->interrupt_in_stream.head = 0;
+        state->interrupt_in_stream.count = 0;
+        state->interrupt_in_stream.next_seq = 1;
+        state->interrupt_in_stream.dropped = 0;
+        for (u8 i = 0; i < STREAM_QUEUE_DEPTH; i++) {
+            state->interrupt_in_stream.payloads[i].data = storage + ((size_t)(i) * payload_length);
+            state->interrupt_in_stream.payloads[i].seq = 0;
+            state->interrupt_in_stream.payloads[i].mfindex = 0xffff;
+            state->interrupt_in_stream.payloads[i].len = 0;
+            state->interrupt_in_stream.payloads[i].queued_t_us = 0;
+        }
+    }
+
+    if (!rc) {
+        kfree(payloads);
+        kfree(storage);
+        return false;
+    }
+
+    rc = xhci_driver_queue_interrupt_in_stream_td(driver, device, ep, state, false);
+    if (!rc) {
+        xhci_driver_usb_close_interrupt_in_stream(driver, device, endpoint_addr);
+        xassert(false, "");
+        return false;
+    }
+
+    return true;
+}
+
+b8 xhci_driver_usb_read_interrupt_in_stream(xhci_driver_t* driver, xhci_device_t* device, u8 endpoint_addr, void* buffer, u32 buffer_len, u32* out_length) {
+    if (!device || !buffer || buffer_len == 0) {
+        return false;
+    }
+
+    xhci_endpoint_t* ep = xhci_device_endpoint_by_address(device, endpoint_addr);
+    if (!ep || !ep->async_state) {
+        xassert(false, "");
+        return false;
+    }
+    
+    xhci_endpoint_async_state_t* state = ep->async_state;
+    b8 got_payload = false;
+    u32 actual = 0;
+    while (true) {
+        if (!state->interrupt_in_stream.active) {
+            break;
+        }
+
+        if (state->interrupt_in_stream.count > 0) {
+            xhci_interrupt_in_payload_t* payload = &state->interrupt_in_stream.payloads[state->interrupt_in_stream.head];
+            state->interrupt_in_stream.head = (u8)((state->interrupt_in_stream.head + 1) % state->interrupt_in_stream.queue_depth);
+            state->interrupt_in_stream.count--;
+            actual = payload->len < buffer_len ? payload->len : buffer_len;
+            memset(buffer, 0, buffer_len);
+            if (actual > 0) {
+                memcpy(buffer, payload->data, actual);
+            }
+            got_payload = true;
+            break;
+        }
+        usleep(50); // TODO: no clue what to set this to
+    }
+
+    if (!got_payload) {
+        if (out_length) { *out_length = 0; }
+        return false;
+    }
+
+    if (out_length) {
+        *out_length = actual;
+    }
+
+    return true;
+}
+
+b8 xhci_driver_usb_close_interrupt_in_stream(xhci_driver_t* driver, xhci_device_t* device, u8 endpoint_addr) {
+    if (!driver || !device) {
+        xassert(false, "");
+        return false;
+    }
+
+    xhci_endpoint_t* ep = xhci_device_endpoint_by_address(device, endpoint_addr);
+    if (!ep || !ep->async_state) {
+        xassert(false, "");
+        return false;
+    }
+    
+    xhci_endpoint_async_state_t* state = ep->async_state;
+    u8* storage = NULL;
+    xhci_interrupt_in_payload_t* payloads = NULL;
+    b8 need_stop = false;
+    if (state->interrupt_in_stream.active || state->interrupt_in_stream.closing ||
+        state->interrupt_in_stream.payload_storage || state->interrupt_in_stream.payloads) {
+        need_stop = state->interrupt_in_stream.active;
+        state->interrupt_in_stream.active = false;
+        state->interrupt_in_stream.closing = true;
+        storage = state->interrupt_in_stream.payload_storage;
+        payloads = state->interrupt_in_stream.payloads;
+        state->interrupt_in_stream.payload_storage = NULL;
+        state->interrupt_in_stream.payloads = NULL;
+        state->interrupt_in_stream.payload_length = 0;
+        state->interrupt_in_stream.queue_depth = 0;
+        state->interrupt_in_stream.head = 0;
+        state->interrupt_in_stream.count = 0;
+        state->interrupt_in_stream.next_seq = 1;
+        state->interrupt_in_stream.dropped = 0;
+    }
+
+    if (need_stop) {
+        (void)xhci_driver_stop_endpoint(driver, device, ep->dci);
+    }
+
+    state->interrupt_in_stream.closing = true;
+    if (!state->active_request && !state->pending_head) {
+        state->async_enabled = false;
+    }
+
+    if (payloads) {
+        kfree(payloads);
+    }
+
+    if (storage) {
+        kfree(storage);
+    }
+
+    return true;
+}
+
+void xhci_driver_release_disconnected_device(xhci_driver_t* driver, xhci_device_t* device) {
+    if (!driver || !device) { return; }
+
+    dma_region_t output_ctx = device->output_ctx;
+    xhci_device_destroy(device);
+    if (output_ctx.virt) {
+        xhci_free_memory((void*)output_ctx.virt);
+    }
+
+    kfree(device);
+}
+
 void xhci_driver_run_loop(xhci_driver_t* driver) {
+    driver->pending_doorbell_count = 0;
     xhci_driver_process_events(driver);
     xhci_event_ring_finish_procecssing(&driver->event_ring);
+
+    for (u8 i = 0; i < driver->pending_doorbell_count; ++i) {
+        xhci_doorbell_manager_ring_doorbell(&driver->doorbell_manager, driver->pending_doorbells[i].slot_id, driver->pending_doorbells[i].target);
+    }
+
+    // TODO: hub crap
 }

@@ -1,6 +1,7 @@
 #pragma once
 #include <xlibc/xstdint.h>
 #include <arch/x86_64/drivers/pci/pci.h>
+#include <drivers/usb/core/usb_transfer.h>
 #include <drivers/usb/xhci_ext_cap.h>
 #include <drivers/usb/xhci_device.h>
 #include <drivers/usb/xhci_rings.h>
@@ -65,6 +66,10 @@ typedef struct {
 
     xhci_device_t** port_devices;
     xhci_device_t** slot_devices;
+
+    // deferred endpoint doorbells, run after event processing finishes
+    struct pending_doorbell { u8 slot_id; u8 target; } pending_doorbells[32];
+    u8 pending_doorbell_count;
 } xhci_driver_t;
 
 b8 xhci_driver_init_driver(xhci_driver_t* driver);
@@ -78,7 +83,16 @@ void xhci_driver_log_capability_registers(xhci_driver_t* driver);
 b8 xhci_driver_reset_host_controller(xhci_driver_t* driver);
 b8 xhci_driver_reset_port(xhci_driver_t* driver, u8 port_num);
 
+// Public transfer API for USB Core
+b8 xhci_driver_usb_control_transfer(xhci_driver_t* driver, xhci_device_t* device, u8 request_type, u8 request, u16 value, u16 index, void* data, u16 length);
+b8 xhci_driver_usb_submit_transfer(xhci_driver_t* driver, xhci_device_t* device, u8 endpoint_addr, void* buffer, u32 length);
+void xhci_driver_usb_cancel_transfer(xhci_driver_t* driver, xhci_device_t* device, usb_transfer_request_t* request);
+b8 xhci_driver_usb_open_interrupt_in_stream(xhci_driver_t* driver, xhci_device_t* device, u8 endpoint_addr, u32 payload_length);
+b8 xhci_driver_usb_read_interrupt_in_stream(xhci_driver_t* driver, xhci_device_t* device, u8 endpoint_addr, void* buffer, u32 buffer_len, u32* out_length);
+b8 xhci_driver_usb_close_interrupt_in_stream(xhci_driver_t* driver, xhci_device_t* device, u8 endpoint_addr);
+
+void xhci_driver_release_disconnected_device(xhci_driver_t* driver, xhci_device_t* device);
 /**
  * @note This function assumes host controller has already been started successfully
  */
-void xhci_driver_run_loop(xhci_driver_t* driver);
+void xhci_driver_run(xhci_driver_t* driver);

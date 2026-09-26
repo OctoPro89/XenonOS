@@ -1,10 +1,13 @@
 #pragma once
 
 #include <drivers/usb/core/usb_driver.h>
+#include <drivers/usb/core/usb_device.h>
 #include <xlibc/xinterface.h>
 #include <xlibc/xstdint.h>
 
-#define USB_CORE_MATCH_ANY ((u8)0xFF)
+#define USB_MATCH_ANY ((u8)0xFF)
+
+#define USB_MAKE_MATCH(cls, sub, proto) (usb_core_interface_match_t){ .interface_class = cls, .interface_subclass = sub, .interface_protocol = proto }
 
 typedef struct {
     u8 interface_class; // USB_MATCH_ANY_8 = wildcard
@@ -20,12 +23,12 @@ typedef struct usb_device usb_device_t;
     x(u8, bound_slot_id) \
     x(u8, bound_interface_index)
 
-#define IUSBDRIVER_METHODS(x) \
-    x(void, finalize_create, (void* self)) \
-    x(void, destroy, (void* self)) \
-    x(b8, probe, (void* self, usb_device_t* dev, usb_interface_t* iface)) \
-    x(void, run, (void* self)) \
-    x(void, disconnect, (void *self))
+#define IUSBDRIVER_METHODS(x, self) \
+    x(void, finalize_create, (self)) \
+    x(void, destroy, (self)) \
+    x(b8, probe, (self, usb_device_t* dev, usb_interface_t* iface)) \
+    x(void, run, (self)) \
+    x(void, disconnect, (self))
 
 INTERFACE(IUSBDRIVER, IUSBDRIVER_MEMBERS, IUSBDRIVER_METHODS);
 

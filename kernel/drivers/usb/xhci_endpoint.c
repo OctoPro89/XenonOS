@@ -39,6 +39,30 @@ xhci_endpoint_t xhci_endpoint_init(u8 slot_id, const usb_endpoint_descriptor_t* 
 
     *endpoint.ring = xhci_transfer_ring_init(XHCI_TRANSFER_RING_TRB_COUNT, slot_id);
 
+    endpoint.async_state->active_request = NULL;
+    endpoint.async_state->pending_head = NULL;
+    endpoint.async_state->pending_tail = NULL;
+    endpoint.async_state->async_enabled = false;
+    endpoint.async_state->disconnecting = false;
+    endpoint.async_state->active_request_cancelled = false;
+    endpoint.async_state->interrupt_in_stream.active = false;
+    endpoint.async_state->interrupt_in_stream.closing = false;
+    endpoint.async_state->interrupt_in_stream.payload_length = 0;
+    endpoint.async_state->interrupt_in_stream.queue_depth = 0;
+    endpoint.async_state->interrupt_in_stream.payloads = NULL;
+    endpoint.async_state->interrupt_in_stream.payload_storage = NULL;
+    endpoint.async_state->interrupt_in_stream.head = 0;
+    endpoint.async_state->interrupt_in_stream.count = 0;
+    endpoint.async_state->interrupt_in_stream.next_seq = 1;
+    endpoint.async_state->interrupt_in_stream.dropped = 0;
+
+    endpoint.async_state = (xhci_endpoint_async_state_t*)kmalloc(sizeof(xhci_endpoint_async_state_t));
+    if (!endpoint.async_state) {
+        // TODO: throw error
+        xassert(false, "");
+        return endpoint;
+    }
+
     endpoint.dma_buffer = xhci_alloc_memory(PAGE_SIZE, XHCI_ENDPOINT_CONTEXT_ALIGNMENT, XHCI_ENDPOINT_CONTEXT_BOUNDARY); // TODO: alignment and boundary are definitely wrong
     if (((void*)endpoint.dma_buffer.virt) == NULL) {
         // TODO: throw error
@@ -50,6 +74,21 @@ xhci_endpoint_t xhci_endpoint_init(u8 slot_id, const usb_endpoint_descriptor_t* 
 }
 
 void xhci_endpoint_destroy(xhci_endpoint_t* ep) {
+    if (ep->async_state) {
+        if (ep->async_state->interrupt_in_stream.payload_storage) {
+            kfree(ep->async_state->interrupt_in_stream.payload_storage);
+            ep->async_state->interrupt_in_stream.payload_storage = NULL;
+        }
+
+        if (ep->async_state->interrupt_in_stream.payloads) {
+            kfree(ep->async_state->interrupt_in_stream.payloads);
+            ep->async_state->interrupt_in_stream.payloads = NULL;
+        }
+
+        kfree(ep->async_state);
+        ep->async_state = NULL;
+    }
+
     if (ep->dma_buffer.virt) {
         xhci_free_memory((void*)ep->dma_buffer.virt);
         ep->dma_buffer.virt = (vaddr_t)NULL;

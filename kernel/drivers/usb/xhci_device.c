@@ -96,6 +96,18 @@ xhci_endpoint_context32_t* xhci_device_get_input_ep_ctx(xhci_device_t* device, u
     }
 }
 
+xhci_endpoint_t* xhci_device_endpoint_by_address(xhci_device_t* device, u8 address) {
+    u8 ep_num = address & 0x0F;
+    b8 is_in = (address & 0x80) != 0;
+    u8 dci = (u8)(ep_num * 2 + (is_in ? 1 : 0));
+
+    if (dci < 2 || dci > XHCI_DEVICE_MAX_ENDPOINTS) {
+        return NULL;
+    }
+
+    return device->endpoints[dci];
+}
+
 // Copies data from the output device context into the input context
 void xhci_device_sync_input_ctx(xhci_device_t* device) {
     if (device->use_64byte_ctx) {

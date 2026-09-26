@@ -19,15 +19,15 @@ typedef struct {
 } finalization_ticket_t;
 
 static b8 match_interface(const usb_core_interface_match_t match, const usb_interface_t* iface) {
-    if (match.interface_class != USB_CORE_MATCH_ANY && match.interface_class != iface->interface_class) {
+    if (match.interface_class != USB_MATCH_ANY && match.interface_class != iface->interface_class) {
         return false;
     }
 
-    if (match.interface_subclass != USB_CORE_MATCH_ANY && match.interface_subclass != iface->interface_subclass) {
+    if (match.interface_subclass != USB_MATCH_ANY && match.interface_subclass != iface->interface_subclass) {
         return false;
     }
 
-    if (match.interface_protocol != USB_CORE_MATCH_ANY && match.interface_protocol != iface->interface_protocol) {
+    if (match.interface_protocol != USB_MATCH_ANY && match.interface_protocol != iface->interface_protocol) {
         return false;
     }
 
@@ -87,6 +87,21 @@ static usb_device_t* build_usb_device(xhci_driver_t* hcd, xhci_device_t* xdev, c
     }
 
     return dev;
+}
+
+static IUSBDRIVER* take_bound_driver_for_device(u16 drv_idx, usb_device_t* dev) {
+    if (!dev || drv_idx >= MAX_USB_DEVICES * 16) {
+        return NULL;
+    }
+
+    IUSBDRIVER* drv = NULL;
+    IUSBDRIVER* current = g_bound_drivers[drv_idx];
+    if (current && current->bound_device == dev) {
+        drv = current;
+        g_bound_drivers[drv_idx] = NULL;
+    }
+
+    return drv;
 }
 
 void usb_core_device_configured(xhci_driver_t* driver, xhci_device_t* xdev, const usb_device_descriptor_t* desc) {

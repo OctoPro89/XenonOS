@@ -14,7 +14,7 @@ static __hint_inline__ b8 hid_keyboard_handler_is_reserved_array_usage(u16 usage
 }
 
 typedef struct {
-    INTERFACE_IMPLEMENT(IUSBDRIVER, IUSBDRIVER_MEMBERS, IUSBDRIVER_METHODS);
+    INTERFACE_IMPLEMENT(hid_keyboard_handler_t, IHIDHANDLER_MEMBERS, IHIDHANDLER_METHODS);
 
     const usb_hid_field_info_t* modifier_fields[8];
     const usb_hid_field_info_t** key_fields;
@@ -25,3 +25,5 @@ typedef struct {
     u8 report_id;
     b8 ready;
 } hid_keyboard_handler_t;
+
+hid_keyboard_handler_t hid_keyboard_handler_create();

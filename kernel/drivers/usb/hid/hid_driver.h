@@ -3,6 +3,7 @@
 #include <drivers/usb/core/usb_driver.h>
 #include <drivers/usb/core/usb_device.h>
 #include <drivers/usb/hid/hid_parser.h>
+#include <drivers/usb/hid/hid_handler.h>
 
 typedef enum {
     HID_BINDING_KIND_KEYBOARD = 0,
@@ -12,19 +13,21 @@ typedef enum {
 typedef struct {
     u8 report_id;
     hid_binding_kind_t binding_kind;
+    IHIDHANDLER* handler;
 } hid_handler_binding_t;
 
-#define IHIDDRIVER_MEMBERS(x) \
-    IUSBDRIVER_MEMBERS(x) \
-    x(usb_interface_t*, iface) \
-    x(usb_hid_report_layout_t, layout) \
-    x(hid_handler_binding_t*, bindings) \
-    x(u16, binding_count) \
-    x(b8, disconnected) \
-    x(u32, payload_length) \
-    x(usb_interrupt_in_stream_t, stream) \
+typedef struct hid_driver hid_driver_t;
 
-#define IHIDDRIVER_METHODS(x) \
-    IUSBDRIVER_METHODS(x)
+typedef struct hid_driver {
+    INTERFACE_IMPLEMENT(hid_driver_t, IUSBDRIVER_MEMBERS, IUSBDRIVER_METHODS);
+    usb_interface_t* iface;
+    usb_hid_report_layout_t layout;
+    hid_handler_binding_t* bindings;
+    u16 binding_count;
+    b8 disconnected;
+    u32 payload_length;
+    usb_interrupt_in_stream_t* stream;
+} hid_driver_t;
 
-INTERFACE(IHIDDRIVER, IHIDDRIVER_MEMBERS, IHIDDRIVER_METHODS);
+hid_driver_t hid_driver_create(usb_interface_t* iface);
+IUSBDRIVER* hid_driver_factory(usb_device_t* dev, usb_interface_t* iface);

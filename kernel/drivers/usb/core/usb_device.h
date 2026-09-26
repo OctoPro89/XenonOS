@@ -9,8 +9,8 @@ typedef struct {
     u8 interval; // polling interval (interrupt / isochronous)
 } usb_endpoint_t;
 
-#define USB_ENDPOINT_NUMBER(x) ((u8)(x.address & 0x0F))
-#define USB_ENDPOINT_IS_IN(x) ((b8)((address & 0x80) != 0))
+#define USB_ENDPOINT_NUMBER(x) ((u8)((x).address & 0x0F))
+#define USB_ENDPOINT_IS_IN(x) ((b8)(((x).address & 0x80) != 0))
 
 typedef struct {
     u8 interface_number;
