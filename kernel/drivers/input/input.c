@@ -39,3 +39,19 @@ b8 input_push_mouse_event(const input_mouse_event_t* evt) {
     
     return ring_buffer_push(g_mouse_rb, (const u8*)evt);
 }
+
+b8 input_pop_keyboard_event(input_keyboard_event_t* evt) {
+    if (!g_kbd_rb) {
+        return false;
+    }
+
+    return ring_buffer_pop(g_kbd_rb, (void*)evt);
+}
+
+b8 input_pop_mouse_event(input_mouse_event_t* evt) {
+    if (!g_mouse_rb) {
+        return false;
+    }
+
+    return ring_buffer_pop(g_mouse_rb, (void*)evt);
+}

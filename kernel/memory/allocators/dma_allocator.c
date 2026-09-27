@@ -3,7 +3,7 @@
 #include <memory/pmm.h>
 #include <xlibc/xassert.h>
 
-#define KERNEL_DMA_BASE 0xFFFFA00000000000ULL
+#define KERNEL_DMA_BASE 0xFFFFA00010000000ULL
 
 static vaddr_t dma_next = KERNEL_DMA_BASE;
 

@@ -45,3 +45,15 @@ b8 input_push_keyboard_event(const input_keyboard_event_t* evt);
  * @return Number of events enqueued (true = 1) or false = 0 on overflow
  */
 b8 input_push_mouse_event(const input_mouse_event_t* evt);
+
+/**
+ * @brief Consumer side API for consuming a single keyboard event
+ * @returns True on success else false
+ */
+b8 input_pop_keyboard_event(input_keyboard_event_t* evt);
+
+/**
+ * @brief Consumer side API for consuming a single mouse keyboard event
+ * @returns True on success else false
+ */
+b8 input_pop_mouse_event(input_mouse_event_t* evt);
