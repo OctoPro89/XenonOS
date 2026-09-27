@@ -23,12 +23,12 @@ typedef struct usb_device usb_device_t;
     x(u8, bound_slot_id) \
     x(u8, bound_interface_index)
 
-#define IUSBDRIVER_METHODS(x, self) \
-    x(void, finalize_create, (self)) \
-    x(void, destroy, (self)) \
-    x(b8, probe, (self, usb_device_t* dev, usb_interface_t* iface)) \
-    x(void, run, (self)) \
-    x(void, disconnect, (self))
+#define IUSBDRIVER_METHODS(x) \
+    x(void, finalize_create, (void*)) \
+    x(void, destroy, (void*)) \
+    x(b8, probe, (void*, usb_device_t* dev, usb_interface_t* iface)) \
+    x(void, run, (void*)) \
+    x(void, disconnect, (void*))
 
 INTERFACE(IUSBDRIVER, IUSBDRIVER_MEMBERS, IUSBDRIVER_METHODS);
 

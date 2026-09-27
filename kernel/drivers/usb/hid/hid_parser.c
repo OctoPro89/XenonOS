@@ -1,5 +1,8 @@
 #include <drivers/usb/hid/hid_parser.h>
 #include <xlibc/xstddef.h>
+#include <xlibc/xassert.h>
+#include <xlibc/stdlib.h>
+#include <xlibc/string.h>
 #include <kernel.h>
 
 // TODO: CHECK THIS WHOLE FILE
@@ -356,10 +359,10 @@ static b8 analyze_input_reports(const usb_hid_report_item_t* items, size_t num_i
         return false;
     }
 
-    for (u16 i = 0; i < out_num_reports; i++) {
+    for (u16 i = 0; i < (*out_num_reports); i++) {
         const report_accumulator_t* report = &reports[order[i]];
         u32 body_bytes = (report->body_bits + 7u) / 8u;
-        u32 wire_bytes = body_bytes + (out_uses_report_ids ? 1u : 0u);
+        u32 wire_bytes = body_bytes + ((*out_uses_report_ids) ? 1u : 0u);
         if (wire_bytes > (*out_max_input_report_bytes)) {
             *out_max_input_report_bytes = wire_bytes;
         }
@@ -415,130 +418,130 @@ static b8 build_input_layout(const usb_hid_report_item_t* items, size_t num_item
         switch (item->type) {
         case USB_HID_ITEM_TYPE_GLOBAL:
             switch ((usb_hid_global_item_tag_t)(item->tag)) {
-            case USB_HID_GLOBAL_ITEM_TAG_USAGE_PAGE:
-                globals.usage_page = (u16)(item->data & 0xFFFFu);
-                break;
-            case USB_HID_GLOBAL_ITEM_TAG_REPORT_SIZE:
-                globals.report_size = item->data;
-                break;
-            case USB_HID_GLOBAL_ITEM_TAG_REPORT_COUNT:
-                globals.report_count = item->data;
-                break;
-            case USB_HID_GLOBAL_ITEM_TAG_REPORT_ID:
-                if (item->size == 0 || item->data == 0 || item->data > 0xFFu) {
-                    return false;
-                }
-                globals.report_id = (u8)(item->data);
-                break;
-            case USB_HID_GLOBAL_ITEM_TAG_LOGICAL_MINIMUM:
-                globals.logical_minimum = sign_extend(item->data, item->size);
-                break;
-            case USB_HID_GLOBAL_ITEM_TAG_LOGICAL_MAXIMUM:
-                globals.logical_maximum = sign_extend(item->data, item->size);
-                break;
-            case USB_HID_GLOBAL_ITEM_TAG_PUSH:
-                if (stack_depth >= GLOBAL_STACK_DEPTH) {
-                    return false;
-                }
-                global_stack[stack_depth++] = globals;
-                break;
-            case USB_HID_GLOBAL_ITEM_TAG_POP:
-                if (stack_depth == 0) {
-                    return false;
-                }
-                globals = global_stack[--stack_depth];
-                break;
-            default:
-                break;
+                case USB_HID_GLOBAL_ITEM_TAG_USAGE_PAGE:
+                    globals.usage_page = (u16)(item->data & 0xFFFFu);
+                    break;
+                case USB_HID_GLOBAL_ITEM_TAG_REPORT_SIZE:
+                    globals.report_size = item->data;
+                    break;
+                case USB_HID_GLOBAL_ITEM_TAG_REPORT_COUNT:
+                    globals.report_count = item->data;
+                    break;
+                case USB_HID_GLOBAL_ITEM_TAG_REPORT_ID:
+                    if (item->size == 0 || item->data == 0 || item->data > 0xFFu) {
+                        return false;
+                    }
+                    globals.report_id = (u8)(item->data);
+                    break;
+                case USB_HID_GLOBAL_ITEM_TAG_LOGICAL_MINIMUM:
+                    globals.logical_minimum = sign_extend(item->data, item->size);
+                    break;
+                case USB_HID_GLOBAL_ITEM_TAG_LOGICAL_MAXIMUM:
+                    globals.logical_maximum = sign_extend(item->data, item->size);
+                    break;
+                case USB_HID_GLOBAL_ITEM_TAG_PUSH:
+                    if (stack_depth >= GLOBAL_STACK_DEPTH) {
+                        return false;
+                    }
+                    global_stack[stack_depth++] = globals;
+                    break;
+                case USB_HID_GLOBAL_ITEM_TAG_POP:
+                    if (stack_depth == 0) {
+                        return false;
+                    }
+                    globals = global_stack[--stack_depth];
+                    break;
+                default:
+                    break;
             }
             break;
 
         case USB_HID_ITEM_TYPE_LOCAL:
             switch ((usb_hid_local_item_tag_t)(item->tag)) {
-            case USB_HID_LOCAL_ITEM_TAG_USAGE:
-                if (locals.usage_count < MAX_EXPLICIT_USAGES) {
-                    locals.usages[locals.usage_count++] = item->data;
-                }
-                break;
-            case USB_HID_LOCAL_ITEM_TAG_USAGE_MINIMUM:
-                locals.usage_minimum = item->data;
-                locals.has_usage_range = true;
-                break;
-            case USB_HID_LOCAL_ITEM_TAG_USAGE_MAXIMUM:
-                locals.usage_maximum = item->data;
-                locals.has_usage_range = true;
-                break;
-            default:
-                break;
+                case USB_HID_LOCAL_ITEM_TAG_USAGE:
+                    if (locals.usage_count < MAX_EXPLICIT_USAGES) {
+                        locals.usages[locals.usage_count++] = item->data;
+                    }
+                    break;
+                case USB_HID_LOCAL_ITEM_TAG_USAGE_MINIMUM:
+                    locals.usage_minimum = item->data;
+                    locals.has_usage_range = true;
+                    break;
+                case USB_HID_LOCAL_ITEM_TAG_USAGE_MAXIMUM:
+                    locals.usage_maximum = item->data;
+                    locals.has_usage_range = true;
+                    break;
+                default:
+                    break;
             }
             break;
 
         case USB_HID_ITEM_TYPE_MAIN:
             switch ((usb_hid_main_item_tag_t)(item->tag)) {
-            case USB_HID_MAIN_ITEM_TAG_INPUT: {
-                if (globals.report_size == 0 || globals.report_count == 0 ||
-                    globals.report_size > 0xFFFFu) {
-                    return false;
-                }
-
-                if (uses_report_ids && globals.report_id == 0) {
-                    return false;
-                }
-
-                u8 report_id = globals.report_id;
-                u16 report_index = report_index_by_id[report_id];
-                if (report_index == INVALID_REPORT_INDEX) {
-                    return false;
-                }
-
-                u32 item_bits = globals.report_size * globals.report_count;
-                u16 input_flags = build_input_flags(item->data);
-                b8 is_constant = (input_flags & USB_HID_INPUT_FIELD_CONSTANT) != 0;
-                u32 current_bit_offset = current_bit_offset_by_id[report_id];
-
-                if (!is_constant) {
-                    usb_hid_input_report_info_t* report = &out->input_reports[report_index];
-                    u16 cursor = next_field_cursor_by_id[report_id];
-                    u32 usage_template = (input_flags & USB_HID_INPUT_FIELD_VARIABLE) ? 0 : resolve_array_usage(&locals);
-
-                    for (u32 j = 0; j < globals.report_count; j++) {
-                        if (!out->fields ||
-                            cursor >= (u16)(report->field_begin + report->field_count)) {
-                            return false;
-                        }
-
-                        u32 usage_value = (input_flags & USB_HID_INPUT_FIELD_VARIABLE) ? resolve_variable_usage(&locals, j) : usage_template;
-
-                        out->fields[cursor++] = (usb_hid_field_info_t){
-                            .bit_offset = current_bit_offset,
-                            .bit_size = (u16)(globals.report_size),
-                            .report_id = report_id,
-                            .usage_page = resolved_usage_page(usage_value, globals.usage_page),
-                            .usage = resolved_usage_id(usage_value),
-                            .input_flags = input_flags,
-                            .logical_minimum = globals.logical_minimum,
-                            .logical_maximum = globals.logical_maximum,
-                        };
-                        current_bit_offset += globals.report_size;
+                case USB_HID_MAIN_ITEM_TAG_INPUT: {
+                    if (globals.report_size == 0 || globals.report_count == 0 ||
+                        globals.report_size > 0xFFFFu) {
+                        return false;
                     }
 
-                    next_field_cursor_by_id[report_id] = cursor;
-                } else {
-                    current_bit_offset += item_bits;
-                }
+                    if (uses_report_ids && globals.report_id == 0) {
+                        return false;
+                    }
 
-                current_bit_offset_by_id[report_id] = current_bit_offset;
-                local_state_reset(&locals);
-                break;
-            }
-            case USB_HID_MAIN_ITEM_TAG_COLLECTION:
-            case USB_HID_MAIN_ITEM_TAG_END_COLLECTION:
-            case USB_HID_MAIN_ITEM_TAG_OUTPUT:
-            case USB_HID_MAIN_ITEM_TAG_FEATURE:
-                local_state_reset(&locals);
-                break;
-            default:
-                break;
+                    u8 report_id = globals.report_id;
+                    u16 report_index = report_index_by_id[report_id];
+                    if (report_index == INVALID_REPORT_INDEX) {
+                        return false;
+                    }
+
+                    u32 item_bits = globals.report_size * globals.report_count;
+                    u16 input_flags = build_input_flags(item->data);
+                    b8 is_constant = (input_flags & USB_HID_INPUT_FIELD_CONSTANT) != 0;
+                    u32 current_bit_offset = current_bit_offset_by_id[report_id];
+
+                    if (!is_constant) {
+                        usb_hid_input_report_info_t* report = &out->input_reports[report_index];
+                        u16 cursor = next_field_cursor_by_id[report_id];
+                        u32 usage_template = (input_flags & USB_HID_INPUT_FIELD_VARIABLE) ? 0 : resolve_array_usage(&locals);
+
+                        for (u32 j = 0; j < globals.report_count; j++) {
+                            if (!out->fields ||
+                                cursor >= (u16)(report->field_begin + report->field_count)) {
+                                return false;
+                            }
+
+                            u32 usage_value = (input_flags & USB_HID_INPUT_FIELD_VARIABLE) ? resolve_variable_usage(&locals, j) : usage_template;
+
+                            out->fields[cursor++] = (usb_hid_field_info_t){
+                                .bit_offset = current_bit_offset,
+                                .bit_size = (u16)(globals.report_size),
+                                .report_id = report_id,
+                                .usage_page = resolved_usage_page(usage_value, globals.usage_page),
+                                .usage = resolved_usage_id(usage_value),
+                                .input_flags = input_flags,
+                                .logical_minimum = globals.logical_minimum,
+                                .logical_maximum = globals.logical_maximum,
+                            };
+                            current_bit_offset += globals.report_size;
+                        }
+
+                        next_field_cursor_by_id[report_id] = cursor;
+                    } else {
+                        current_bit_offset += item_bits;
+                    }
+
+                    current_bit_offset_by_id[report_id] = current_bit_offset;
+                    local_state_reset(&locals);
+                    break;
+                }
+                case USB_HID_MAIN_ITEM_TAG_COLLECTION:
+                case USB_HID_MAIN_ITEM_TAG_END_COLLECTION:
+                case USB_HID_MAIN_ITEM_TAG_OUTPUT:
+                case USB_HID_MAIN_ITEM_TAG_FEATURE:
+                    local_state_reset(&locals);
+                    break;
+                default:
+                    break;
             }
             break;
 
@@ -637,7 +640,7 @@ b8 usb_hid_parse_report_descriptor(const u8* descriptor, size_t length, usb_hid_
         return false;
     }
 
-    out->input_reports = (usb_hid_input_report_info_t*)kalloc(num_reports * sizeof(usb_hid_input_report_info_t));
+    out->input_reports = (usb_hid_input_report_info_t*)kmalloc(num_reports * sizeof(usb_hid_input_report_info_t));
     if (!out->input_reports) {
         kfree(items);
         return false;
@@ -659,7 +662,7 @@ b8 usb_hid_parse_report_descriptor(const u8* descriptor, size_t length, usb_hid_
 
     rc = build_input_layout(items, parsed_count, reports, report_order, num_reports, uses_report_ids, out);
     kfree(items);
-    if (rc != 0) {
+    if (!rc) {
         usb_hid_report_layout_destroy(out);
         return false;
     }

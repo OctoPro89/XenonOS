@@ -9,6 +9,8 @@
 #define MAX_USB_DEVICES 16
 static usb_device_t* g_devices[MAX_USB_DEVICES];
 static IUSBDRIVER* g_bound_drivers[MAX_USB_DEVICES * 16];
+static IUSBDRIVER* g_active_drivers[MAX_USB_DEVICES * 16];
+static u16 g_active_driver_count = 0;
 static usb_core_interface_driver_entry_t g_registered_drivers[MAX_USB_DEVICES * 16];
 static u16 g_registered_driver_count = 0;
 
@@ -118,19 +120,23 @@ void usb_core_device_configured(xhci_driver_t* driver, xhci_device_t* xdev, cons
     for (u8 i = 0; i < dev->num_interfaces; ++i) {
         usb_interface_t* iface = &dev->interfaces[i];
 
-        for (u16 driver_index = 0; driver_index < g_registered_driver_count; ++i) {
-            usb_core_interface_driver_entry_t* reg = &g_registered_drivers[i];
+        for (u16 driver_index = 0; driver_index < g_registered_driver_count; ++driver_index) {
+            usb_core_interface_driver_entry_t* reg = &g_registered_drivers[driver_index];
             if (!match_interface(reg->match, iface)) { continue; }
 
             IUSBDRIVER* drv = reg->create(dev, iface);
             if (!drv) { continue; }
 
-            if (drv->probe((void*)drv, dev, iface)) { 
+            if (drv->finalize_create) { drv->finalize_create((void*)drv); }
+
+            if (!drv->probe((void*)drv, dev, iface)) { 
                 kfree(drv);
                 continue;
             }
 
             // TODO: create kernel task here
+            // for now use not so great solution
+            g_active_drivers[g_active_driver_count++] = drv;
 
             drv->bound_device = dev;
             drv->bound_slot_id = slot_id;
@@ -139,7 +145,7 @@ void usb_core_device_configured(xhci_driver_t* driver, xhci_device_t* xdev, cons
             ++dev->active_driver_count;
 
             u16 drv_idx = (u16)(slot_id) * 16u + (u16)i;
-            if (!(drv_idx >= MAX_USB_DEVICES * 16)) {
+            if (drv_idx >= MAX_USB_DEVICES * 16) {
                 xassert(false, "");
                 g_bound_drivers[drv_idx] = drv;
             }
@@ -194,4 +200,10 @@ void usb_core_register_driver(const char* name, usb_core_interface_match_t match
 
     g_registered_drivers[g_registered_driver_count] = entry;
     ++g_registered_driver_count;
+}
+
+void usb_core_run_drivers() {
+    for (u16 i = 0; i < g_active_driver_count; ++i) {
+        g_active_drivers[i]->run((void*)g_active_drivers[i]);
+    }
 }

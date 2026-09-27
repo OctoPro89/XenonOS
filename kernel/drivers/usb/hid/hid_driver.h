@@ -19,7 +19,8 @@ typedef struct {
 typedef struct hid_driver hid_driver_t;
 
 typedef struct hid_driver {
-    INTERFACE_IMPLEMENT(hid_driver_t, IUSBDRIVER_MEMBERS, IUSBDRIVER_METHODS);
+    INTERFACE_IMPLEMENT(IUSBDRIVER_MEMBERS, IUSBDRIVER_METHODS);
+    // const char* name; usb_device_t* bound_device; uint8_t bound_slot_id; uint8_t bound_interface_index; void (*finalize_create) (hid_driver_t*); void (*destroy) (hid_driver_t*); b8 (*probe) (hid_driver_t*, usb_device_t* dev, usb_interface_t* iface); void (*run) (hid_driver_t*); void (*disconnect) (hid_driver_t*);
     usb_interface_t* iface;
     usb_hid_report_layout_t layout;
     hid_handler_binding_t* bindings;
@@ -29,5 +30,4 @@ typedef struct hid_driver {
     usb_interrupt_in_stream_t* stream;
 } hid_driver_t;
 
-hid_driver_t hid_driver_create(usb_interface_t* iface);
 IUSBDRIVER* hid_driver_factory(usb_device_t* dev, usb_interface_t* iface);

@@ -3,10 +3,10 @@
 #include <xlibc/xinterface.h>
 
 #define IHIDHANDLER_MEMBERS(x)
-#define IHIDHANDLER_METHODS(x, self) \
-    x(b8, init, (self, const usb_hid_report_layout_t* layout, const usb_hid_input_report_info_t* report)) \
-    x(void, on_report, (self, const u8* data, u32 length)) \
-    x(void, destroy, (self))
+#define IHIDHANDLER_METHODS(x) \
+    x(b8, init, (void*, const usb_hid_report_layout_t* layout, const usb_hid_input_report_info_t* report)) \
+    x(void, on_report, (void*, const u8* data, u32 length)) \
+    x(void, destroy, (void*))
 
 /**
  * Base interface for device type specific report processing.

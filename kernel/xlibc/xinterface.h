@@ -7,12 +7,12 @@
     ret (*name) args;
 
 /**
- * Creates an interface and puts void* in "self" as a placeholder
+ * Creates an interface
  */
 #define INTERFACE(name, members, methods) \
     typedef struct name { \
         members(INTERFACE_MEMBER_DECL) \
-        methods(INTERFACE_METHOD_DECL, void*) \
+        methods(INTERFACE_METHOD_DECL) \
     } name;
 
 #define INTERFACE_DERIVED(name, base, members, methods) \
@@ -29,8 +29,8 @@
     ret (*name) args;
 
 /**
- * Implements an interface's members and methods, replacing void* with the implementer's type
+ * Implements an interface's members and methods
  */
-#define INTERFACE_IMPLEMENT(newtype, members, methods) \
-    methods(INTERFACE_METHOD_IMPL, newtype*) \
-    members(INTERFACE_MEMBER_IMPL)
+#define INTERFACE_IMPLEMENT(members, methods) \
+    members(INTERFACE_MEMBER_IMPL) \
+    methods(INTERFACE_METHOD_IMPL)

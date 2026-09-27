@@ -13,8 +13,10 @@ static __hint_inline__ b8 hid_keyboard_handler_is_reserved_array_usage(u16 usage
     return usage >= 0x01u && usage <= 0x03u;
 }
 
-typedef struct {
-    INTERFACE_IMPLEMENT(hid_keyboard_handler_t, IHIDHANDLER_MEMBERS, IHIDHANDLER_METHODS);
+typedef struct hid_keyboard_handler hid_keyboard_handler_t;
+
+typedef struct hid_keyboard_handler {
+    INTERFACE_IMPLEMENT(IHIDHANDLER_MEMBERS, IHIDHANDLER_METHODS);
 
     const usb_hid_field_info_t* modifier_fields[8];
     const usb_hid_field_info_t** key_fields;

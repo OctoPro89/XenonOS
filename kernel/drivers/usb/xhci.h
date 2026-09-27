@@ -91,6 +91,8 @@ b8 xhci_driver_usb_open_interrupt_in_stream(xhci_driver_t* driver, xhci_device_t
 b8 xhci_driver_usb_read_interrupt_in_stream(xhci_driver_t* driver, xhci_device_t* device, u8 endpoint_addr, void* buffer, u32 buffer_len, u32* out_length);
 b8 xhci_driver_usb_close_interrupt_in_stream(xhci_driver_t* driver, xhci_device_t* device, u8 endpoint_addr);
 
+b8 xhci_driver_usb_submit_transfer_async(xhci_driver_t* driver, xhci_device_t* device, usb_transfer_request_t* request);
+
 void xhci_driver_release_disconnected_device(xhci_driver_t* driver, xhci_device_t* device);
 /**
  * @note This function assumes host controller has already been started successfully

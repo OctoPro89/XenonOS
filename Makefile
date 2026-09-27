@@ -5,7 +5,8 @@ BOOTCFLAGS = -I$(EFI_INCLUDE) -I$(EFI_INCLUDE)/$(EFI_ARCH) \
          -ffreestanding \
          -fshort-wchar \
          -mno-red-zone \
-         -fno-stack-protector
+         -fno-stack-protector \
+		 -Wall
 
 KERNCFLAGS = -I$(EFI_INCLUDE) -I$(EFI_INCLUDE)/$(EFI_ARCH) \
          -ffreestanding \
@@ -14,7 +15,8 @@ KERNCFLAGS = -I$(EFI_INCLUDE) -I$(EFI_INCLUDE)/$(EFI_ARCH) \
          -mno-red-zone \
          -c -g -O0 -D XENONOS_DEBUG=1 \
 		 -Werror=return-type \
-		 -Werror=incompatible-pointer-types
+		 -Werror=incompatible-pointer-types \
+		 -Wall
 
 ASMFLAGS = -f elf64 -g -F dwarf
 

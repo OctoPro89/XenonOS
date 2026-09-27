@@ -1,6 +1,7 @@
 #include <drivers/usb/hid/hid_keyboard_handler.h>
 #include <drivers/usb/hid/hid_constants.h>
 #include <drivers/input/input.h>
+#include <xlibc/xassert.h>
 #include <xlibc/xstdint.h>
 #include <xlibc/string.h>
 #include <xlibc/stdlib.h>
@@ -99,11 +100,12 @@ static b8 hid_keyboard_handler_contains_keycode(const u16* keycodes, u16 count, 
     return false;
 }
 
-b8 hid_keyboard_handler_init(hid_keyboard_handler_t* handler, const usb_hid_report_layout_t* layout, const usb_hid_input_report_info_t* report) {
+b8 hid_keyboard_handler_init(void* _handler, const usb_hid_report_layout_t* layout, const usb_hid_input_report_info_t* report) {
+    hid_keyboard_handler_t* handler = (hid_keyboard_handler_t*)_handler;
     hid_keyboard_handler_reset_state(handler);
 
     u16 kb = (u16)USB_HID_USAGE_PAGE_KEYBOARD;
-    const usb_hid_field_info_t* fields = usb_hid_core_report_fields(layout, report);
+    const usb_hid_field_info_t* fields = usb_hid_report_fields(layout, report);
     if (!fields || report->field_count == 0) {
         xassert(false, "");
         return false;
@@ -119,7 +121,7 @@ b8 hid_keyboard_handler_init(hid_keyboard_handler_t* handler, const usb_hid_repo
         if (USB_HID_FIELD_INFO_IS_VARIABLE(*field) && hid_keyboard_handler_is_modifier_usage(field->usage)) {
             if (field->usage >= 0xE0 && field->usage <= 0xE7) {
                 if (!handler->modifier_fields[field->usage - 0xE0]) {
-                    handler->modifier_fields[field->usage - 0xE0] = &field;
+                    handler->modifier_fields[field->usage - 0xE0] = field;
                 }
             }
             continue;
@@ -154,7 +156,7 @@ b8 hid_keyboard_handler_init(hid_keyboard_handler_t* handler, const usb_hid_repo
         }
 
         if (slot < key_field_count) {
-            handler->key_fields[slot++] = &field;
+            handler->key_fields[slot++] = field;
         }
     }
 
@@ -172,12 +174,13 @@ b8 hid_keyboard_handler_init(hid_keyboard_handler_t* handler, const usb_hid_repo
         }
     }
 
-    printf("[HID-KBD]: report=%u modifiers=%u key-fields=%u\n", handler->report_id, modifier_count, handler->key_field_count);
+    printf("[HID KBD]: report=%u modifiers=%u key-fields=%u\n", handler->report_id, modifier_count, handler->key_field_count);
 
     return true;
 }
 
-void hid_keyboard_handler_on_report(hid_keyboard_handler_t* self, const u8* data, u32 length) {
+void hid_keyboard_handler_on_report(void* _self, const u8* data, u32 length) {
+    hid_keyboard_handler_t* self = (hid_keyboard_handler_t*)_self;
     if (!self->ready) { return; }
 
     u8 modifiers = 0;
@@ -199,7 +202,7 @@ void hid_keyboard_handler_on_report(hid_keyboard_handler_t* self, const u8* data
                 mevt.action = pressed ? INPUT_KBD_ACTION_DOWN : INPUT_KBD_ACTION_UP;
                 mevt.modifiers = modifiers;
                 mevt.usage = (u16)(0xE0u + b);
-                input_push_keyboard_event(mevt);
+                input_push_keyboard_event(&mevt);
             }
         }
 
@@ -215,7 +218,7 @@ void hid_keyboard_handler_on_report(hid_keyboard_handler_t* self, const u8* data
             keycode = raw != 0 ? field->usage : 0;
         } else if (raw <= 0xFFFFu) {
             keycode = (uint16_t)(raw);
-            if (is_reserved_array_usage(keycode)) {
+            if (hid_keyboard_handler_is_reserved_array_usage(keycode)) {
                 keycode = 0;
             }
         }
@@ -225,39 +228,40 @@ void hid_keyboard_handler_on_report(hid_keyboard_handler_t* self, const u8* data
 
     for (u16 i = 0; i < self->key_field_count; ++i) {
         u16 keycode = self->crnt_keycodes[i];
-                if (keycode == 0 || contains_keycode(self->crnt_keycodes, i, keycode)) {
+        if (keycode == 0 || hid_keyboard_handler_contains_keycode(self->crnt_keycodes, i, keycode)) {
             continue;
         }
 
-        if (!contains_keycode(self->prev_keycodes, self->key_field_count, keycode)) {
-            input_kbd_event_t evt;
+        if (!hid_keyboard_handler_contains_keycode(self->prev_keycodes, self->key_field_count, keycode)) {
+            input_keyboard_event_t evt;
             evt.action = INPUT_KBD_ACTION_DOWN;
             evt.modifiers = modifiers;
             evt.usage = keycode;
-            input_push_kbd_event(evt);
+            input_push_keyboard_event(&evt);
         }
     }
 
     for (u16 i = 0; i < self->key_field_count; ++i) {
         u16 keycode = self->prev_keycodes[i];
-        if (keycode == 0 || contains_keycode(self->prev_keycodes, i, keycode)) {
+        if (keycode == 0 || hid_keyboard_handler_contains_keycode(self->prev_keycodes, i, keycode)) {
             continue;
         }
 
-        if (!contains_keycode(self->crnt_keycodes, self->key_field_count, keycode)) {
-            input_kbd_event evt;
+        if (!hid_keyboard_handler_contains_keycode(self->crnt_keycodes, self->key_field_count, keycode)) {
+            input_keyboard_event_t evt;
             evt.action = INPUT_KBD_ACTION_UP;
             evt.modifiers = modifiers;
             evt.usage = keycode;
-            input_push_kbd_event(evt);
+            input_push_keyboard_event(&evt);
         }
     }
 
     memcpy(self->prev_keycodes, self->crnt_keycodes, self->key_field_count * sizeof(u16));
 }
 
-void hid_keyboard_handler_destroy(void* self) {
-    hid_keyboard_handler_reset_state((hid_keyboard_handler_t*)self);
+void hid_keyboard_handler_destroy(void* _self) {
+    hid_keyboard_handler_t* self = (hid_keyboard_handler_t*)_self;
+    hid_keyboard_handler_reset_state(self);
 }
 
 hid_keyboard_handler_t hid_keyboard_handler_create() {

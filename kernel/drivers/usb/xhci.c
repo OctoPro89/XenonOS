@@ -59,6 +59,21 @@ static xhci_command_completion_trb_t* xhci_driver_set_tr_dequeue_ptr(xhci_driver
 static void xhci_driver_clear_tt_buffer(xhci_driver_t* driver, xhci_device_t* device, u8 dev_addr);
 static b8 xhci_driver_queue_interrupt_in_stream_td(xhci_driver_t* driver, xhci_device_t* device, xhci_endpoint_t* ep, xhci_endpoint_async_state_t* state, b8 defer_doorbell);
 static void xhci_driver_queue_deferred_doorbell(xhci_driver_t* driver, u8 slot_id, u8 target);
+static void xhci_driver_enqueue_pending_request(xhci_driver_t* driver, xhci_endpoint_async_state_t* state, usb_transfer_request_t* request);
+static b8 xhci_driver_start_async_request(xhci_driver_t* driver, xhci_device_t* device, xhci_endpoint_t* ep, xhci_endpoint_async_state_t* state, usb_transfer_request_t* request, b8 defer_doorbell);
+static void xhci_driver_complete_endpoint_transfer(xhci_driver_t* driver, xhci_transfer_completion_trb_t* result_out, b8* completed_out, const xhci_transfer_completion_trb_t* event);
+static void xhci_driver_complete_interrupt_in_stream(xhci_driver_t* driver, xhci_device_t* device, xhci_endpoint_t* ep, xhci_endpoint_async_state_t* state, const xhci_transfer_completion_trb_t* event);
+static b8 xhci_driver_queue_interrupt_in_stream_payload(xhci_driver_t* driver, xhci_interrupt_in_stream_state_t* stream, const u8* data, u32 length, u16 mfindex, u64 queued_t_us, u32* seq_out);
+static void xhci_driver_complete_async_request(xhci_driver_t* driver, xhci_device_t* device, xhci_endpoint_t* ep, xhci_endpoint_async_state_t* state, const xhci_transfer_completion_trb_t* event);
+static void xhci_driver_kick_async_request_queue(xhci_driver_t* driver, xhci_device_t* device, xhci_endpoint_t* ep, xhci_endpoint_async_state_t* state, b8 defer_doorbell);
+
+static __hint_inline__ u32 xhci_driver_read_mfindex(const xhci_driver_t* driver) {
+    if (!driver->runtime_regs) {
+        return 0xFFFFu;
+    }
+
+    return driver->runtime_regs->mf_index & 0x3FFF;
+}
 
 // TODO: check allocations, xhci free memory
 
@@ -192,6 +207,7 @@ static void xhci_driver_process_events(xhci_driver_t* driver) {
 
                 xhci_portsc_register_t portsc = xhci_driver_read_portsc_reg(driver, port_id - 1);
 
+                // TODO: look at
                 if (portsc.csc && portsc.ccs) {
                     xhci_driver_setup_device(driver, port_id - 1);
                 }
@@ -223,20 +239,38 @@ static void xhci_driver_process_events(xhci_driver_t* driver) {
                 if (!dev) { break; }
 
                 if (ep_id == 1) {
-                    // xhci_driver_complete_endpoint_transfer(driver, &dev->ctrl_result, &dev->ctrl_completed, e);
+                    xhci_driver_complete_endpoint_transfer(driver, &dev->ctrl_result, &dev->ctrl_completed, e);
                     dev->ctrl_result = *e;
                     dev->ctrl_completed = true;
                 }
                 else {
-                    // TODO: not sure if this is right
-                    xhci_endpoint_t* ep = (xhci_endpoint_t*)dev->endpoints[ep_id];
-                    if (ep == NULL) { break; }
-                    // xhci_driver_complete_endpoint_transfer(driver, &dev->ctrl_result, &dev->ctrl_completed, e); 
-                    ep->result = *e;
-                    ep->completed = true;
-                }
+                    xhci_endpoint_t* ep = dev->endpoints[ep_id];
+                    if (!ep) { break; }
 
-                break;
+                    if (ep->async_state) {
+                        xhci_endpoint_async_state_t* state = ep->async_state;
+                        if (state->async_enabled) {
+                            if (state->interrupt_in_stream.active ||
+                                state->interrupt_in_stream.closing ||
+                                state->interrupt_in_stream.payloads ||
+                                state->interrupt_in_stream.payload_storage) {
+                                    xhci_driver_complete_interrupt_in_stream(driver, dev, ep, state, e);
+                            }
+                            else if (state->active_request) {
+                                xhci_driver_complete_async_request(driver, dev, ep, state, e);
+                            }
+                        }
+                        else {
+                            xhci_driver_complete_endpoint_transfer(driver, &ep->result, &ep->completed, e);
+                        }
+
+                        break;
+                    }
+
+                    xhci_driver_complete_endpoint_transfer(driver, &ep->result, &ep->completed, e);
+
+                    break;
+                }
             }
             default: { break; } // TODO
         }
@@ -711,8 +745,9 @@ static void xhci_driver_configure_device(xhci_driver_t* driver, xhci_device_t* d
         if (hdr->bLength == 0) { break; }
 
         if (hdr->bDescriptorType == USB_DESCRIPTOR_INTERFACE) {
-            if (device->num_interfaces < XHCI_DEVICE_MAX_INTERFACES) {
-                usb_interface_descriptor_t* iface_desc = (usb_interface_descriptor_t*)hdr;
+            if (hdr->bLength >= sizeof(usb_interface_descriptor_t) &&
+                device->num_interfaces < XHCI_DEVICE_MAX_INTERFACES) {
+                usb_interface_descriptor_t* iface_desc = (usb_interface_descriptor_t*)(hdr);
                 u8 idx = device->num_interfaces;
                 device->num_interfaces = idx + 1;
                 current_iface = &device->interfaces[idx];
@@ -721,20 +756,40 @@ static void xhci_driver_configure_device(xhci_driver_t* driver, xhci_device_t* d
                 current_iface->interface_class = iface_desc->bInterfaceClass;
                 current_iface->interface_subclass = iface_desc->bInterfaceSubClass;
                 current_iface->interface_protocol = iface_desc->bInterfaceProtocol;
+                current_iface->hid_report_desc_length = 0;
                 current_iface->num_endpoints = 0;
                 printf("[XHCI DRIVER]: interface %u: class=0x%x subclass=0x%x protocol=0x%x\n",
-                        iface_desc->bInterfaceNumber,
-                        iface_desc->bInterfaceClass,
-                        iface_desc->bInterfaceSubClass,
-                        iface_desc->bInterfaceProtocol);
+                          iface_desc->bInterfaceNumber,
+                          iface_desc->bInterfaceClass,
+                          iface_desc->bInterfaceSubClass,
+                          iface_desc->bInterfaceProtocol);
+            }
+        } else if (hdr->bDescriptorType == USB_DESCRIPTOR_HID) {
+            if (current_iface && hdr->bLength >= 6) {
+                const u8* hid_bytes = (const u8*)(hdr);
+                u8 num_desc = hid_bytes[5];
+                for (u8 i = 0; i < num_desc; i++) {
+                    u16 desc_offset = (u16)(6 + (i * 3));
+                    if (desc_offset + 3 > hdr->bLength) {
+                        break;
+                    }
+                    u8 desc_type = hid_bytes[desc_offset];
+                    u16 desc_len = (u16)(hid_bytes[desc_offset + 1]) | ((u16)(hid_bytes[desc_offset + 2]) << 8);
+                    if (desc_type == USB_DESCRIPTOR_HID_REPORT) {
+                        current_iface->hid_report_desc_length = desc_len;
+                        break;
+                    }
+                }
             }
         } else if (hdr->bDescriptorType == USB_DESCRIPTOR_ENDPOINT) {
-            usb_endpoint_descriptor_t* ep_desc = (usb_endpoint_descriptor_t*)hdr;
-            xhci_endpoint_t* ep = xhci_driver_create_endpoint(driver, device, ep_desc);
-            if (ep) {
-                xhci_driver_configure_endpoint_context(driver, device, ep);
-                if (current_iface && current_iface->num_endpoints < 16) {
-                    current_iface->endpoint_dcis[current_iface->num_endpoints++] = ep->dci;
+            if (hdr->bLength >= sizeof(usb_endpoint_descriptor_t)) {
+                usb_endpoint_descriptor_t* ep_desc = (usb_endpoint_descriptor_t*)(hdr);
+                xhci_endpoint_t* ep = xhci_driver_create_endpoint(driver, device, ep_desc);
+                if (ep) {
+                    xhci_driver_configure_endpoint_context(driver, device, ep);
+                    if (current_iface && current_iface->num_endpoints < 16) {
+                        current_iface->endpoint_dcis[current_iface->num_endpoints++] = ep->dci;
+                    }
                 }
             }
         }
@@ -993,7 +1048,7 @@ static b8 xhci_driver_recover_stalled_control_endpoint(xhci_driver_t* driver, xh
         printf("[XHCI DRIVER]: recovering stalled EP0 slot %u: reset endpoint failed (ignored)", device->slot);
     }
 
-    if (xhci_driver_set_tr_dequeue_ptr(driver, device, 1, dequeue_phys, dequeue_cycle) != 0) {
+    if (xhci_driver_set_tr_dequeue_ptr(driver, device, 1, dequeue_phys, dequeue_cycle) != NULL) {
         printf("[XHCI DRIVER]: recovering stalled EP0 slot %u: set dequeue pointer failed\n", device->slot);
         return false;
     }
@@ -1092,6 +1147,259 @@ static void xhci_driver_queue_deferred_doorbell(xhci_driver_t* driver, u8 slot_i
     driver->pending_doorbells[driver->pending_doorbell_count++] = (struct pending_doorbell){ .slot_id = slot_id, .target = target };
 }
 
+static void xhci_driver_enqueue_pending_request(xhci_driver_t* driver, xhci_endpoint_async_state_t* state, usb_transfer_request_t* request) {
+    request->next = NULL;
+    if (!state->pending_tail) {
+        state->pending_head = request;
+        state->pending_tail = request;
+        return;
+    }
+
+    state->pending_tail->next = request;
+    state->pending_tail = request;
+}
+
+static b8 xhci_driver_start_async_request(xhci_driver_t* driver, xhci_device_t* device, xhci_endpoint_t* ep, xhci_endpoint_async_state_t* state, usb_transfer_request_t* request, b8 defer_doorbell) {
+    if (!device || !ep || request->requested_length > PAGE_SIZE) {
+        xassert(false, "");
+        return false;
+    }
+
+    b8 rc = true;
+    xhci_normal_trb_t normal;
+    memset(&normal, 0, sizeof(xhci_normal_trb_t));
+    normal.trb_type = XHCI_TRB_TYPE_NORMAL;
+    normal.data_buffer_physical_base = ep->dma_buffer.phys;
+    normal.trb_transfer_length = request->requested_length;
+    normal.td_size = 0;
+    normal.interrupter_target = 0;
+    normal.ioc = 1;
+    normal.isp = XHCI_ENDPOINT_IS_IN(*ep) ? 1 : 0;
+    normal.chain = 0;
+
+    if (state->disconnecting || state->interrupt_in_stream.active || state->active_request != request || !ep->ring || !xhci_transfer_ring_can_enqueue(ep->ring, 1)) {
+        rc = false;
+    }
+    else {
+        if (!XHCI_ENDPOINT_IS_IN(*ep) && request->buffer && request->requested_length > 0) {
+            memcpy((void*)ep->dma_buffer.virt, request->buffer, request->requested_length);
+        }
+
+        request->hcd_private = ep;
+        xhci_transfer_ring_enqueue(ep->ring, (xhci_trb_t*)&normal);
+    }
+
+    if (!rc) {
+        xassert(false, "");
+        return false;
+    }
+
+    if (defer_doorbell) {
+        xhci_driver_queue_deferred_doorbell(driver, device->slot, ep->dci);
+    }
+    else {
+        xhci_doorbell_manager_ring_doorbell(&driver->doorbell_manager, device->slot, ep->dci);
+    }
+
+    return true;
+}
+
+static void xhci_driver_complete_endpoint_transfer(xhci_driver_t* driver, xhci_transfer_completion_trb_t* result_out, b8* completed_out, const xhci_transfer_completion_trb_t* event) {
+    // TODO: threading
+    // TODO: check
+    *result_out = *event;   
+    *completed_out = true;
+}
+
+static void xhci_driver_complete_interrupt_in_stream(xhci_driver_t* driver, xhci_device_t* device, xhci_endpoint_t* ep, xhci_endpoint_async_state_t* state, const xhci_transfer_completion_trb_t* event) {
+    b8 was_closing = false;
+    if (state->interrupt_in_stream.closing) {
+        state->interrupt_in_stream.closing = false;
+        was_closing = true;
+    }
+
+    if (was_closing) {
+        return;
+    }
+
+    if (!state->interrupt_in_stream.active) {
+        return;
+    }
+
+    if (event->completion_code == XHCI_TRB_COMPLETION_CODE_MISSED_SERVICE) {
+        // The xHCI found no TD at the scheduled polling interval. This is
+        // recoverable: re-arm with an immediate doorbell so the endpoint
+        // resumes at the next interval without killing the stream
+        if (xhci_driver_queue_interrupt_in_stream_td(driver, device, ep, state, false) != 0) {
+            state->interrupt_in_stream.active = false;
+        }
+        return;
+    }
+
+    if (event->completion_code != XHCI_TRB_COMPLETION_CODE_SUCCESS && event->completion_code != XHCI_TRB_COMPLETION_CODE_SHORT_PACKET) {
+        state->interrupt_in_stream.active = false;
+        state->interrupt_in_stream.closing = false;
+        return;
+    }
+
+    u32 requested = state->interrupt_in_stream.payload_length;
+    u32 residual = event->transfer_length;
+    u32 actual = residual <= requested ? (requested - residual) : 0;
+    if (actual > requested) {
+        actual = requested;
+    }
+
+    barrier_dma_read();
+    if (state->interrupt_in_stream.active) {
+        xhci_driver_queue_interrupt_in_stream_payload(
+            driver,
+            &state->interrupt_in_stream,
+            (const u8*)(ep->dma_buffer.virt),
+            actual,
+            (u16)(xhci_driver_read_mfindex(driver)),
+            ktimer_get_system_time_in_nanoseconds() / 1000,
+            NULL
+        );
+    }
+
+    if (!xhci_driver_queue_interrupt_in_stream_td(driver, device, ep, state, true)) {
+        state->interrupt_in_stream.active = false;
+    }
+}
+
+static b8 xhci_driver_queue_interrupt_in_stream_payload(xhci_driver_t* driver, xhci_interrupt_in_stream_state_t* stream, const u8* data, u32 length, u16 mfindex, u64 queued_t_us, u32* seq_out) {
+    if (!stream->active || !stream->payloads || !stream->payload_storage || stream->queue_depth == 0) {
+        xassert(false, "");
+        return false;
+    }
+
+    if (stream->count >= stream->queue_depth) {
+        stream->head = (u8)((stream->head + 1) % stream->queue_depth);
+        --stream->count;
+        ++stream->dropped;
+    }
+
+    u8 idx = (u8)((stream->head + stream->count) % stream->queue_depth);
+    xhci_interrupt_in_payload_t* payload = &stream->payloads[idx];
+    payload->seq = stream->next_seq++;
+    payload->mfindex = mfindex;
+    payload->len = (u16)(length);
+    payload->queued_t_us = queued_t_us;
+    memset(payload->data, 0, stream->payload_length);
+    if (length > 0) {
+        memcpy(payload->data, data, length);
+    }
+
+    ++stream->count;
+    if (seq_out) {
+        *seq_out = payload->seq;
+    }
+
+    return true;
+}
+
+static void xhci_driver_complete_async_request(xhci_driver_t* driver, xhci_device_t* device, xhci_endpoint_t* ep, xhci_endpoint_async_state_t* state, const xhci_transfer_completion_trb_t* event) {
+    usb_transfer_request_t* request = state->active_request;
+    b8 cancelled = state->active_request_cancelled;
+    u32 requested = 0;
+
+    if (request) {
+        requested = request->requested_length;
+    }
+
+    state->active_request = NULL;
+    state->active_request_cancelled = false;
+
+    if (!request) {
+        return;
+    }
+
+    if (cancelled) {
+        xhci_driver_finish_request(driver, request, USB_TRANSFER_STATUS_CANCELLED, 0);
+        xhci_driver_kick_async_request_queue(driver, device, ep, state, XHCI_ENDPOINT_TRANSFER_TYPE(*ep) == 3 && XHCI_ENDPOINT_IS_IN(*ep));
+        if (!state->active_request && !state->pending_head &&
+            !state->interrupt_in_stream.active &&
+            !state->interrupt_in_stream.closing &&
+            !state->interrupt_in_stream.payloads &&
+            !state->interrupt_in_stream.payload_storage) {
+            state->async_enabled = false;
+        }
+
+        return;
+    }
+
+    u32 residual = event->transfer_length;
+    u32 actual = residual <= requested ? (requested - residual) : 0;
+    usb_transfer_status_t status = USB_TRANSFER_STATUS_IO_ERROR;
+    if (event->completion_code == XHCI_TRB_COMPLETION_CODE_SUCCESS) {
+        status = USB_TRANSFER_STATUS_OK;
+    }
+    else if (event->completion_code == XHCI_TRB_COMPLETION_CODE_SHORT_PACKET) {
+        status = (request->flags & USB_TRANSFER_FLAGS_ALLOW_SHORT) ? USB_TRANSFER_STATUS_SHORT_PACKET : USB_TRANSFER_STATUS_IO_ERROR;
+        if (status == USB_TRANSFER_STATUS_IO_ERROR) {
+            actual = 0;
+        }
+    }
+    else if (event->completion_code == XHCI_TRB_COMPLETION_CODE_STALL_ERROR) {
+        status = USB_TRANSFER_STATUS_STALLED;
+        actual = 0;
+    }
+    else {
+        actual = 0;
+    }
+
+    if (XHCI_ENDPOINT_IS_IN(*ep) && request->buffer && request->requested_length > 0) {
+        memset(request->buffer, 0, request->requested_length);
+        if ((status == USB_TRANSFER_STATUS_OK || status == USB_TRANSFER_STATUS_SHORT_PACKET && actual > 0)) {
+            barrier_dma_read();
+            memcpy(request->buffer, (const void*)ep->dma_buffer.virt, actual);
+        }
+    }
+
+    xhci_driver_finish_request(driver, request, status, actual);
+    xhci_driver_kick_async_request_queue(driver, device, ep, state, XHCI_ENDPOINT_TRANSFER_TYPE(*ep) == 3 && XHCI_ENDPOINT_IS_IN(*ep));
+    if (!state->active_request && !state->pending_head &&
+        !state->interrupt_in_stream.active &&
+        !state->interrupt_in_stream.closing &&
+        !state->interrupt_in_stream.payloads &&
+        !state->interrupt_in_stream.payload_storage) {
+        state->async_enabled = false;
+    }
+}
+
+static void xhci_driver_kick_async_request_queue(xhci_driver_t* driver, xhci_device_t* device, xhci_endpoint_t* ep, xhci_endpoint_async_state_t* state, b8 defer_doorbell) {
+    while (true) {
+        usb_transfer_request_t* next = NULL;
+        if (!state->disconnecting &&
+            !state->interrupt_in_stream.active &&
+            !state->active_request &&
+            state->pending_head) {
+            next = state->pending_head;
+            state->pending_head = next->next;
+            if (!state->pending_head) {
+                state->pending_tail = NULL;
+            }
+            next->next = NULL;
+            state->active_request = next;
+            state->active_request_cancelled = false;
+        }
+
+        if (!next) {
+            return;
+        }
+
+        if (xhci_driver_start_async_request(driver, device, ep, state, next, defer_doorbell)) {
+            return;
+        }
+
+        if (state->active_request == next) {
+            state->active_request = NULL;
+            state->active_request_cancelled = false;
+        }
+
+        xhci_driver_finish_request(driver, next, USB_TRANSFER_STATUS_IO_ERROR, 0);
+    }
+}
 b8 xhci_driver_init_driver(xhci_driver_t* driver) {
     pci_bar_t* bar = &driver->pci_device->bar[0];
     driver->xhc_base = xhci_map_mmio(bar->base, bar->size);
@@ -1626,6 +1934,7 @@ b8 xhci_driver_usb_read_interrupt_in_stream(xhci_driver_t* driver, xhci_device_t
     b8 got_payload = false;
     u32 actual = 0;
     while (true) {
+        xhci_driver_run(driver); // TODO: remove
         if (!state->interrupt_in_stream.active) {
             break;
         }
@@ -1710,6 +2019,67 @@ b8 xhci_driver_usb_close_interrupt_in_stream(xhci_driver_t* driver, xhci_device_
     return true;
 }
 
+b8 xhci_driver_usb_submit_transfer_async(xhci_driver_t* driver, xhci_device_t* device, usb_transfer_request_t* request) {
+    if (!device) {
+        xassert(false, "");
+        return false;
+    }
+
+    xhci_endpoint_t* ep = xhci_device_endpoint_by_address(device, request->endpoint_addr);
+    if (!ep || XHCI_ENDPOINT_NUM(*ep) == 0 || request->requested_length > PAGE_SIZE || (!request->buffer && request->requested_length > 0)) {
+        xassert(false, "");
+        return false;
+    }
+
+    xhci_endpoint_async_state_t* state = ep->async_state;
+    if (!state) {
+        xassert(false, "");
+        return false;
+    }
+
+    b8 rc = true;
+    b8 start_now = false;
+    if (state->disconnecting || state->interrupt_in_stream.active ||
+        state->interrupt_in_stream.closing ||
+        state->interrupt_in_stream.payloads ||
+        state->interrupt_in_stream.payload_storage ||
+        request->pending || request->next != NULL || request->hcd_private != NULL) {
+        rc = -1;
+    } else {
+        state->async_enabled = true;
+        request->actual_length = 0;
+        request->status = USB_TRANSFER_STATUS_INVALID;
+        request->pending = true;
+        request->next = NULL;
+        if (!state->active_request) {
+            state->active_request = request;
+            state->active_request_cancelled = false;
+            start_now = true;
+        } else {
+            xhci_driver_enqueue_pending_request(driver, state, request);
+        }
+    }
+
+    if (!rc) {
+        xassert(false, "");
+        return false;
+    }
+
+    if (start_now && xhci_driver_start_async_request(driver, device, ep, state, request, false)) {
+        if (state->active_request == request) {
+            state->active_request = NULL;
+            state->active_request_cancelled = false;
+        }
+        request->pending = false;
+        request->status = USB_TRANSFER_STATUS_IO_ERROR;
+
+        request->hcd_private = NULL;
+        return false;
+    }
+
+    return true;
+}
+
 void xhci_driver_release_disconnected_device(xhci_driver_t* driver, xhci_device_t* device) {
     if (!driver || !device) { return; }
 
@@ -1722,7 +2092,7 @@ void xhci_driver_release_disconnected_device(xhci_driver_t* driver, xhci_device_
     kfree(device);
 }
 
-void xhci_driver_run_loop(xhci_driver_t* driver) {
+void xhci_driver_run(xhci_driver_t* driver) {
     driver->pending_doorbell_count = 0;
     xhci_driver_process_events(driver);
     xhci_event_ring_finish_procecssing(&driver->event_ring);

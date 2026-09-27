@@ -43,6 +43,27 @@
 #define USB_CLASS_HUB                                           0x09
 #define USB_CLASS_VENDOR                                        0xFF
 
+// USB Standard Request Codes (bRequest)
+#define USB_REQUEST_GET_DESCRIPTOR                              0x06
+#define USB_REQUEST_SET_CONFIGURATION                           0x09
+#define USB_REQUEST_SET_INTERFACE                               0x0B
+
+// HID Class-Specific Request Codes (bRequest)
+#define USB_HID_REQUEST_GET_REPORT                                  0x01
+#define USB_HID_REQUEST_GET_IDLE                                    0x02
+#define USB_HID_REQUEST_GET_PROTOCOL                                0x03
+#define USB_HID_REQUEST_SET_REPORT                                  0x09
+#define USB_HID_REQUEST_SET_IDLE                                    0x0A
+#define USB_HID_REQUEST_SET_PROTOCOL                                0x0B
+
+// USB bmRequestType field construction
+#define USB_REQTYPE_DIR_IN                                      0x80
+#define USB_REQTYPE_DIR_OUT                                     0x00
+#define USB_REQTYPE_TYPE_STANDARD                               0x00
+#define USB_REQTYPE_TYPE_CLASS                                  0x20
+#define USB_REQTYPE_RECIP_DEVICE                                0x00
+#define USB_REQTYPE_RECIP_INTERFACE                             0x01
+
 #define USB_DESCRIPTOR_REQUEST(type, index) (u16)(((u16)(type) << 8) | (u16)(index))
 
 /*

@@ -1,6 +1,8 @@
 #include <drivers/usb/hid/hid_driver.h>
 #include <drivers/usb/hid/hid_keyboard_handler.h>
+#include <drivers/usb/usb_descriptors.h>
 #include <memory/paging.h>
+#include <xlibc/xassert.h>
 #include <xlibc/stdlib.h>
 #include <xlibc/string.h>
 #include <xlibc/stdio.h>
@@ -46,11 +48,11 @@ static report_capabilities_t classify_report(const usb_hid_report_layout_t* layo
     return caps;
 }
 
-static const usb_endpoint_t* hid_drive_find_interrupt_in_endpoint(const hid_driver_t* self) {
+static const usb_endpoint_t* hid_driver_find_interrupt_in_endpoint(const hid_driver_t* self) {
     for (u8 i = 0; i < self->iface->num_endpoints; ++i) {
         const usb_endpoint_t* ep = &self->iface->endpoints[i];
         if (ep->transfer_type == 3 && USB_ENDPOINT_IS_IN(*ep)) { // 3 == interrupt
-            return &ep;
+            return ep;
         }
     }
 
@@ -63,7 +65,7 @@ static u32 hid_driver_max_input_report_bytes(const hid_driver_t* self, const usb
     }
 
     if (self->layout.max_input_report_bytes > ep->max_packet_size) {
-        printf("[HID DRIVER]: Input report wire length %u exceeds EP 0x%x max packet sizze %u\n", self->layout.max_input_report_bytes, ep->address, ep->max_packet_size);
+        printf("[HID DRIVER]: Input report wire length %u exceeds EP 0x%x max packet size %u\n", self->layout.max_input_report_bytes, ep->address, ep->max_packet_size);
         return 0;
     }
 
@@ -128,7 +130,7 @@ static b8 hid_driver_create_handlers(hid_driver_t* self) {
                     if (handler) { kfree(handler); }
                 }
                 else {
-                    self->bindings[slot++] = (hid_handler_binding_t){ .report_id = report->report_id, .binding_kind = HID_BINDING_KIND_KEYBOARD, handler };
+                    self->bindings[slot++] = (hid_handler_binding_t){ .report_id = report->report_id, .binding_kind = HID_BINDING_KIND_KEYBOARD, (IHIDHANDLER*)handler };
                     self->binding_count = slot;
                 }
             }
@@ -189,7 +191,8 @@ static void hid_driver_dispatch_report(hid_driver_t* self, u8 report_id, const u
 }
 
 // INTERFACE IMPLEMENTATIONS
-static void hid_driver_destroy(hid_driver_t* self) {
+static void hid_driver_destroy(void* _self) {
+    hid_driver_t* self = (hid_driver_t*)_self;
     if (self->stream) {
         // TODO:
         self->stream = NULL;
@@ -199,8 +202,11 @@ static void hid_driver_destroy(hid_driver_t* self) {
     usb_hid_report_layout_destroy(&self->layout);
 }
 
-static b8 hid_driver_probe(hid_driver_t* self, usb_device_t* dev, usb_interface_t* iface) {
-    const usb_endpoint_t* ep = find_interrupt_in_endpoint(self);
+static b8 hid_driver_probe(void* _self, usb_device_t* dev, usb_interface_t* iface) {
+    hid_driver_t* self = (hid_driver_t*)_self;
+    // TODO: assuming this is an alright place to put iface
+    self->iface = iface;
+    const usb_endpoint_t* ep = hid_driver_find_interrupt_in_endpoint(self);
     if (!ep) {
         printf("[HID DRIVER]: No interrupt IN endpoint found\n");
         return false;
@@ -242,7 +248,7 @@ static b8 hid_driver_probe(hid_driver_t* self, usb_device_t* dev, usb_interface_
 
     printf("[HID DRIVER]: Parsed %u input fields across %u input reports%s\n", self->layout.num_fields, self->layout.num_input_reports, self->layout.uses_report_ids ? " with report IDs" : "");
 
-    rc = create_handlers(self);
+    rc = hid_driver_create_handlers(self);
     if (!rc) {
         printf("[HID DRIVER]: No supported report-protocol handlers for interface %u\n", iface->interface_number);
         return false;
@@ -267,11 +273,17 @@ static b8 hid_driver_probe(hid_driver_t* self, usb_device_t* dev, usb_interface_
 
     // only apply SET_IDLE to keyboard reports, and target those report IDs
     // individualy when the interface uses Report IDs
-    apply_idle_policy(self, dev);
+    hid_driver_apply_idle_policy(self, dev);
 
-    self->payload_length = max_input_report_bytes(*ep);
+    self->payload_length = hid_driver_max_input_report_bytes(self, ep);
     if (self->payload_length == 0) {
         printf("[HID DRIVER]: Invalid input report payload length\n");
+        return false;
+    }
+
+    rc = usb_transfer_open_interrupt_in_stream(dev, ep->address, self->payload_length, &self->stream);
+    if (!rc) {
+        printf("[HID DRIVER]: Failed to open interrupt stream on EP %x\n", ep->address);
         return false;
     }
 
@@ -279,8 +291,9 @@ static b8 hid_driver_probe(hid_driver_t* self, usb_device_t* dev, usb_interface_
     return true;
 }
 
-void hid_driver_run(hid_driver_t* self) {
-    const usb_endpoint_t* ep = find_interrupt_in_endpoint(self);
+void hid_driver_run(void* _self) {
+    hid_driver_t* self = (hid_driver_t*)_self;
+    const usb_endpoint_t* ep = hid_driver_find_interrupt_in_endpoint(self);
     if (!self->stream || !ep || self->payload_length == 0) {
         printf("[HID DRIVER]: hid_driver_run() called without an active interrupt stream\n");
         return;
@@ -296,8 +309,8 @@ void hid_driver_run(hid_driver_t* self) {
 
     while (!self->disconnected) {
         u32 actual = 0;
-        memset(&report_buf, 0, self->payload_length);
-        b8 rc = usb_read_interrupt_in_stream(self->stream, report_buf, self->payload_length, &actual);
+        memset(report_buf, 0, self->payload_length);
+        b8 rc = usb_transfer_read_interrupt_in_stream(self->stream, report_buf, self->payload_length, &actual);
         if (!rc) {
             if (self->disconnected) { break; }
 
@@ -325,38 +338,30 @@ void hid_driver_run(hid_driver_t* self) {
             continue;
         }
 
-        dispatch_report(self, report_id, report_data, report_length);
+        hid_driver_dispatch_report(self, report_id, report_data, report_length);
     }
 
     kfree(report_buf);
     if (self->stream) {
-        usb_close_interrupt_in_stream(self->stream);
+        usb_transfer_close_interrupt_in_stream(self->stream);
         self->stream = NULL;
     }
 }
 
-void hid_driver_disconnect(hid_driver_t* self) {
+void hid_driver_disconnect(void* _self) {
+    hid_driver_t* self = (hid_driver_t*)_self;
     self->disconnected = true;
-}
-
-hid_driver_t hid_driver_create(usb_interface_t* iface) {
-    hid_driver_t hid;
-    memset(&hid, 0, sizeof(hid_driver_t));
-    hid.iface = iface;
-    hid.name = "USB-HID";
-
-    // INTERFACE ASSIGN
-    hid.finalize_create = NULL;
-    hid.destroy = hid_driver_destroy;
-    hid.probe = hid_driver_probe;
-    hid.run = hid_driver_run;
-    hid.disconnect = hid_driver_disconnect;
-
-    return hid;
 }
 
 IUSBDRIVER* hid_driver_factory(usb_device_t* dev, usb_interface_t* iface) {
     hid_driver_t* drv = kmalloc(sizeof(hid_driver_t));
     xassert(drv, "Failed to allocate driver!");
+    drv->name = "USB-HID DRIVER";
+    // INTERFACE ASSIGN
+    drv->finalize_create = NULL;
+    drv->destroy = hid_driver_destroy;
+    drv->probe = hid_driver_probe;
+    drv->run = hid_driver_run;
+    drv->disconnect = hid_driver_disconnect;
     return (IUSBDRIVER*)drv;
 }

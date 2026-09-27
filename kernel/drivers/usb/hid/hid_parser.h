@@ -55,7 +55,7 @@ typedef struct {
 
 void usb_hid_report_layout_destroy(usb_hid_report_layout_t* layout);
 
-const usb_hid_input_report_info_t* usb_hid_find_input_report(const usb_hid_input_report_info_t* layout, u8 report_id);
+const usb_hid_input_report_info_t* usb_hid_find_input_report(const usb_hid_report_layout_t* layout, u8 report_id);
 const usb_hid_field_info_t* usb_hid_report_fields(const usb_hid_report_layout_t* layout, const usb_hid_input_report_info_t* report);
 
 /**

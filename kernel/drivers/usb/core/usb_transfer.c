@@ -41,7 +41,7 @@ usb_transfer_status_t usb_transfer_request_await(usb_transfer_request_t* req) {
 void usb_transfer_request_cancel(usb_device_t* dev, usb_transfer_request_t* req) {
     if (!dev || !dev->hcd || !dev->hcd_device) {
         xassert(false, "");
-        return false;
+        return;
     }
 
     xhci_driver_t* drv = (xhci_driver_t*)dev->hcd;
@@ -61,12 +61,12 @@ b8 usb_transfer_open_interrupt_in_stream(usb_device_t* dev, u8 endpoint_addr, u3
 
     xhci_driver_t* drv = (xhci_driver_t*)dev->hcd;
     xhci_device_t* xdev = (xhci_device_t*)dev->hcd_device;
-    b8 rc = xhci_driver_open_interrupt_in_stream(drv, xdev, endpoint_addr, payload_length);
+    b8 rc = xhci_driver_usb_open_interrupt_in_stream(drv, xdev, endpoint_addr, payload_length);
     if (!rc) { return false; }
 
     usb_interrupt_in_stream_t* stream = (usb_interrupt_in_stream_t*)kmalloc(sizeof(usb_interrupt_in_stream_t));
     if (!stream) {
-        xhci_driver_close_interrupt_in_stream(drv, xdev, endpoint_addr);
+        xhci_driver_usb_close_interrupt_in_stream(drv, xdev, endpoint_addr);
         return false;
     }
 
@@ -84,7 +84,7 @@ b8 usb_transfer_read_interrupt_in_stream(usb_interrupt_in_stream_t* stream, void
 
     xhci_driver_t* drv = (xhci_driver_t*)stream->dev->hcd;
     xhci_device_t* xdev = (xhci_device_t*)stream->dev->hcd_device;
-    return xhci_driver_usb_read_transfer(drv, xdev, stream->endpoint_addr, buffer, buffer_len, out_length);
+    return xhci_driver_usb_read_interrupt_in_stream(drv, xdev, stream->endpoint_addr, buffer, buffer_len, out_length);
 }
 
 void usb_transfer_close_interrupt_in_stream(usb_interrupt_in_stream_t* stream) {
@@ -113,7 +113,7 @@ b8 usb_control_transfer(usb_device_t* device, u8 request_type, u8 request, u16 v
 usb_transfer_status_t usb_interrupt_transfer(usb_device_t* device, u8 endpoint_addr, void* buffer, u32 length) {
     if (!device || !device->hcd || !device->hcd_device || (!buffer && length > 0)) {
         xassert(false, "");
-        return false;
+        return USB_TRANSFER_STATUS_INVALID; // not sure what to return
     }
 
     if ((endpoint_addr & 0x80u) != 0) {
@@ -123,7 +123,8 @@ usb_transfer_status_t usb_interrupt_transfer(usb_device_t* device, u8 endpoint_a
     usb_transfer_request_t req = usb_transfer_request_init(endpoint_addr, buffer, length, (endpoint_addr & 0x80u) ? USB_TRANSFER_FLAGS_ALLOW_SHORT : 0);
     b8 rc = usb_transfer_request_submit_async(device, &req);
     if (!rc) {
-        return false;
+        xassert(false, "");
+        return USB_TRANSFER_STATUS_INVALID;
     }
 
     usb_transfer_status_t status = usb_transfer_request_await(&req);

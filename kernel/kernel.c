@@ -21,6 +21,8 @@
 #include <drivers/usb/core/usb_core.h>
 #include <drivers/usb/hid/hid_driver.h>
 
+#include <drivers/input/input.h>
+
 #include <filesystem/block_device/block_device.h>
 #include <filesystem/gpt/gpt.h>
 #include <filesystem/fat32/fat32.h>
@@ -41,7 +43,7 @@
 #define KERNEL_VMA 0xFFFFFFFF80000000ULL
 #define KERNEL_PMA 0x00200000ULL
 
-#define KERNEL_STACK_SIZE 8192
+#define KERNEL_STACK_SIZE (8192 * 2)
 static u8 kernel_stack[KERNEL_STACK_SIZE] __attribute__((aligned(16)));
 uint64_t kernel_stack_top = (u64)(((u8*)kernel_stack) + KERNEL_STACK_SIZE);
 
@@ -144,6 +146,9 @@ void ASMCALL kernel_main_trampoline(BootInfo* bootInfo) {
     ktimer_calibrate_cpu_timer(4);
     ktimer_start_cpu_periodic_timer(timer_irq_vector); // get timer interrupts
 
+    if (!input_init()) {
+        xassert(false, "");
+    }
     kernel_assign_usb_drivers();
 
     graphics_init(&bootInfo->fb);
@@ -176,7 +181,6 @@ void ASMCALL kernel_main_trampoline(BootInfo* bootInfo) {
 
     printf("    Virtual Base: ");
     printf("%p\n", xhci_driver.xhc_base);
-    printf("\n");
     printf("    BAR Address: ");
     printf("%p\n", xhci_driver.pci_device->bar[0].base);
     printf("\n");
@@ -273,6 +277,7 @@ void ASMCALL kernel_main_trampoline(BootInfo* bootInfo) {
     while (1) {
         if (nowtime != ktimer_get_system_time_in_milliseconds()) {
             xhci_driver_run(&xhci_driver);
+            usb_core_run_drivers();
         }
 
         if (nowtime != ktimer_get_system_time_in_seconds()) {
