@@ -29,6 +29,7 @@ b8 input_push_keyboard_event(const input_keyboard_event_t* evt) {
         return false;
     }
     
+    printf("[INPUT]: Pressed key %u\n", (u32)evt->usage);
     return ring_buffer_push(g_kbd_rb, (const u8*)evt);
 }
 

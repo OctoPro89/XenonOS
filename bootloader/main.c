@@ -9,6 +9,9 @@
 
 #define HHDM_OFFSET 0xFFFF800000000000ULL
 
+#define PAGE_SIZE  0x1000ULL
+#define PAGE_MASK  ~(PAGE_SIZE - 1)
+
 typedef uint64_t Elf64_Addr;
 typedef uint64_t Elf64_Off;
 typedef uint16_t Elf64_Half;
@@ -55,6 +58,38 @@ EFI_GUID gEfiSimpleFileSystemProtocolGuid =
 #define PAGE_WRITABLE (1ULL << 1)
 #define PAGE_PS       (1ULL << 7)
 
+static __attribute__((noreturn))
+void reboot(void)
+{
+    // Disable interrupts.
+    asm volatile ("cli");
+
+    // Wait until the 8042 input buffer is empty.
+    for (uint32_t timeout = 0; timeout < 1000000; ++timeout) {
+        uint8_t status;
+
+        asm volatile (
+            "inb $0x64, %0"
+            : "=a"(status)
+        );
+
+        if ((status & 0x02) == 0) {
+            // 0xFE = pulse CPU reset line.
+            asm volatile (
+                "outb %0, $0x64"
+                :
+                : "a"((uint8_t)0xFE)
+            );
+            break;
+        }
+    }
+
+    // If the reset command didn't work, don't continue executing.
+    for (;;) {
+        asm volatile ("hlt");
+    }
+}
+
 static int guid_equal(EFI_GUID* a, EFI_GUID* b) {
     if (a->Data1 != b->Data1) return 0;
     if (a->Data2 != b->Data2) return 0;
@@ -96,6 +131,24 @@ void print_dec(EFI_SYSTEM_TABLE *st, uint64_t value) {
         value /= 10;
     }
     st->ConOut->OutputString(st->ConOut, &buf[i+1]);
+}
+
+static uint64_t align_down_page(uint64_t value)
+{
+    return value & PAGE_MASK;
+}
+
+static uint64_t align_up_page(uint64_t value)
+{
+    return (value + PAGE_SIZE - 1) & PAGE_MASK;
+}
+
+static void print_efi_error(EFI_SYSTEM_TABLE *st, const CHAR16 *message, EFI_STATUS status)
+{
+    st->ConOut->OutputString(st->ConOut, message);
+    st->ConOut->OutputString(st->ConOut, L" Status: ");
+    print_hex(st, status);
+    st->ConOut->OutputString(st->ConOut, L"\r\n");
 }
 
 void print_gop_info(EFI_SYSTEM_TABLE *st, EFI_GRAPHICS_OUTPUT_PROTOCOL *gop) {
@@ -160,45 +213,350 @@ EFI_STATUS efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable)
         while(1);
     }
 
-    // Load program headers
+        /*
+     * -------------------------------------------------------------------------
+     * Load ELF PT_LOAD segments
+     *
+     * ELF PT_LOAD segments are allowed to overlap at page granularity.
+     *
+     * Therefore we cannot AllocatePages() independently for every segment.
+     * Instead:
+     *
+     *   1. Find the complete physical range occupied by the kernel.
+     *   2. Allocate that range once.
+     *   3. Zero it.
+     *   4. Load each PT_LOAD into its specified p_paddr.
+     * -------------------------------------------------------------------------
+     */
+
+    uint64_t kernel_phys_start = UINT64_MAX;
+    uint64_t kernel_phys_end = 0;
+    UINTN load_segment_count = 0;
+
     for (Elf64_Half i = 0; i < ehdr.e_phnum; i++) {
         Elf64_Phdr phdr;
+
         UINTN size = sizeof(phdr);
-        KernelFile->SetPosition(KernelFile, ehdr.e_phoff + i * sizeof(phdr));
-        KernelFile->Read(KernelFile, &size, &phdr);
 
-        if (phdr.p_type != PT_LOAD) continue;
-
-        // Allocate pages for segment
-        UINTN num_pages = (phdr.p_memsz + 0xFFF) / 0x1000;
-        void *segment;
-
-        EFI_PHYSICAL_ADDRESS segment_addr =
-    phdr.p_vaddr - KERNEL_VMA + KERNEL_LMA;
-        SystemTable->BootServices->AllocatePages(
-            AllocateAddress,
-            EfiLoaderData,
-            num_pages,
-            &segment_addr
+        status = KernelFile->SetPosition(
+            KernelFile,
+            ehdr.e_phoff + ((UINT64)i * ehdr.e_phentsize)
         );
-        segment = (void*)segment_addr;
 
-        // Read segment data from file
-        UINTN seg_size = phdr.p_filesz;
-        KernelFile->SetPosition(KernelFile, phdr.p_offset);
-        status = KernelFile->Read(KernelFile, &seg_size, segment);
-        if (EFI_ERROR(status) || seg_size != phdr.p_filesz) {
-            SystemTable->ConOut->OutputString(SystemTable->ConOut, L"Failed to read segment!\r\n");
-            while(1);
+        if (EFI_ERROR(status)) {
+            print_efi_error(
+                SystemTable,
+                L"Failed to seek to ELF program header.",
+                status
+            );
+            while (1);
         }
 
-        // Zero memory for bss
-        if (phdr.p_memsz > phdr.p_filesz) {
-            uint8_t *bss = (uint8_t*)segment + phdr.p_filesz;
-            for (UINTN j = 0; j < phdr.p_memsz - phdr.p_filesz; j++)
-                bss[j] = 0;
+        status = KernelFile->Read(
+            KernelFile,
+            &size,
+            &phdr
+        );
+
+        if (EFI_ERROR(status) || size != sizeof(phdr)) {
+            SystemTable->ConOut->OutputString(
+                SystemTable->ConOut,
+                L"Failed to read ELF program header!\r\n"
+            );
+            while (1);
+        }
+
+        if (phdr.p_type != PT_LOAD)
+            continue;
+
+        /*
+         * Basic ELF sanity checks.
+         */
+        if (phdr.p_memsz < phdr.p_filesz) {
+            SystemTable->ConOut->OutputString(
+                SystemTable->ConOut,
+                L"Invalid ELF: p_memsz < p_filesz!\r\n"
+            );
+            while (1);
+        }
+
+        if (phdr.p_offset > UINT64_MAX - phdr.p_filesz) {
+            SystemTable->ConOut->OutputString(
+                SystemTable->ConOut,
+                L"Invalid ELF: segment file range overflows!\r\n"
+            );
+            while (1);
+        }
+
+        if (phdr.p_paddr > UINT64_MAX - phdr.p_memsz) {
+            SystemTable->ConOut->OutputString(
+                SystemTable->ConOut,
+                L"Invalid ELF: segment physical range overflows!\r\n"
+            );
+            while (1);
+        }
+
+        /*
+         * ELF requires p_vaddr and p_paddr to have the same page offset
+         * when p_align is greater than one page.
+         */
+        if (phdr.p_align != 0 &&
+            (phdr.p_vaddr % phdr.p_align) !=
+            (phdr.p_paddr % phdr.p_align)) {
+
+            SystemTable->ConOut->OutputString(
+                SystemTable->ConOut,
+                L"Invalid ELF: vaddr/paddr alignment mismatch!\r\n"
+            );
+            while (1);
+        }
+
+        uint64_t segment_start =
+            align_down_page(phdr.p_paddr);
+
+        uint64_t segment_end =
+            align_up_page(phdr.p_paddr + phdr.p_memsz);
+
+        if (segment_end < segment_start) {
+            SystemTable->ConOut->OutputString(
+                SystemTable->ConOut,
+                L"Invalid ELF: segment address overflow!\r\n"
+            );
+            while (1);
+        }
+
+        if (segment_start < kernel_phys_start)
+            kernel_phys_start = segment_start;
+
+        if (segment_end > kernel_phys_end)
+            kernel_phys_end = segment_end;
+
+        load_segment_count++;
+    }
+
+    if (load_segment_count == 0) {
+        SystemTable->ConOut->OutputString(
+            SystemTable->ConOut,
+            L"ELF contains no PT_LOAD segments!\r\n"
+        );
+        while (1);
+    }
+
+    uint64_t kernel_size =
+        kernel_phys_end - kernel_phys_start;
+
+    UINTN kernel_pages =
+        (UINTN)(kernel_size / PAGE_SIZE);
+
+    /*
+     * For your current kernel layout, this should be:
+     *
+     *     kernel_phys_start = 0x00200000
+     *
+     * Do not silently move the kernel. The linker script and page tables
+     * currently expect this physical address.
+     */
+    SystemTable->ConOut->OutputString(
+        SystemTable->ConOut,
+        L"Kernel physical start: "
+    );
+    print_hex(SystemTable, kernel_phys_start);
+
+    SystemTable->ConOut->OutputString(
+        SystemTable->ConOut,
+        L"\r\nKernel physical end:   "
+    );
+    print_hex(SystemTable, kernel_phys_end);
+
+    SystemTable->ConOut->OutputString(
+        SystemTable->ConOut,
+        L"\r\nKernel pages: "
+    );
+    print_dec(SystemTable, kernel_pages);
+
+    SystemTable->ConOut->OutputString(
+        SystemTable->ConOut,
+        L"\r\n"
+    );
+
+    /*
+     * Allocate the complete kernel image in one allocation.
+     *
+     * This is important because PT_LOAD segments can overlap pages.
+     */
+    EFI_PHYSICAL_ADDRESS kernel_phys = kernel_phys_start;
+
+    status = SystemTable->BootServices->AllocatePages(
+        AllocateAddress,
+        EfiLoaderData,
+        kernel_pages,
+        &kernel_phys
+    );
+
+    if (EFI_ERROR(status)) {
+        print_efi_error(
+            SystemTable,
+            L"Failed to allocate physical memory for kernel.",
+            status
+        );
+        while (1);
+    }
+
+    /*
+     * AllocateAddress should return exactly the address requested.
+     */
+    if (kernel_phys != kernel_phys_start) {
+        SystemTable->ConOut->OutputString(
+            SystemTable->ConOut,
+            L"UEFI returned unexpected kernel address!\r\n"
+        );
+        while (1);
+    }
+
+    /*
+     * Zero the entire kernel image.
+     *
+     * This handles .bss and also makes the handling of overlapping
+     * PT_LOAD segments straightforward.
+     */
+    uint8_t *kernel_memory =
+        (uint8_t *)(UINTN)kernel_phys_start;
+
+    for (uint64_t i = 0; i < kernel_size; i++)
+        kernel_memory[i] = 0;
+
+    /*
+     * Second pass: actually load every PT_LOAD segment.
+     */
+    for (Elf64_Half i = 0; i < ehdr.e_phnum; i++) {
+        Elf64_Phdr phdr;
+
+        UINTN size = sizeof(phdr);
+
+        status = KernelFile->SetPosition(
+            KernelFile,
+            ehdr.e_phoff + ((UINT64)i * ehdr.e_phentsize)
+        );
+
+        if (EFI_ERROR(status)) {
+            print_efi_error(
+                SystemTable,
+                L"Failed to seek to ELF program header.",
+                status
+            );
+            while (1);
+        }
+
+        status = KernelFile->Read(
+            KernelFile,
+            &size,
+            &phdr
+        );
+
+        if (EFI_ERROR(status) || size != sizeof(phdr)) {
+            SystemTable->ConOut->OutputString(
+                SystemTable->ConOut,
+                L"Failed to read ELF program header!\r\n"
+            );
+            while (1);
+        }
+
+        if (phdr.p_type != PT_LOAD)
+            continue;
+
+        /*
+         * Verify that this segment lies completely inside the
+         * allocation we just made.
+         */
+        uint64_t segment_end =
+            phdr.p_paddr + phdr.p_memsz;
+
+        if (phdr.p_paddr < kernel_phys_start ||
+            segment_end > kernel_phys_end) {
+
+            SystemTable->ConOut->OutputString(
+                SystemTable->ConOut,
+                L"ELF segment lies outside kernel allocation!\r\n"
+            );
+            while (1);
+        }
+
+        /*
+         * Physical destination specified by the ELF.
+         */
+        uint8_t *load_addr =
+            (uint8_t *)(UINTN)phdr.p_paddr;
+
+        SystemTable->ConOut->OutputString(
+            SystemTable->ConOut,
+            L"Loading segment: paddr="
+        );
+        print_hex(SystemTable, phdr.p_paddr);
+
+        SystemTable->ConOut->OutputString(
+            SystemTable->ConOut,
+            L" filesz="
+        );
+        print_hex(SystemTable, phdr.p_filesz);
+
+        SystemTable->ConOut->OutputString(
+            SystemTable->ConOut,
+            L" memsz="
+        );
+        print_hex(SystemTable, phdr.p_memsz);
+
+        SystemTable->ConOut->OutputString(
+            SystemTable->ConOut,
+            L"\r\n"
+        );
+
+        /*
+         * Copy the file-backed portion.
+         *
+         * The remainder of p_memsz was already zeroed above, which
+         * gives us the correct BSS contents.
+         */
+        if (phdr.p_filesz != 0) {
+            UINTN seg_size = (UINTN)phdr.p_filesz;
+
+            status = KernelFile->SetPosition(
+                KernelFile,
+                phdr.p_offset
+            );
+
+            if (EFI_ERROR(status)) {
+                print_efi_error(
+                    SystemTable,
+                    L"Failed to seek to ELF segment.",
+                    status
+                );
+                while (1);
+            }
+
+            status = KernelFile->Read(
+                KernelFile,
+                &seg_size,
+                load_addr
+            );
+
+            if (EFI_ERROR(status) ||
+                seg_size != (UINTN)phdr.p_filesz) {
+
+                print_efi_error(
+                    SystemTable,
+                    L"Failed to read ELF segment.",
+                    status
+                );
+                while (1);
+            }
         }
     }
+
+    SystemTable->ConOut->OutputString(
+        SystemTable->ConOut,
+        L"Kernel loaded!\r\n"
+    );
+
 
     SystemTable->ConOut->OutputString(SystemTable->ConOut, L"Kernel loaded!\r\n");
 
@@ -256,21 +614,33 @@ EFI_STATUS efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable)
 
     // PML4
     addr = 0;
-    SystemTable->BootServices->AllocatePages(AllocateAnyPages, EfiLoaderData, 1, &addr);
+    status = SystemTable->BootServices->AllocatePages(AllocateAnyPages, EfiLoaderData, 1, &addr);
+    if (EFI_ERROR(status)) {
+        SystemTable->ConOut->OutputString(SystemTable->ConOut, L"Failed to allocate pages for PML4!\r\n");
+        while(1);
+    }
     pml4 = (uint64_t*)addr;
 
     SystemTable->ConOut->OutputString(SystemTable->ConOut, L"Allocated pml4\r\n");
 
     // PDPT
     addr = 0;
-    SystemTable->BootServices->AllocatePages(AllocateAnyPages, EfiLoaderData, 1, &addr);
+    status = SystemTable->BootServices->AllocatePages(AllocateAnyPages, EfiLoaderData, 1, &addr);
+    if (EFI_ERROR(status)) {
+        SystemTable->ConOut->OutputString(SystemTable->ConOut, L"Failed to allocate pages for PDPT!\r\n");
+        while(1);
+    }
     pdpt = (uint64_t*)addr;
 
     SystemTable->ConOut->OutputString(SystemTable->ConOut, L"Allocated pdpt\r\n");
 
     // PD
     addr = 0;
-    SystemTable->BootServices->AllocatePages(AllocateAnyPages, EfiLoaderData, 1, &addr);
+    status = SystemTable->BootServices->AllocatePool(EfiLoaderData,sizeof(uint64_t*) * 8, (void**)&pd);
+    if (EFI_ERROR(status)) {
+        SystemTable->ConOut->OutputString(SystemTable->ConOut, L"Failed to allocate pages for PD!\r\n");
+        while(1);
+    }
     pd = (uint64_t**)addr;
 
     SystemTable->ConOut->OutputString(SystemTable->ConOut, L"Allocated pd\r\n");
@@ -286,9 +656,15 @@ EFI_STATUS efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable)
 
     SystemTable->ConOut->OutputString(SystemTable->ConOut, L"Setting pd\r\n");
 
-    for (int i = 0; i < 4; i++) {
+    // TODO: this is a bad way of doing stuff. Realistically should just map what we need.
+    // The problem is if LoadedImage is outside of this range the kernel won't load :(
+    for (int i = 0; i < 8; i++) {
         addr = 0;
-        SystemTable->BootServices->AllocatePages(AllocateAnyPages, EfiLoaderData, 1, &addr);
+        status = SystemTable->BootServices->AllocatePages(AllocateAnyPages, EfiLoaderData, 1, &addr);
+        if (EFI_ERROR(status)) {
+            SystemTable->ConOut->OutputString(SystemTable->ConOut, L"Failed to allocate pages for paging!\r\n");
+            while(1);
+        }
         pd[i] = (uint64_t*)addr;
 
         for (int j = 0; j < 512; j++) {
@@ -306,7 +682,11 @@ EFI_STATUS efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable)
 
     // allocate PD for kernel
     addr = 0;
-    SystemTable->BootServices->AllocatePages(AllocateAnyPages, EfiLoaderData, 1, &addr);
+    status = SystemTable->BootServices->AllocatePages(AllocateAnyPages, EfiLoaderData, 1, &addr);
+    if (EFI_ERROR(status)) {
+        SystemTable->ConOut->OutputString(SystemTable->ConOut, L"Failed to allocate pages for kernel PD!\r\n");
+        while(1);
+    }
     uint64_t* kernel_pd = (uint64_t*)addr;
 
     // map first ~1GB of phys at high half
@@ -321,7 +701,11 @@ EFI_STATUS efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable)
 
     // allocate new PDPT for HHDM
     addr = 0;
-    SystemTable->BootServices->AllocatePages(AllocateAnyPages, EfiLoaderData, 1, &addr);
+    status = SystemTable->BootServices->AllocatePages(AllocateAnyPages, EfiLoaderData, 1, &addr);
+    if (EFI_ERROR(status)) {
+        SystemTable->ConOut->OutputString(SystemTable->ConOut, L"Failed to allocate pages for HHDM!\r\n");
+        while(1);
+    }
     uint64_t* hhdm_pdpt = (uint64_t*)addr;
 
     // zero it (IMPORTANT)
@@ -333,7 +717,11 @@ EFI_STATUS efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable)
     // map physical memory
     for (int i = 0; i < 512; i++) {
         addr = 0;
-        SystemTable->BootServices->AllocatePages(AllocateAnyPages, EfiLoaderData, 1, &addr);
+        status = SystemTable->BootServices->AllocatePages(AllocateAnyPages, EfiLoaderData, 1, &addr);
+        if (EFI_ERROR(status)) {
+            SystemTable->ConOut->OutputString(SystemTable->ConOut, L"Failed to allocate pages for physical memory pages!\r\n");
+            while(1);
+        }
         uint64_t* pd = (uint64_t*)addr;
 
         // zero PD
@@ -359,8 +747,8 @@ EFI_STATUS efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable)
     UINT32 descVersion;
 
     SystemTable->ConOut->OutputString(SystemTable->ConOut, L"Entry: ");
-print_hex(SystemTable, ehdr.e_entry);
-SystemTable->ConOut->OutputString(SystemTable->ConOut, L"\r\n");
+    print_hex(SystemTable, ehdr.e_entry);
+    SystemTable->ConOut->OutputString(SystemTable->ConOut, L"\r\n");
 
     EFI_GUID acpi20 = ACPI_20_TABLE_GUID;
     EFI_GUID acpi10 = ACPI_TABLE_GUID;
@@ -376,6 +764,74 @@ SystemTable->ConOut->OutputString(SystemTable->ConOut, L"\r\n");
             break;
         }
     }
+
+    // do this BEFORE getting memory map:
+    EFI_PHYSICAL_ADDRESS boot_info_phys = 0xFFFFFFFF;
+    status = SystemTable->BootServices->AllocatePages(
+        AllocateMaxAddress,
+        EfiLoaderData,
+        1,
+        &boot_info_phys
+    );
+
+    if (EFI_ERROR(status)) {
+        SystemTable->ConOut->OutputString(SystemTable->ConOut, L"Failed to allocate pages for BootParams!\r\n");
+        while (1);
+    }
+
+    if (boot_info_phys >= 0x100000000ULL) {
+        SystemTable->ConOut->OutputString(
+            SystemTable->ConOut,
+            L"BootParams is outside identity map!\r\n"
+        );
+        while (1);
+    }
+
+    BootInfo* bootInfo = (BootInfo*)boot_info_phys;
+    typedef void (*kernel_entry_t)(BootInfo*);
+    kernel_entry_t kernel = ((void*)0);
+
+    void *dummy;
+
+    SystemTable->ConOut->OutputString(
+        SystemTable->ConOut,
+        L"LoadedImage Base: "
+    );
+    print_hex(SystemTable, (uint64_t)LoadedImage->ImageBase);
+
+    SystemTable->ConOut->OutputString(
+        SystemTable->ConOut,
+        L"\r\nLoadedImage Size: "
+    );
+    print_hex(SystemTable, (uint64_t)LoadedImage->ImageSize);
+
+    SystemTable->ConOut->OutputString(
+        SystemTable->ConOut,
+        L"\r\npml4: "
+    );
+    print_hex(SystemTable, (uint64_t)pml4);
+
+    SystemTable->ConOut->OutputString(
+        SystemTable->ConOut,
+        L"\r\n"
+    );
+
+    uint64_t rsp;
+
+    asm volatile (
+        "mov %%rsp, %0"
+        : "=r"(rsp)
+    );
+
+    SystemTable->ConOut->OutputString(
+        SystemTable->ConOut,
+        L"Current stack: "
+    );
+    print_hex(SystemTable, rsp);
+    SystemTable->ConOut->OutputString(
+        SystemTable->ConOut,
+        L"\r\n"
+    );
 
     // First call
     status = SystemTable->BootServices->GetMemoryMap(&mapSize, NULL, &mapKey, &descSize, &descVersion);
@@ -393,9 +849,7 @@ SystemTable->ConOut->OutputString(SystemTable->ConOut, L"\r\n");
             SystemTable->BootServices->FreePool(memMap);
         }
 
-        status = SystemTable->BootServices->AllocatePool(
-            EfiLoaderData, mapSize, (void**)&memMap
-        );
+        status = SystemTable->BootServices->AllocatePool(EfiLoaderData, mapSize, (void**)&memMap);
         if (EFI_ERROR(status)) {
             SystemTable->ConOut->OutputString(SystemTable->ConOut, L"Failed to allocate memory map!\r\n");
             while (1);
@@ -419,13 +873,12 @@ SystemTable->ConOut->OutputString(SystemTable->ConOut, L"\r\n");
         mapSize = newSize + descSize * 8;
     }
 
-    BootInfo bootInfo;
-    bootInfo.fb = fb;
-    bootInfo.MemoryMap = (uint64_t)memMap;
-    bootInfo.MemoryMapSize = mapSize;
-    bootInfo.MemoryDescriptorSize = descSize;
-    bootInfo.PML4 = pml4_phys;
-    bootInfo.AcpiRsdp = (uint64_t)rsdp;
+    bootInfo->fb = fb;
+    bootInfo->MemoryMap = (uint64_t)memMap;
+    bootInfo->MemoryMapSize = mapSize;
+    bootInfo->MemoryDescriptorSize = descSize;
+    bootInfo->PML4 = pml4_phys;
+    bootInfo->AcpiRsdp = (uint64_t)rsdp;
 
     // Exit boot services
     status = SystemTable->BootServices->ExitBootServices(ImageHandle, mapKey);
@@ -435,8 +888,7 @@ SystemTable->ConOut->OutputString(SystemTable->ConOut, L"\r\n");
     }
     
     // Jump to kernel, passing framebuffer pointer
-    typedef void (*kernel_entry_t)(BootInfo*);
-    kernel_entry_t kernel = (kernel_entry_t)ehdr.e_entry;
+    kernel = (kernel_entry_t)ehdr.e_entry;
 
     asm volatile (
         "mov %0, %%cr3"
@@ -446,10 +898,17 @@ SystemTable->ConOut->OutputString(SystemTable->ConOut, L"\r\n");
     );
 
     asm volatile (
+        "mov %0, %%cr3\n"
+        :
+        : "r"(pml4_phys)
+        : "memory"
+    );
+
+    asm volatile (
         "mov %0, %%rdi\n"
         "jmp *%1\n"
         :
-        : "r"(&bootInfo), "r"(kernel)
+        : "r"(bootInfo), "r"(kernel)
         : "rdi"
     );
 

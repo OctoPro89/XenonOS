@@ -135,6 +135,8 @@ void ASMCALL kernel_main_trampoline(BootInfo* bootInfo) {
 
     pmm_init(bootInfo);
     kernel_space.pml4 = (pte_t*)(bootInfo->PML4 + HHDM_OFFSET);
+    graphics_init(&bootInfo->fb);
+    graphics_clear_screen(0);
 
     acpi_enumerate_acpi_tables((void*)bootInfo->AcpiRsdp);
 
@@ -151,10 +153,10 @@ void ASMCALL kernel_main_trampoline(BootInfo* bootInfo) {
     }
     kernel_assign_usb_drivers();
 
-    graphics_init(&bootInfo->fb);
-    graphics_clear_screen(0);
-
     printf("XenonOS v0.1\n");
+
+    graphics_swap_buffers(); // TODO: remove
+
     printf("Scanning for PCI devices...\n");
 
     pci_scan(); // find pci devices
@@ -190,6 +192,7 @@ void ASMCALL kernel_main_trampoline(BootInfo* bootInfo) {
     printf("XHCI Driver initialized successfully\n");
     printf("\n");
 
+    /*
     PCI_Device* ahci_dev = pci_find_ahci(); // find AHCI device
     if (ahci_dev == NULL) {
         printf("Failed to find AHCI device!\n");
@@ -272,6 +275,10 @@ void ASMCALL kernel_main_trampoline(BootInfo* bootInfo) {
 
     printf("\n");
     printf("\n");
+
+    */
+
+    graphics_swap_buffers(); // TODO: remove
 
     u64 nowtime = ktimer_get_system_time_in_seconds();
     while (1) {
