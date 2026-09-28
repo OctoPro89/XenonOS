@@ -129,14 +129,14 @@ void kernel_assign_usb_drivers() {
     usb_core_register_driver("USB-HID KEYBOARD DRIVER", USB_MAKE_MATCH(USB_CLASS_HID, USB_MATCH_ANY, USB_MATCH_ANY), hid_driver_factory);
 }
 
+extern ASMCALL void trigger_gp_fault();
+
 void ASMCALL kernel_main_trampoline(BootInfo* bootInfo) {
     x86_64_HAL_init();
     syscall_init();
 
     pmm_init(bootInfo);
     kernel_space.pml4 = (pte_t*)(bootInfo->PML4 + HHDM_OFFSET);
-    graphics_init(&bootInfo->fb);
-    graphics_clear_screen(0);
 
     acpi_enumerate_acpi_tables((void*)bootInfo->AcpiRsdp);
 
@@ -152,6 +152,9 @@ void ASMCALL kernel_main_trampoline(BootInfo* bootInfo) {
         xassert(false, "");
     }
     kernel_assign_usb_drivers();
+
+    graphics_init(&bootInfo->fb);
+    graphics_clear_screen(0);
 
     printf("XenonOS v0.1\n");
 
