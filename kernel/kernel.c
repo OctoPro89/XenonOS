@@ -129,8 +129,6 @@ void kernel_assign_usb_drivers() {
     usb_core_register_driver("USB-HID KEYBOARD DRIVER", USB_MAKE_MATCH(USB_CLASS_HID, USB_MATCH_ANY, USB_MATCH_ANY), hid_driver_factory);
 }
 
-extern ASMCALL void trigger_gp_fault();
-
 void ASMCALL kernel_main_trampoline(BootInfo* bootInfo) {
     x86_64_HAL_init();
     syscall_init();

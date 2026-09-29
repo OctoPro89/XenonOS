@@ -1,1 +1,2 @@
 make derefing NULL page fault
+scroll screen on printf

@@ -11,12 +11,14 @@
     extern void serial_write_str(const char* s);
     extern void serial_write_hex(uint64_t val);
     extern void serial_write_dec(uint64_t val);
+    int printf(const char* fmt, ...); // TODO: remove
     #define xassert(x, msg) if (!(x)) { \
         serial_write_str("Assertion failed! Line: "); \
         serial_write_dec(__LINE__); \
         serial_write_str(" msg: "); \
         serial_write_str(msg); \
         serial_write_char('\n'); \
+        printf("Assertion failed! Line: %u msg: %s\n", (u32)__LINE__, msg); \
         while(1); \
     }
 #else

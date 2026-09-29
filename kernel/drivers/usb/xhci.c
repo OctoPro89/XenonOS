@@ -209,7 +209,10 @@ static void xhci_driver_process_events(xhci_driver_t* driver) {
 
                 // TODO: look at
                 if (portsc.csc && portsc.ccs) {
-                    xhci_driver_setup_device(driver, port_id - 1);
+                    // printf("Setting up device in IRQ handler!\n");
+                    // TODO: causes sending command trbs to not work on real hardware since this can get
+                    // called in the IRQ handler
+                    // xhci_driver_setup_device(driver, port_id - 1);
                 }
                 else if (portsc.csc && !portsc.ccs) {
                     printf("[XHCI DRIVER]: Device disconnected from port %u\n", port_id);
@@ -900,10 +903,21 @@ static void xhci_driver_setup_device(xhci_driver_t* driver, u8 port) {
         }
     }
 
+    // IMPORTANT NOTE: ABSOLUTELY MUST be done for shit to work on real hardware.
+    // DO NOT REMOVE!!!
+    xhci_endpoint_context32_t* ep0_ctx = xhci_device_get_input_ctrl_ep_ctx(device);
+
+    ep0_ctx->transfer_ring_dequeue_ptr = xhci_transfer_ring_get_enqueue_phys(device->ctrl_ring);
+    ep0_ctx->dcs = device->ctrl_ring->rcs_bit;
+
     // send the address device command again with BSR = 0 this time
     if (xhci_driver_address_device(driver, device, false) == NULL) {
         SETUP_FAIL("[XHCI DRIVER]: Address device (BSR = 0) failed for slot %u\n", completion->slot_id);
     }
+
+    // USB 2.0 spec Section 9.2.6.3: the device needs a 2 ms recovery interval
+    // after SET_ADDRESS completes before it can accept the next SETUP packet.
+    usleep(10000);
 
     // sync the output device context into the input context
     xhci_device_sync_input_ctx(device);
@@ -912,17 +926,7 @@ static void xhci_driver_setup_device(xhci_driver_t* driver, u8 port) {
     if (!xhci_driver_get_device_descriptor(driver, device, &desc, sizeof(usb_device_descriptor_t))) {
         SETUP_FAIL("[XHCI DRIVER]: Failed to read full device descriptor for slot %u\n", completion->slot_id);
     }
-
     #undef SETUP_FAIL
-
-    u8 v1 = port;
-    u8 v2 = completion->slot_id;
-    u32 v3 = desc.bcdUsb >> 8;
-    u32 v4 = (desc.bcdUsb >> 4) & 0xF;
-    u16 v5 = desc.idVendor;
-    u16 v6 = desc.idProduct;
-    u8 v7 = desc.bMaxPacketSize0;
-    u8 v8 = desc.bNumConfigurations;
 
     printf("[XHCI DRIVER]: port %u slot %u: USB %x.%x vid=0x%x pid=0x%x mps0=%u configs=%u\n",
             (u32)port, (u32)completion->slot_id,
@@ -1350,7 +1354,7 @@ static void xhci_driver_complete_async_request(xhci_driver_t* driver, xhci_devic
 
     if (XHCI_ENDPOINT_IS_IN(*ep) && request->buffer && request->requested_length > 0) {
         memset(request->buffer, 0, request->requested_length);
-        if ((status == USB_TRANSFER_STATUS_OK || status == USB_TRANSFER_STATUS_SHORT_PACKET && actual > 0)) {
+        if ((status == USB_TRANSFER_STATUS_OK || status == USB_TRANSFER_STATUS_SHORT_PACKET) && actual > 0) {
             barrier_dma_read();
             memcpy(request->buffer, (const void*)ep->dma_buffer.virt, actual);
         }
@@ -1495,7 +1499,7 @@ void xhci_driver_parse_capability_registers(xhci_driver_t* driver) {
     driver->light_reset_capability = XHCI_LHRC(driver->cap_regs);
     driver->extended_capabilities_offset = XHCI_XECP(driver->cap_regs) * sizeof(u32);
 
-    // update the base opinter to operational register set
+    // update the base pointer to operational register set
     driver->op_regs = (volatile xhci_operational_registers_t*)(driver->xhc_base + (vaddr_t)driver->capability_regs_length);
 
     // update the base pointer to the runtime register set
