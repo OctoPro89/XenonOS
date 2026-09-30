@@ -146,9 +146,11 @@ void usb_core_device_configured(xhci_driver_t* driver, xhci_device_t* xdev, cons
 
             u16 drv_idx = (u16)(slot_id) * 16u + (u16)i;
             if (drv_idx >= MAX_USB_DEVICES * 16) {
-                xassert(false, "");
-                g_bound_drivers[drv_idx] = drv;
+                xassert(false, "Attempted to store USB Driver at index above allowed amount");
+                continue;
             }
+
+            g_bound_drivers[drv_idx] = drv;
 
             printf("[USB CORE]: Bound %s to interface %u (class=0x%x)\n", drv->name, iface->interface_number, iface->interface_class);
 

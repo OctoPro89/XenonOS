@@ -281,6 +281,8 @@ void ASMCALL kernel_main_trampoline(BootInfo* bootInfo) {
 
     graphics_swap_buffers(); // TODO: remove
 
+    printf("Running default loop\n");
+
     u64 nowtime = ktimer_get_system_time_in_seconds();
     while (1) {
         if (nowtime != ktimer_get_system_time_in_milliseconds()) {

@@ -355,6 +355,7 @@ void hid_driver_disconnect(void* _self) {
 
 IUSBDRIVER* hid_driver_factory(usb_device_t* dev, usb_interface_t* iface) {
     hid_driver_t* drv = kmalloc(sizeof(hid_driver_t));
+    memset(drv, 0, sizeof(hid_driver_t));
     xassert(drv, "Failed to allocate driver!");
     drv->name = "USB-HID DRIVER";
     // INTERFACE ASSIGN

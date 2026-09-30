@@ -1,2 +1,0 @@
-something going wrong with sending command trbs
-command completion event is 6th in line on real hardware

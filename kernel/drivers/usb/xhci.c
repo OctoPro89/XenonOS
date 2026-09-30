@@ -1465,7 +1465,7 @@ b8 xhci_driver_start_device(xhci_driver_t* driver) {
         }
     }
 
-    // flush deferred doorbells accumulated froim scanning ports
+    // flush deferred doorbells accumulated from scanning ports
     for (u8 i = 0; i < driver->pending_doorbell_count; ++i) {
         xhci_doorbell_manager_ring_doorbell(&driver->doorbell_manager, driver->pending_doorbells[i].slot_id, driver->pending_doorbells[i].target);
     }
