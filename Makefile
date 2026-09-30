@@ -94,6 +94,7 @@ run: image
     -device ide-hd,bus=ahci.0,drive=disk0 \
 	-device qemu-xhci,p3=2,id=xhci \
 	-device usb-kbd,bus=xhci.0 \
+	-device usb-mouse,bus=xhci.0 \
     -bios /usr/share/ovmf/OVMF.fd \
     -boot order=c \
     -serial stdio \

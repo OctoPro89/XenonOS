@@ -8,7 +8,7 @@
 #define INPUT_KBD_ACTION_DOWN ((u8)0)
 #define INPUT_KBD_ACTION_UP ((u8)1)
 
-#define MOUSE_FLAG_RELATIVE ((u8)1u << 0)
+#define INPUT_MOUSE_FLAG_RELATIVE ((u8)1u << 0)
 
 typedef struct __packed__ {
     u8 action;

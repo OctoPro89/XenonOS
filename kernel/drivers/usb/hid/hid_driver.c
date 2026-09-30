@@ -1,5 +1,6 @@
 #include <drivers/usb/hid/hid_driver.h>
 #include <drivers/usb/hid/hid_keyboard_handler.h>
+#include <drivers/usb/hid/hid_mouse_handler.h>
 #include <drivers/usb/usb_descriptors.h>
 #include <memory/paging.h>
 #include <xlibc/xassert.h>
@@ -137,8 +138,6 @@ static b8 hid_driver_create_handlers(hid_driver_t* self) {
         }
 
         if (caps.mouse) {
-            // TODO:
-            /*
             hid_mouse_handler_t* handler = (hid_mouse_handler_t*)kmalloc(sizeof(hid_mouse_handler_t));
             if (handler) {
                 *handler = hid_mouse_handler_create();
@@ -146,11 +145,10 @@ static b8 hid_driver_create_handlers(hid_driver_t* self) {
                     if (handler) { kfree(handler); }
                 }
                 else {
-                    self->bindings[slot++] = (hid_handler_binding_t){ .report_id = report->report_id, .binding_kind = HID_BINDING_KIND_MOUSE, handler };
+                    self->bindings[slot++] = (hid_handler_binding_t){ .report_id = report->report_id, .binding_kind = HID_BINDING_KIND_MOUSE, (IHIDHANDLER*)handler };
                     self->binding_count = slot;
                 }
             }
-            */
         }
     }
 

@@ -3,8 +3,6 @@
 #include <drivers/usb/core/usb_driver.h>
 #include <kernel.h>
 
-// TODO:
-
 static __hint_inline__ b8 hid_keyboard_handler_is_modifier_usage(u16 usage) {
     return usage >= 0xE0u && usage <= 0xE7u;
 }
