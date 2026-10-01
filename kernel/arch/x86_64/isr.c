@@ -33,11 +33,24 @@ static void exception_panic(struct regs* r) {
     serial_write_str("  ERR: "); serial_write_hex(r->err_code);
     serial_write_str("\r\n");
 
-    serial_write_str("RIP:    "); serial_write_hex(r->rip);
-    serial_write_str("  CS:  ");   serial_write_hex(r->cs);     serial_write_str("\r\n");
-    serial_write_str("RFLAGS: "); serial_write_hex(r->rflags);
-    serial_write_str("  USP: ");  serial_write_hex(r->user_rsp); serial_write_str("\r\n");
-    serial_write_str("SS:     "); serial_write_hex(r->ss);      serial_write_str("\r\n");
+    serial_write_str("RIP:    ");
+    serial_write_hex(r->rip);
+    serial_write_str("  CS:  ");
+    serial_write_hex(r->cs);
+    serial_write_str("\r\n");
+
+    serial_write_str("RFLAGS: ");
+    serial_write_hex(r->rflags);
+    serial_write_str("\r\n");
+
+    // TODO: I think this is correct
+    if ((r->cs & 3) == 3) {
+        serial_write_str("USP:    ");
+        serial_write_hex(r->user_rsp);
+        serial_write_str("  SS:  ");
+        serial_write_hex(r->ss);
+        serial_write_str("\r\n");
+    }
 
     // Specific decoding for Page Fault (INT 14)
     if (r->int_no == 14) {

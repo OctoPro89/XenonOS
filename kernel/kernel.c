@@ -29,6 +29,8 @@
 #include <filesystem/vfs/vfs.h>
 #include <filesystem/vfs/vfs_fat32.h>
 
+#include <task.h>
+
 #include <graphics/graphics.h>
 
 #include <memory/paging.h>
@@ -129,6 +131,38 @@ void kernel_assign_usb_drivers() {
     usb_core_register_driver("USB-HID KEYBOARD DRIVER", USB_MAKE_MATCH(USB_CLASS_HID, USB_MATCH_ANY, USB_MATCH_ANY), hid_driver_factory);
 }
 
+static void task_a(void *arg)
+{
+    (void)arg;
+
+    while (1) {
+        serial_write_str("A\n");
+
+        for (volatile uint64_t i = 0; i < 1000000; i++) {
+            asm volatile("pause");
+        }
+
+        task_yield();
+    }
+}
+
+static void task_b(void *arg)
+{
+    (void)arg;
+
+    while (1) {
+        serial_write_str("B\n");
+
+        for (volatile uint64_t i = 0; i < 1000000; i++) {
+            asm volatile("pause");
+        }
+
+        task_yield();
+    }
+}
+
+extern ASMCALL void task_start_trampoline();
+
 void ASMCALL kernel_main_trampoline(BootInfo* bootInfo) {
     x86_64_HAL_init();
     syscall_init();
@@ -144,7 +178,7 @@ void ASMCALL kernel_main_trampoline(BootInfo* bootInfo) {
     lapic_init();
 
     ktimer_calibrate_cpu_timer(4);
-    ktimer_start_cpu_periodic_timer(timer_irq_vector); // get timer interrupts
+    // ktimer_start_cpu_periodic_timer(timer_irq_vector); // get timer interrupts
 
     if (!input_init()) {
         xassert(false, "");
@@ -153,9 +187,24 @@ void ASMCALL kernel_main_trampoline(BootInfo* bootInfo) {
 
     graphics_init(&bootInfo->fb);
     graphics_clear_screen(0);
-
+    
     printf("XenonOS v0.1\n");
 
+    scheduler_init();
+
+    task_create(task_a, NULL);
+    task_create(task_b, NULL);
+
+    serial_write_str("task_start_trampoline = ");
+    serial_write_hex((u64)task_start_trampoline);
+    serial_write_str("\r\n");
+
+    serial_write_str("task_a = ");
+    serial_write_hex((u64)task_a);
+    serial_write_str("\r\n");
+    scheduler_start();
+
+    /*
     graphics_swap_buffers(); // TODO: remove
 
     printf("Scanning for PCI devices...\n");
@@ -193,7 +242,6 @@ void ASMCALL kernel_main_trampoline(BootInfo* bootInfo) {
     printf("XHCI Driver initialized successfully\n");
     printf("\n");
 
-    /*
     PCI_Device* ahci_dev = pci_find_ahci(); // find AHCI device
     if (ahci_dev == NULL) {
         printf("Failed to find AHCI device!\n");
@@ -279,6 +327,7 @@ void ASMCALL kernel_main_trampoline(BootInfo* bootInfo) {
 
     */
 
+    /*
     graphics_swap_buffers(); // TODO: remove
 
     printf("Running default loop\n");
@@ -300,6 +349,7 @@ void ASMCALL kernel_main_trampoline(BootInfo* bootInfo) {
             nowtime = ktimer_get_system_time_in_seconds();
         }
     }
+    */
 
     // vmm_space_t* space = vmm_create_space();
     // space->user_mode = true;
