@@ -142,7 +142,7 @@ static void task_a(void *arg)
             asm volatile("pause");
         }
 
-        task_yield();
+        // task_yield();
     }
 }
 
@@ -157,7 +157,7 @@ static void task_b(void *arg)
             asm volatile("pause");
         }
 
-        task_yield();
+        // task_yield();
     }
 }
 
@@ -178,7 +178,6 @@ void ASMCALL kernel_main_trampoline(BootInfo* bootInfo) {
     lapic_init();
 
     ktimer_calibrate_cpu_timer(4);
-    // ktimer_start_cpu_periodic_timer(timer_irq_vector); // get timer interrupts
 
     if (!input_init()) {
         xassert(false, "");
@@ -190,18 +189,11 @@ void ASMCALL kernel_main_trampoline(BootInfo* bootInfo) {
     
     printf("XenonOS v0.1\n");
 
-    scheduler_init();
-
+    scheduler_init(timer_irq_vector);
     task_create(task_a, NULL);
     task_create(task_b, NULL);
 
-    serial_write_str("task_start_trampoline = ");
-    serial_write_hex((u64)task_start_trampoline);
-    serial_write_str("\r\n");
-
-    serial_write_str("task_a = ");
-    serial_write_hex((u64)task_a);
-    serial_write_str("\r\n");
+    ktimer_start_cpu_periodic_timer(timer_irq_vector); // get timer interrupts
     scheduler_start();
 
     /*

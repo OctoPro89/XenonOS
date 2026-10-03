@@ -2,10 +2,11 @@
 #include <xlibc/stdio.h> // TODO: remove
 #include <graphics/graphics.h> // TODO: remove
 #include <arch/x86_64/irq.h>
+#include <task.h>
 
 void serial_write_str(const char*);
-void serial_write_hex(uint64_t);
-void serial_write_dec(uint64_t);
+void serial_write_hex(u64);
+void serial_write_dec(u64);
 
 static void exception_panic(struct regs* r) {
     static const char* exception_names[] = {
@@ -54,7 +55,7 @@ static void exception_panic(struct regs* r) {
 
     // Specific decoding for Page Fault (INT 14)
     if (r->int_no == 14) {
-        uint64_t cr2;
+        u64 cr2;
         asm volatile("mov %%cr2, %0" : "=r"(cr2));
         serial_write_str("Faulting Address (CR2): "); serial_write_hex(cr2); serial_write_str("\r\n");
         
@@ -105,7 +106,7 @@ static void exception_panic(struct regs* r) {
 
     // Specific decoding for Page Fault (INT 14)
     if (r->int_no == 14) {
-        uint64_t cr2;
+        u64 cr2;
         asm volatile("mov %%cr2, %0" : "=r"(cr2));
         printf("Faulting Address (CR2): "); printf("%x", cr2); printf("\r\n");
         
@@ -139,11 +140,22 @@ static void exception_panic(struct regs* r) {
     while(1); // halt
 }
 
-void isr_common_handler(struct regs* r) {
+// IMPORTANT: returns the RSP of the context that the assembly stub should restore
+u64 isr_common_handler(struct regs *r)
+{
+    // CPU exceptions are never scheduler events
     if (r->int_no < 32) {
         exception_panic(r);
-        return;
     }
 
+    // These are kernel software interrupts, not APIC IRQs, do NOT call irq_dispatch() for them, because irq_dispatch() sends an APIC EOI
+    if (r->int_no == TASK_YIELD_VECTOR || r->int_no == TASK_EXIT_VECTOR) {
+        return scheduler_handle_interrupt((u64)r, (u8)r->int_no);
+    }
+
+    // hardware IRQ / externally generated interrupt
     irq_dispatch(r);
+
+    // timer vector is handled here as a possible scheduling point. for any other IRQ, scheduler_handle_interrupt() simply returns the current interrupt frame.
+    return scheduler_handle_interrupt((u64)r, (u8)r->int_no);
 }

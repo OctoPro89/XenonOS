@@ -6,19 +6,18 @@ extern isr_common_handler
 %macro ISR_NOERR 1
 global isr_stub_%1
 isr_stub_%1:
-    push 0              ; fake error code
-    push %1             ; interrupt number
+    push 0
+    push %1
     jmp isr_common_stub
 %endmacro
 
 %macro ISR_ERR 1
 global isr_stub_%1
 isr_stub_%1:
-    push %1             ; interrupt number
+    push %1
     jmp isr_common_stub
 %endmacro
 
-; Exceptions with error codes:
 ISR_ERR 8
 ISR_ERR 10
 ISR_ERR 11
@@ -27,7 +26,6 @@ ISR_ERR 13
 ISR_ERR 14
 ISR_ERR 17
 
-; Everything else:
 %assign i 0
 %rep 256
 %if i != 8 && i != 10 && i != 11 && i != 12 && i != 13 && i != 14 && i != 17
@@ -36,10 +34,9 @@ ISR_NOERR i
 %assign i i+1
 %endrep
 
-; TODO: this may not suffice later on with FPU/SSE segment regs etc
 global isr_common_stub
 isr_common_stub:
-    ; Save registers
+    ; Save full GPR context.
     push rax
     push rbx
     push rcx
@@ -56,12 +53,27 @@ isr_common_stub:
     push r14
     push r15
 
-    ; First arg = regs*
+    ; RDI = pointer to struct regs
     mov rdi, rsp
+
+    ;
+    ; Interrupts can happen at arbitrary points in kernel code,
+    ; so don't assume the interrupted stack had the alignment
+    ; required by SysV before calling C.
+    ;
+    ; Moving RSP down by at most 8 bytes is safe; the saved
+    ; register frame remains at RDI.
+    ;
+    and rsp, -16
 
     call isr_common_handler
 
-    ; Restore registers
+    ;
+    ; RAX = RSP of the task we should restore.
+    ;
+    mov rsp, rax
+
+    ; Restore full GPR context.
     pop r15
     pop r14
     pop r13
@@ -78,17 +90,13 @@ isr_common_stub:
     pop rbx
     pop rax
 
-    ; Remove int_no + err_code
+    ; Remove int_no + err_code.
     add rsp, 16
 
     iretq
 
-.hang:
-    cli
-    hlt
-    jmp .hang
-
 section .data
+
 global isr_stub_table
 
 isr_stub_table:

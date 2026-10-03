@@ -2,4 +2,4 @@
 #include <xlibc/xstdint.h>
 #include <kernel.h>
 
-extern ASMCALL void x86_64_context_switch(u64* old_rsp, u64 new_rsp);
+extern ASMCALL void x86_64_restore_interrupt_context(u64 rsp) __attribute__((noreturn));

@@ -4,18 +4,18 @@ extern task_bootstrap_entry
 
 global task_start_trampoline
 
-; extern ASMCALL void task_start_trampoline();
 task_start_trampoline:
-    ; x86_64_context_switch restores:
-    ; R12 = task pointer
-    ;
-    ; convert to first SysV argument
+    ; R12 contains the task_t pointer from the manufactured context.
     mov rdi, r12
+
+    ; SysV x86-64:
+    ; At function entry: RSP % 16 == 8
+    ; Before CALL:       RSP % 16 == 0
+    sub rsp, 8
 
     call task_bootstrap_entry
 
-    ; task_bootstrap_entry should never return,
-    ; but don't fall through if something goes wrong
+    ; task_bootstrap_entry should never return.
 .hang:
     cli
     hlt
