@@ -34,6 +34,7 @@ static void xhci_driver_acknowledge_irq(xhci_driver_t* driver, u8 interrupter);
 static void xhci_driver_acknowledge_portsc_changes(xhci_driver_t* driver, u8 port_index, u32 change_bits);
 static void xhci_driver_teardown_device(xhci_driver_t* driver, u8 port_index);
 static void xhci_driver_process_events(xhci_driver_t* driver);
+static void xhci_driver_process_pending_port_changes(xhci_driver_t* driver);
 static void xhci_driver_irq_handler(struct regs* r, void* user_data);
 static void xhci_driver_setup_dcbaa(xhci_driver_t* driver);
 static b8 xhci_driver_start_host_controller(xhci_driver_t* driver);
@@ -87,6 +88,9 @@ static xhci_command_completion_trb_t* xhci_driver_send_command_trb(xhci_driver_t
     xhci_command_ring_enqueue(&driver->command_ring, cmd_trb);
     xhci_doorbell_manager_ring_command_doorbell(&driver->doorbell_manager);
 
+    xhci_driver_process_events(driver);
+    xhci_event_ring_finish_procecssing(&driver->event_ring);
+
     // wait for the IRQ and let host controller process the command
     // TODO: this is shitty
     u64 deadline = ktimer_get_system_time_in_nanoseconds() + (timeout_ms * 1000000ULL);
@@ -109,6 +113,7 @@ static xhci_command_completion_trb_t* xhci_driver_send_command_trb(xhci_driver_t
     }
 
     if (completion_trb->completion_code != XHCI_TRB_COMPLETION_CODE_SUCCESS) {
+        printf("XHCI SEND COMMAND failed: %s\n", xhci_trb_completion_code_to_string(completion_trb->completion_code));
         xassert(false, "Command TRB failed!");
         return NULL;
     }
@@ -211,16 +216,9 @@ static void xhci_driver_process_events(xhci_driver_t* driver) {
                     break;
                 }
 
-                xhci_portsc_register_t portsc = xhci_driver_read_portsc_reg(driver, port_id - 1);
-
-                // TODO: look at
-                if (portsc.csc && portsc.ccs) {
-                    xhci_driver_setup_device(driver, port_id - 1);
-                }
-                else if (portsc.csc && !portsc.ccs) {
-                    printf("[XHCI DRIVER]: Device disconnected from port %u\n", port_id);
-                    xhci_driver_teardown_device(driver, port_id - 1);
-                    xhci_driver_acknowledge_portsc_changes(driver, port_id - 1, PORTSC_RW1C_BITS);
+                u8 port_index = port_id - 1;
+                if (port_index < 32) {
+                    driver->psc_pending_bitmap |= (1u << port_index);
                 }
 
                 break;
@@ -281,6 +279,28 @@ static void xhci_driver_process_events(xhci_driver_t* driver) {
     }
 
     driver->command_irq_completed = command_completion_status;
+}
+
+static void xhci_driver_process_pending_port_changes(xhci_driver_t* driver) {
+    while (driver->psc_pending_bitmap != 0) {
+        u32 bitmap = driver->psc_pending_bitmap;
+        driver->psc_pending_bitmap = 0;
+
+        for (u8 i = 0; i < driver->max_ports && bitmap != 0; ++i) {
+            if (!(bitmap & (1u << i))) { continue; }
+
+            xhci_portsc_register_t portsc = xhci_driver_read_portsc_reg(driver, i);
+
+            if (portsc.csc && portsc.ccs) {
+                xhci_driver_setup_device(driver, i);
+            }
+            else if (portsc.csc && !portsc.ccs) {
+                printf("[XHCI DRIVER]: Device disconnected from port %u\n", i + 1);
+                xhci_driver_teardown_device(driver, i);
+                xhci_driver_acknowledge_portsc_changes(driver, i, PORTSC_RW1C_BITS);
+            }
+        }
+    }
 }
 
 static void xhci_driver_irq_handler(struct regs* r, void* user_data) {
@@ -1657,10 +1677,10 @@ b8 xhci_driver_reset_port(xhci_driver_t* driver, u8 port_num) {
 
     // clear any lingering status change bits before initiating the reset
     // VERY MUCH needed on real hardware
-    portsc.csc = 1;
-    portsc.pec = 1;
-    portsc.prc = 1;
-    xhci_driver_write_portsc_reg(driver, portsc, port_num);
+    xhci_driver_acknowledge_portsc_changes(driver, port_num, PORTSC_RW1C_BITS); // clear all change bits
+
+    // re-read
+    portsc = xhci_driver_read_portsc_reg(driver, port_num);
 
     // initiate the port reset
     if (is_usb3_port) {

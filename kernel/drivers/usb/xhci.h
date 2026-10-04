@@ -72,6 +72,13 @@ typedef struct {
     struct pending_doorbell { u8 slot_id; u8 target; } pending_doorbells[32];
     u8 pending_doorbell_count;
 
+    // deferred port status change bitmap,
+    // process_events sets bits from PSC events while
+    // process_pending_port_changes drains them from main loop
+    // this avoids re-entrant setup device calls when process event ring is
+    // called from send command
+    u32 psc_pending_bitmap;
+
     // multitasking
     wait_queue_t event_wait_queue;
     task_t* xhci_driver_task; // self reference to this task

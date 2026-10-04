@@ -252,7 +252,7 @@ static task_t* scheduler_next() {
     start = candidate;
 
     do {
-        if (candidate->state == TASK_RUNNABLE || candidate->state == TASK_RUNNING && candidate->is_idle) {
+        if ((candidate->state == TASK_RUNNABLE || candidate->state == TASK_RUNNING) && candidate->is_idle) {
             return candidate;
         }
 
