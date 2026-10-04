@@ -125,78 +125,21 @@ void run_user(vmm_space_t* space) {
 // TODO: task scheduler
 void timer_handler(struct regs* r, void* _) {
     ktimer_sched_irq_global_tick();
+    scheduler_wake_sleepers(ktimer_get_system_time_in_nanoseconds());
 } 
 
 void kernel_assign_usb_drivers() {
-    usb_core_register_driver("USB-HID KEYBOARD DRIVER", USB_MAKE_MATCH(USB_CLASS_HID, USB_MATCH_ANY, USB_MATCH_ANY), hid_driver_factory);
+    usb_core_register_driver("USB-HID DRIVER", USB_MAKE_MATCH(USB_CLASS_HID, USB_MATCH_ANY, USB_MATCH_ANY), hid_driver_factory);
 }
 
-static void task_a(void *arg)
-{
-    (void)arg;
-
-    while (1) {
-        serial_write_str("A\n");
-
-        for (volatile uint64_t i = 0; i < 1000000; i++) {
-            asm volatile("pause");
-        }
-
-        // task_yield();
-    }
-}
-
-static void task_b(void *arg)
-{
-    (void)arg;
-
-    while (1) {
-        serial_write_str("B\n");
-
-        for (volatile uint64_t i = 0; i < 1000000; i++) {
-            asm volatile("pause");
-        }
-
-        // task_yield();
-    }
-}
-
-extern ASMCALL void task_start_trampoline();
-
-void ASMCALL kernel_main_trampoline(BootInfo* bootInfo) {
-    x86_64_HAL_init();
-    syscall_init();
-
-    pmm_init(bootInfo);
-    kernel_space.pml4 = (pte_t*)(bootInfo->PML4 + HHDM_OFFSET);
-
-    acpi_enumerate_acpi_tables((void*)bootInfo->AcpiRsdp);
-
-    u8 timer_irq_vector = irq_alloc_vector();
-    irq_register_handler(timer_irq_vector, &timer_handler, NULL);
-
-    lapic_init();
-
-    ktimer_calibrate_cpu_timer(4);
-
+static void kernel_main(void* arg) {
     if (!input_init()) {
         xassert(false, "");
     }
     kernel_assign_usb_drivers();
-
-    graphics_init(&bootInfo->fb);
-    graphics_clear_screen(0);
     
     printf("XenonOS v0.1\n");
 
-    scheduler_init(timer_irq_vector);
-    task_create(task_a, NULL);
-    task_create(task_b, NULL);
-
-    ktimer_start_cpu_periodic_timer(timer_irq_vector); // get timer interrupts
-    scheduler_start();
-
-    /*
     graphics_swap_buffers(); // TODO: remove
 
     printf("Scanning for PCI devices...\n");
@@ -216,7 +159,7 @@ void ASMCALL kernel_main_trampoline(BootInfo* bootInfo) {
     xhci_driver_t xhci_driver;
     xhci_driver.name = "Default XHCI Controller Driver";
     xhci_driver.pci_device = xhci_dev;
-    if (!xhci_driver_init_driver(&xhci_driver) || !xhci_driver_start_device(&xhci_driver)) {
+    if (!xhci_driver_init_driver(&xhci_driver) /* || !xhci_driver_start_device(&xhci_driver) */) {
         printf("Failed to initialize XHCI driver!\n");
         while(1);
     }
@@ -234,6 +177,7 @@ void ASMCALL kernel_main_trampoline(BootInfo* bootInfo) {
     printf("XHCI Driver initialized successfully\n");
     printf("\n");
 
+    /*
     PCI_Device* ahci_dev = pci_find_ahci(); // find AHCI device
     if (ahci_dev == NULL) {
         printf("Failed to find AHCI device!\n");
@@ -316,32 +260,61 @@ void ASMCALL kernel_main_trampoline(BootInfo* bootInfo) {
 
     printf("\n");
     printf("\n");
-
     */
 
-    /*
-    graphics_swap_buffers(); // TODO: remove
+    printf("Creating XHCI driver task!\n");
+    task_t* xhci_driver_task = task_create(xhci_driver_task_entry, (void*)&xhci_driver);
 
     printf("Running default loop\n");
 
-    u64 nowtime = ktimer_get_system_time_in_seconds();
-    while (1) {
-        if (nowtime != ktimer_get_system_time_in_milliseconds()) {
-            xhci_driver_run(&xhci_driver);
-            usb_core_run_drivers();
-        }
+    u64 last_second = 0;
 
-        if (nowtime != ktimer_get_system_time_in_seconds()) {
+    for (;;) {
+        u64 now = ktimer_get_system_time_in_seconds();
+
+        if (now != last_second) {
             char buf[100];
-            snprintf(buf, 100, "System Uptime (seconds): %llu", ktimer_get_system_time_in_seconds());
-            
+
+            snprintf(buf, sizeof(buf), "System Uptime (seconds): %llu", now);
+
             graphics_draw_rect(500, 50, 220, 50, 0x0);
             graphics_draw_string(buf, 500, 50, 0xFFFF);
             graphics_swap_buffers();
-            nowtime = ktimer_get_system_time_in_seconds();
+
+            last_second = now;
         }
+
+        task_sleep_ms(10);
     }
-    */
+}
+
+void ASMCALL kernel_main_trampoline(BootInfo* bootInfo) {
+    x86_64_HAL_init();
+    syscall_init();
+
+    pmm_init(bootInfo);
+    kernel_space.pml4 = (pte_t*)(bootInfo->PML4 + HHDM_OFFSET);
+
+    acpi_enumerate_acpi_tables((void*)bootInfo->AcpiRsdp);
+
+    u8 timer_irq_vector = irq_alloc_vector();
+    irq_register_handler(timer_irq_vector, &timer_handler, NULL);
+
+    lapic_init();
+
+    graphics_init(&bootInfo->fb);
+    graphics_clear_screen(0);
+
+    printf("Starting kernel main task!\n");
+
+    ktimer_calibrate_cpu_timer(4);
+
+    scheduler_init(timer_irq_vector);
+    
+    task_t* main_thread = task_create(kernel_main, NULL);
+
+    ktimer_start_cpu_periodic_timer(timer_irq_vector); // get timer interrupts
+    scheduler_start();
 
     // vmm_space_t* space = vmm_create_space();
     // space->user_mode = true;

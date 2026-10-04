@@ -1,6 +1,7 @@
 #pragma once
 
 #include <xlibc/xstdint.h>
+#include <arch/x86_64/sync/sync.h>
 
 typedef struct {
     u8 address; // bEndpointAddress (e.g. 0x81 = EP1 IN)
@@ -46,6 +47,8 @@ typedef struct usb_device {
     void* hcd; // host controller driver instance (xhci_driver_t*)
     void* hcd_device; // driver device handle (xhci_device_t*)
 
+    // driver-task lifetime tracking for safe disconnect teardown;
+    spinlock_t lifetime_lock;
     u8 active_driver_count;
     b8 disconnect_pending;
     b8 hcd_teardown_complete;

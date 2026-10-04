@@ -42,6 +42,8 @@ xhci_endpoint_t xhci_endpoint_init(u8 slot_id, const usb_endpoint_descriptor_t* 
     endpoint.async_state = (xhci_endpoint_async_state_t*)kmalloc(sizeof(xhci_endpoint_async_state_t));
     if (!endpoint.async_state) {
         // TODO: throw error
+        kfree(endpoint.ring);
+        endpoint.ring = NULL;
         xassert(false, "");
         return endpoint;
     }
@@ -62,10 +64,19 @@ xhci_endpoint_t xhci_endpoint_init(u8 slot_id, const usb_endpoint_descriptor_t* 
     endpoint.async_state->interrupt_in_stream.count = 0;
     endpoint.async_state->interrupt_in_stream.next_seq = 1;
     endpoint.async_state->interrupt_in_stream.dropped = 0;
+    wait_queue_init(&endpoint.async_state->interrupt_in_stream.available_wq);
+
+    wait_queue_init(&endpoint.completion_wq);
+    spin_lock_init(&endpoint.completion_lock);
 
     endpoint.dma_buffer = xhci_alloc_memory(PAGE_SIZE, XHCI_ENDPOINT_CONTEXT_ALIGNMENT, XHCI_ENDPOINT_CONTEXT_BOUNDARY); // TODO: alignment and boundary are definitely wrong
     if (((void*)endpoint.dma_buffer.virt) == NULL) {
         // TODO: throw error
+        // TODO: destroy ring
+        kfree(endpoint.ring);
+        endpoint.ring = NULL;
+        kfree(endpoint.async_state);
+        endpoint.async_state = NULL;
         xassert(false, "");
         return endpoint;
     }

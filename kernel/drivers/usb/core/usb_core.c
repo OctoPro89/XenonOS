@@ -3,6 +3,7 @@
 #include <xlibc/stdlib.h>
 #include <xlibc/string.h>
 #include <xlibc/stdio.h>
+#include <task.h>
 
 // tracks which usb_device_t is associated with each xhci_device_t
 // TODO: maybe increase
@@ -36,6 +37,19 @@ static b8 match_interface(const usb_core_interface_match_t match, const usb_inte
     return true;
 }
 
+static void class_driver_task_entry(void* arg) {
+    IUSBDRIVER* drv = (IUSBDRIVER*)arg;
+    u8 slot_id = drv->bound_slot_id;
+    u8 iface_index = drv->bound_interface_index;
+    usb_device_t* dev = drv->bound_device;
+    drv->run(drv);
+
+    u16 drv_idx = (u16)(slot_id) * 16 + iface_index;
+    // TODO: threading
+
+    task_exit();
+}
+
 static usb_device_t* build_usb_device(xhci_driver_t* hcd, xhci_device_t* xdev, const usb_device_descriptor_t* desc) {
     usb_device_t* dev = (usb_device_t*)kmalloc(sizeof(usb_device_t));
     if (dev == NULL) {
@@ -56,6 +70,7 @@ static usb_device_t* build_usb_device(xhci_driver_t* hcd, xhci_device_t* xdev, c
     dev->hub_num_ports = 0; // TODO: xdev->hub_num_ports();
     dev->hcd = hcd;
     dev->hcd_device = xdev;
+    spin_lock_init(&dev->lifetime_lock);
     dev->active_driver_count = 0;
     dev->disconnect_pending = false;
     dev->hcd_teardown_complete = false;
@@ -134,15 +149,22 @@ void usb_core_device_configured(xhci_driver_t* driver, xhci_device_t* xdev, cons
                 continue;
             }
 
-            // TODO: create kernel task here
-            // for now use not so great solution
-            g_active_drivers[g_active_driver_count++] = drv;
+            task_t* task = task_create(class_driver_task_entry, (void*)drv);
+            if (!task) {
+                printf("[USB CORE]: Failed to create task for %s\n", drv->name);
+            }
 
+            task->name = drv->name;
+
+            drv->task = task;
             drv->bound_device = dev;
             drv->bound_slot_id = slot_id;
             drv->bound_interface_index = i;
 
+            u64 flags = 0;
+            spin_lock_irqsave(&dev->lifetime_lock, &flags);
             ++dev->active_driver_count;
+            spin_unlock_irqrestore(&dev->lifetime_lock, flags);
 
             u16 drv_idx = (u16)(slot_id) * 16u + (u16)i;
             if (drv_idx >= MAX_USB_DEVICES * 16) {
@@ -166,7 +188,10 @@ void usb_core_device_disconnected(xhci_driver_t* driver, xhci_device_t* xdev) {
     usb_device_t* dev = xdev->core_device;
     if (!dev) { return; }
 
+    u64 flags = 0;
+    spin_lock_irqsave(&dev->lifetime_lock, &flags);
     dev->disconnect_pending = true;
+    spin_unlock_irqrestore(&dev->lifetime_lock, flags);
 
     u8 slot_id = xdev->slot;
     for (u8 i = 0; i < dev->num_interfaces; ++i) {
@@ -202,10 +227,4 @@ void usb_core_register_driver(const char* name, usb_core_interface_match_t match
 
     g_registered_drivers[g_registered_driver_count] = entry;
     ++g_registered_driver_count;
-}
-
-void usb_core_run_drivers() {
-    for (u16 i = 0; i < g_active_driver_count; ++i) {
-        g_active_drivers[i]->run((void*)g_active_drivers[i]);
-    }
 }

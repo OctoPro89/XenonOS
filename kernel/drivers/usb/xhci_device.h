@@ -6,6 +6,7 @@
 #include <drivers/usb/xhci_endpoint.h>
 #include <drivers/usb/core/usb_device.h>
 #include <kernel.h>
+#include <arch/x86_64/sync/sync.h>
 
 #define XHCI_DEVICE_MAX_ENDPOINTS 31
 #define XHCI_DEVICE_MAX_INTERFACES 16
@@ -35,15 +36,21 @@ typedef struct {
     // non-control endpoints (DCI 2-31, index 0-1 unused)
     xhci_endpoint_t* endpoints[XHCI_DEVICE_MAX_ENDPOINTS + 1];
 
-    b8 ctrl_completed;
-    xhci_transfer_completion_trb_t ctrl_result;
-
     // interface tracking (populated by xhci_driver_configure_device)
     xhci_interface_info_t interfaces[XHCI_DEVICE_MAX_INTERFACES];
     u8 num_interfaces;
 
     // USB core backpointer, set once the logical usb_device_t is published
     usb_device_t* core_device;
+
+    // EP0 transfer mutex - protects enqueue + doorbell + wait against concurrent callers
+    mutex_t ctrl_transfer_mutex;
+
+    // EP0 completion tracking
+    wait_queue_t ctrl_completion_wq;
+    spinlock_t ctrl_completion_lock;
+    b8 ctrl_completed;
+    xhci_transfer_completion_trb_t ctrl_result;
 } xhci_device_t;
 
 xhci_device_t xhci_device_init(u8 port, u8 slot, u8 speed, b8 use_64byte_ctx);

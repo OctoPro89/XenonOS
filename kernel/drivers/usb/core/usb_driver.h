@@ -16,9 +16,11 @@ typedef struct {
 } usb_core_interface_match_t;
 
 typedef struct usb_device usb_device_t;
+typedef struct task task_t;
 
 #define IUSBDRIVER_MEMBERS(x) \
     x(const char*, name) \
+    x(task_t*, task) \
     x(usb_device_t*, bound_device) \
     x(u8, bound_slot_id) \
     x(u8, bound_interface_index)

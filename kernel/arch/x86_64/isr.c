@@ -149,7 +149,7 @@ u64 isr_common_handler(struct regs *r)
     }
 
     // These are kernel software interrupts, not APIC IRQs, do NOT call irq_dispatch() for them, because irq_dispatch() sends an APIC EOI
-    if (r->int_no == TASK_YIELD_VECTOR || r->int_no == TASK_EXIT_VECTOR) {
+    if (r->int_no == TASK_YIELD_VECTOR || r->int_no == TASK_EXIT_VECTOR || r->int_no == TASK_BLOCK_VECTOR || r->int_no == TASK_SLEEP_VECTOR) {
         return scheduler_handle_interrupt((u64)r, (u8)r->int_no);
     }
 

@@ -4,6 +4,7 @@
 #include <drivers/usb/xhci_trb.h>
 #include <drivers/usb/usb_descriptors.h>
 #include <drivers/usb/core/usb_transfer.h>
+#include <task.h>
 
 typedef struct {
     u32 seq;
@@ -26,6 +27,7 @@ typedef struct {
     u8 count;
     u32 next_seq; // = 1
     u32 dropped;
+    wait_queue_t available_wq;
 } xhci_interrupt_in_stream_state_t;
 
 typedef struct {
@@ -50,6 +52,8 @@ typedef struct {
 
     dma_region_t dma_buffer;
 
+    wait_queue_t completion_wq;
+    spinlock_t completion_lock;
     b8 completed;
     xhci_transfer_completion_trb_t result;
     xhci_endpoint_async_state_t* async_state;

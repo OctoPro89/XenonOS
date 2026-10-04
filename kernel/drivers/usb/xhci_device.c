@@ -21,6 +21,10 @@ xhci_device_t xhci_device_init(u8 port, u8 slot, u8 speed, b8 use_64byte_ctx) {
     dev.use_64byte_ctx = use_64byte_ctx;
     xhci_device_alloc_input_ctx(&dev);
 
+    wait_queue_init(&dev.ctrl_completion_wq);
+    spin_lock_init(&dev.ctrl_completion_lock);
+    mutex_init(&dev.ctrl_transfer_mutex);
+
     // allocate a persistent DMA page for control transfer payloads
     dev.ctrl_transfer_buffer = xhci_alloc_memory(PAGE_SIZE, XHCI_TRANSFER_RING_SEGMENTS_ALIGNMENT, XHCI_TRANSFER_RING_SEGMENTS_BOUNDARY); // TODO: check alignment and boundary
     if (((void*)dev.ctrl_transfer_buffer.virt) == NULL) {

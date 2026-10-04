@@ -5,6 +5,9 @@
 #include <arch/x86_64/irq.h>
 #include <xlibc/xstddef.h>
 #include <acpi/hpet.h>
+#include <task.h>
+
+// TODO: fix time
 
 u64 hardware_frequency = 0;
 u64 apic_ticks_calibrated_frequency = 0;
@@ -89,65 +92,17 @@ void ktimer_sched_irq_global_tick() {
 }
 
 void sleep(u32 seconds) {
-    u64 start = hpet_read_counter(&hpet_global);
-    u64 target = start + (seconds * hardware_frequency);
-
-    while (true) {
-        u64 current = hpet_read_counter(&hpet_global);
-        if (current < start) { // wraparound detected
-            start = current;
-            target = start + (seconds * hardware_frequency);
-        }
-        if (current >= target) break;
-
-        asm volatile("pause");
-    }
+    task_sleep_ms((u64)(seconds) * 1000ULL);
 }
 
 void msleep(u32 milliseconds) {
-    u64 start = hpet_read_counter(&hpet_global);
-    u64 target = start + (milliseconds * (hardware_frequency / 1000ULL));
-
-    while (true) {
-        u64 current = hpet_read_counter(&hpet_global);
-        if (current < start) { // wraparound detected
-            start = current;
-            target = start + (milliseconds * (hardware_frequency / 1000ULL));
-        }
-        if (current >= target) break;
-
-        asm volatile("pause");
-    }
+    task_sleep_ms((u64)milliseconds);
 }
 
 void usleep(u32 microseconds) {
-    u64 start = hpet_read_counter(&hpet_global);
-    u64 target = start + (microseconds * (hardware_frequency / 1000000ULL));
-
-    while (true) {
-        u64 current = hpet_read_counter(&hpet_global);
-        if (current < start) { // wraparound detected
-            start = current;
-            target = start + (microseconds * (hardware_frequency / 1000000ULL));
-        }
-        if (current >= target) break;
-
-        asm volatile("pause");
-    }
+    task_sleep_ns((u64)(microseconds) * 1000ULL);
 }
 
 void nanosleep(u32 nanoseconds) {
-    u64 start = hpet_read_counter(&hpet_global);
-    u64 target = start + (nanoseconds * (hardware_frequency / 1000000000ULL));
-
-    while (true) {
-        u64 current = hpet_read_counter(&hpet_global);
-        if (current < start) { // wraparound detected
-            start = current;
-            target = start + (nanoseconds * (hardware_frequency / 1000000000ULL));
-        }
-        if (current >= target) break;
-
-        asm volatile("pause");
-    }
+    task_sleep_ns(nanoseconds);
 }

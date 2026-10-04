@@ -138,14 +138,12 @@ typedef struct {
 } printf_context_t;
 
 
-static void printf_console_emit(void* ctx, char c)
-{
+static void printf_console_emit(void* ctx, char c) {
     (void)ctx;
     putc(c);
 }
 
-static void printf_buffer_emit(void* ctx, char c)
-{
+static void printf_buffer_emit(void* ctx, char c) {
     snprintf_context_t* s = (snprintf_context_t*)ctx;
 
     if (s->pos + 1 < s->maxlen)
@@ -156,8 +154,7 @@ static void printf_buffer_emit(void* ctx, char c)
     s->pos++;
 }
 
-static void printf_emit_count(void* ctx, char c)
-{
+static void printf_emit_count(void* ctx, char c) {
     printf_context_t* p = (printf_context_t*)ctx;
 
     p->emit(p->emit_ctx, c);
@@ -165,35 +162,21 @@ static void printf_emit_count(void* ctx, char c)
 }
 
 
-static void printf_string(
-    printf_emit_fn emit,
-    void* ctx,
-    const char* str
-)
-{
-    if (!str)
-    {
+static void printf_string(printf_emit_fn emit, void* ctx, const char* str) {
+    if (!str) {
         str = "(null)";
     }
 
-    while (*str)
-    {
+    while (*str) {
         emit(ctx, *str++);
     }
 }
 
-static void printf_unsigned(
-    printf_emit_fn emit,
-    void* ctx,
-    unsigned long long number,
-    int radix
-)
-{
+static void printf_unsigned(printf_emit_fn emit, void* ctx, unsigned long long number, int radix) {
     char buffer[32];
     int pos = 0;
 
-    do
-    {
+    do {
         unsigned long long rem = number % radix;
         number /= radix;
 
@@ -201,8 +184,7 @@ static void printf_unsigned(
     }
     while (number > 0);
 
-    while (--pos >= 0)
-    {
+    while (--pos >= 0) {
         emit(ctx, buffer[pos]);
     }
 }

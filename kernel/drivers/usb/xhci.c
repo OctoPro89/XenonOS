@@ -12,6 +12,10 @@
 #include <xlibc/string.h>
 #include <arch/x86_64/irq.h>
 #include <arch/x86_64/barrier.h>
+#include <arch/x86_64/sync/critical_section.h>
+#include <arch/x86_64/sync/sync.h>
+
+// TODO: clear async endpoint state
 
 static const char* usb_speed_strings[7] = {
     "Invalid",
@@ -61,7 +65,7 @@ static b8 xhci_driver_queue_interrupt_in_stream_td(xhci_driver_t* driver, xhci_d
 static void xhci_driver_queue_deferred_doorbell(xhci_driver_t* driver, u8 slot_id, u8 target);
 static void xhci_driver_enqueue_pending_request(xhci_driver_t* driver, xhci_endpoint_async_state_t* state, usb_transfer_request_t* request);
 static b8 xhci_driver_start_async_request(xhci_driver_t* driver, xhci_device_t* device, xhci_endpoint_t* ep, xhci_endpoint_async_state_t* state, usb_transfer_request_t* request, b8 defer_doorbell);
-static void xhci_driver_complete_endpoint_transfer(xhci_driver_t* driver, xhci_transfer_completion_trb_t* result_out, b8* completed_out, const xhci_transfer_completion_trb_t* event);
+static void xhci_driver_complete_endpoint_transfer(xhci_driver_t* driver, spinlock_t* lock, wait_queue_t* wq, xhci_transfer_completion_trb_t* result_out, b8* completed_out, const xhci_transfer_completion_trb_t* event);
 static void xhci_driver_complete_interrupt_in_stream(xhci_driver_t* driver, xhci_device_t* device, xhci_endpoint_t* ep, xhci_endpoint_async_state_t* state, const xhci_transfer_completion_trb_t* event);
 static b8 xhci_driver_queue_interrupt_in_stream_payload(xhci_driver_t* driver, xhci_interrupt_in_stream_state_t* stream, const u8* data, u32 length, u16 mfindex, u64 queued_t_us, u32* seq_out);
 static void xhci_driver_complete_async_request(xhci_driver_t* driver, xhci_device_t* device, xhci_endpoint_t* ep, xhci_endpoint_async_state_t* state, const xhci_transfer_completion_trb_t* event);
@@ -84,12 +88,12 @@ static xhci_command_completion_trb_t* xhci_driver_send_command_trb(xhci_driver_t
     xhci_doorbell_manager_ring_command_doorbell(&driver->doorbell_manager);
 
     // wait for the IRQ and let host controller process the command
-    u64 sleep_passed = 0;
-    while (!driver->command_irq_completed) {
-        usleep(10);
-        sleep_passed += 10;
-
-        if (sleep_passed > timeout_ms * 1000) { break; }
+    // TODO: this is shitty
+    u64 deadline = ktimer_get_system_time_in_nanoseconds() + (timeout_ms * 1000000ULL);
+    while (!driver->command_irq_completed && ktimer_get_system_time_in_nanoseconds() < deadline) {
+        xhci_driver_process_events(driver);
+        xhci_event_ring_finish_procecssing(&driver->event_ring);
+        msleep(1);
     }
 
     // ***important assumption*** //
@@ -165,6 +169,8 @@ static void xhci_driver_teardown_device(xhci_driver_t* driver, u8 port_index) {
         ep->completed = true;
     }
 
+    // TODO:
+
     usb_core_device_disconnected(driver, device);
 
     (void)xhci_driver_disable_slot(driver, slot_id); // tolerate failure (device may be gone)
@@ -209,10 +215,7 @@ static void xhci_driver_process_events(xhci_driver_t* driver) {
 
                 // TODO: look at
                 if (portsc.csc && portsc.ccs) {
-                    // printf("Setting up device in IRQ handler!\n");
-                    // TODO: causes sending command trbs to not work on real hardware since this can get
-                    // called in the IRQ handler
-                    // xhci_driver_setup_device(driver, port_id - 1);
+                    xhci_driver_setup_device(driver, port_id - 1);
                 }
                 else if (portsc.csc && !portsc.ccs) {
                     printf("[XHCI DRIVER]: Device disconnected from port %u\n", port_id);
@@ -242,9 +245,7 @@ static void xhci_driver_process_events(xhci_driver_t* driver) {
                 if (!dev) { break; }
 
                 if (ep_id == 1) {
-                    xhci_driver_complete_endpoint_transfer(driver, &dev->ctrl_result, &dev->ctrl_completed, e);
-                    dev->ctrl_result = *e;
-                    dev->ctrl_completed = true;
+                    xhci_driver_complete_endpoint_transfer(driver, &dev->ctrl_completion_lock, &dev->ctrl_completion_wq, &dev->ctrl_result, &dev->ctrl_completed, e);
                 }
                 else {
                     xhci_endpoint_t* ep = dev->endpoints[ep_id];
@@ -264,13 +265,13 @@ static void xhci_driver_process_events(xhci_driver_t* driver) {
                             }
                         }
                         else {
-                            xhci_driver_complete_endpoint_transfer(driver, &ep->result, &ep->completed, e);
+                            xhci_driver_complete_endpoint_transfer(driver, &dev->ctrl_completion_lock, &dev->ctrl_completion_wq, &ep->result, &ep->completed, e);
                         }
 
                         break;
                     }
 
-                    xhci_driver_complete_endpoint_transfer(driver, &ep->result, &ep->completed, e);
+                    xhci_driver_complete_endpoint_transfer(driver, &dev->ctrl_completion_lock, &dev->ctrl_completion_wq, &ep->result, &ep->completed, e);
 
                     break;
                 }
@@ -284,7 +285,8 @@ static void xhci_driver_process_events(xhci_driver_t* driver) {
 
 static void xhci_driver_irq_handler(struct regs* r, void* user_data) {
     xhci_driver_t* driver = (xhci_driver_t*)user_data;
-    xhci_driver_process_events(driver); // TODO: this is EXPENSIVE to do in an IRQ handler, add to queue or something, dirty way for now
+    // xhci_driver_process_events(driver); // TODO: this is EXPENSIVE to do in an IRQ handler, add to queue or something, dirty way for now
+    wait_queue_wake_one(&driver->event_wait_queue); // hardware says something happened, wake xHCI worker so it can process the event ring
     xhci_driver_acknowledge_irq(driver, 0);
 }
 
@@ -541,6 +543,8 @@ static b8 xhci_driver_send_control_transfer(xhci_driver_t* driver, xhci_device_t
     status.ioc = 1; // Interrupt on completion
     status.dir = (length > 0) ? (is_in ? 0 : 1) : 1;
 
+    mutex_lock(&device->ctrl_transfer_mutex);
+
     // reset EP0 completion state before doorbell
     device->ctrl_completed = false;
 
@@ -552,6 +556,8 @@ static b8 xhci_driver_send_control_transfer(xhci_driver_t* driver, xhci_device_t
     }
 
     xhci_transfer_ring_enqueue(ring, (xhci_trb_t*)(&status));
+
+    // TODO: quirks
 
     xhci_doorbell_manager_ring_doorbell(&driver->doorbell_manager, device->slot, XHCI_DOORBELL_TARGET_CONTROL_EP_RING);
 
@@ -569,14 +575,19 @@ static b8 xhci_driver_send_control_transfer(xhci_driver_t* driver, xhci_device_t
     }
 
     if (!device->ctrl_completed) {
+        mutex_unlock(&device->ctrl_transfer_mutex);
         printf("[XHCI DRIVER]: Control transfer timed out");
         return false;
     }
 
     if (device->ctrl_result.completion_code != XHCI_TRB_COMPLETION_CODE_SUCCESS) {
+        // TODO: recover stalled endpoint
+        mutex_unlock(&device->ctrl_transfer_mutex);
         printf("[XHCI DRIVER]: Control transfer failed: %s", xhci_trb_completion_code_to_string(device->ctrl_result.completion_code));
         return false;
     }
+
+    mutex_unlock(&device->ctrl_transfer_mutex);
 
     // copy IN data to caller's buffer
     if (buffer && length > 0 && is_in) {
@@ -817,6 +828,8 @@ static void xhci_driver_configure_device(xhci_driver_t* driver, xhci_device_t* d
 }
 
 static void xhci_driver_setup_device(xhci_driver_t* driver, u8 port) {
+    // TODO: check if port already has a device
+
     b8 reset_successful = xhci_driver_reset_port(driver, port);
     if (!reset_successful) {
         printf("[XHCI DRIVER]: Failed to reset port %u after connection detection\n", port);
@@ -948,12 +961,14 @@ static b8 xhci_driver_submit_normal_transfer(xhci_driver_t* driver, xhci_device_
         return false;
     }
 
-    // TODO: reset completion state before doorbell to avoid race with driver event dispatch
     b8 state_rc = true;
+    u64 flags = 0;
+    spin_lock_irqsave(&ep->completion_lock, &flags);
     if (ep->async_state && ep->async_state->async_enabled) {
         state_rc = false;
     }
     ep->completed = false;
+    spin_unlock_irqrestore(&ep->completion_lock, flags);
 
     if (!state_rc) { return false; }
 
@@ -981,10 +996,11 @@ static b8 xhci_driver_submit_normal_transfer(xhci_driver_t* driver, xhci_device_
     xhci_transfer_ring_enqueue(ep->ring, (xhci_trb_t*)&normal);
     xhci_doorbell_manager_ring_doorbell(&driver->doorbell_manager, device->slot, ep->dci);
 
-    // TODO: wait for transfer completion (HCD task processes events and wakes)
+    spin_lock_irqsave(&ep->completion_lock, &flags);
     while (!ep->completed) {
-        usleep(50); // TODO: no clue what to set this to
+        flags = task_wait(&ep->completion_wq, &ep->completion_lock, flags);
     }
+    spin_unlock_irqrestore(&ep->completion_lock, flags);
 
     // copy IN data from DMA buffer to caller
     if (XHCI_ENDPOINT_IS_IN(*ep) && buffer && length > 0) {
@@ -1208,19 +1224,25 @@ static b8 xhci_driver_start_async_request(xhci_driver_t* driver, xhci_device_t* 
     return true;
 }
 
-static void xhci_driver_complete_endpoint_transfer(xhci_driver_t* driver, xhci_transfer_completion_trb_t* result_out, b8* completed_out, const xhci_transfer_completion_trb_t* event) {
-    // TODO: threading
-    // TODO: check
+static void xhci_driver_complete_endpoint_transfer(xhci_driver_t* driver, spinlock_t* lock, wait_queue_t* wq, xhci_transfer_completion_trb_t* result_out, b8* completed_out, const xhci_transfer_completion_trb_t* event) {
+    u64 flags = 0;
+    spin_lock_irqsave(lock, &flags);
     *result_out = *event;   
     *completed_out = true;
+    spin_unlock_irqrestore(lock, flags);
+    // TODO: check this
+    wait_queue_wake_one(wq);
 }
 
 static void xhci_driver_complete_interrupt_in_stream(xhci_driver_t* driver, xhci_device_t* device, xhci_endpoint_t* ep, xhci_endpoint_async_state_t* state, const xhci_transfer_completion_trb_t* event) {
     b8 was_closing = false;
+    u64 flags = 0;
+    spin_lock_irqsave(&ep->completion_lock, &flags);
     if (state->interrupt_in_stream.closing) {
         state->interrupt_in_stream.closing = false;
         was_closing = true;
     }
+    spin_unlock_irqrestore(&ep->completion_lock, flags);
 
     if (was_closing) {
         return;
@@ -1235,14 +1257,19 @@ static void xhci_driver_complete_interrupt_in_stream(xhci_driver_t* driver, xhci
         // recoverable: re-arm with an immediate doorbell so the endpoint
         // resumes at the next interval without killing the stream
         if (xhci_driver_queue_interrupt_in_stream_td(driver, device, ep, state, false) != 0) {
+            spin_lock_irqsave(&ep->completion_lock, &flags);
             state->interrupt_in_stream.active = false;
+            spin_unlock_irqrestore(&ep->completion_lock, flags);
         }
         return;
     }
 
     if (event->completion_code != XHCI_TRB_COMPLETION_CODE_SUCCESS && event->completion_code != XHCI_TRB_COMPLETION_CODE_SHORT_PACKET) {
+        spin_lock_irqsave(&ep->completion_lock, &flags);
         state->interrupt_in_stream.active = false;
         state->interrupt_in_stream.closing = false;
+        spin_unlock_irqrestore(&ep->completion_lock, flags);
+        wait_queue_wake_all(&state->interrupt_in_stream.available_wq);
         return;
     }
 
@@ -1254,6 +1281,7 @@ static void xhci_driver_complete_interrupt_in_stream(xhci_driver_t* driver, xhci
     }
 
     barrier_dma_read();
+    spin_lock_irqsave(&ep->completion_lock, &flags);
     if (state->interrupt_in_stream.active) {
         xhci_driver_queue_interrupt_in_stream_payload(
             driver,
@@ -1265,10 +1293,15 @@ static void xhci_driver_complete_interrupt_in_stream(xhci_driver_t* driver, xhci
             NULL
         );
     }
+    spin_unlock_irqrestore(&ep->completion_lock, flags);
 
     if (!xhci_driver_queue_interrupt_in_stream_td(driver, device, ep, state, true)) {
+        spin_lock_irqsave(&ep->completion_lock, &flags);
         state->interrupt_in_stream.active = false;
+        spin_unlock_irqrestore(&ep->completion_lock, flags);
     }
+
+    wait_queue_wake_one(&state->interrupt_in_stream.available_wq);
 }
 
 static b8 xhci_driver_queue_interrupt_in_stream_payload(xhci_driver_t* driver, xhci_interrupt_in_stream_state_t* stream, const u8* data, u32 length, u16 mfindex, u64 queued_t_us, u32* seq_out) {
@@ -1441,6 +1474,8 @@ b8 xhci_driver_init_driver(xhci_driver_t* driver) {
     driver->command_irq_completed = 0;
     driver->command_completion_event_count = 0;
     memset(driver->command_completion_events, 0, sizeof(xhci_command_completion_trb_t*) * XHCI_RINGS_MAX_DEQUEUEABLE_EVENTS);
+
+    wait_queue_init(&driver->event_wait_queue);
 
     return true;
 }
@@ -1681,7 +1716,19 @@ b8 xhci_driver_reset_port(xhci_driver_t* driver, u8 port_num) {
 }
 
 b8 xhci_driver_usb_control_transfer(xhci_driver_t* driver, xhci_device_t* device, u8 request_type, u8 request, u16 value, u16 index, void* data, u16 length) {
-    // TODO: scheduling here
+    // if called from the XHCI driver task, use internal event-processing path,
+    // if called from a class driver task, use the wait-queue path so event ring processing
+    // isn't competed for
+    if (scheduler_current() == driver->xhci_driver_task) {
+        xhci_device_request_packet_t req;
+        memset(&req, 0, sizeof(xhci_device_request_packet_t));
+        req.bRequestType = request_type;
+        req.bRequest = request;
+        req.wValue = value;
+        req.wIndex = index;
+        req.wLength = length;
+        return xhci_driver_send_control_transfer(driver, device, &req, data, length);
+    }
 
     xhci_transfer_ring_t* ring = device->ctrl_ring;
 
@@ -1745,9 +1792,12 @@ b8 xhci_driver_usb_control_transfer(xhci_driver_t* driver, xhci_device_t* device
     status.dir = (length > 0) ? (is_in ? 0 : 1) : 1;
 
     // serialize EP0 enqueue + doorbell + wait against concurrent callers
-    // TODO: mutex lock
+    mutex_lock(&device->ctrl_transfer_mutex);
 
+    u64 flags = 0;
+    spin_lock_irqsave(&device->ctrl_completion_lock, &flags);
     device->ctrl_completed = false;
+    spin_unlock_irqrestore(&device->ctrl_completion_lock, flags);
 
     xhci_transfer_ring_enqueue(ring, (xhci_trb_t*)&setup);
     if (length > 0) {
@@ -1757,17 +1807,22 @@ b8 xhci_driver_usb_control_transfer(xhci_driver_t* driver, xhci_device_t* device
 
     xhci_doorbell_manager_ring_doorbell(&driver->doorbell_manager, device->slot, XHCI_DOORBELL_TARGET_CONTROL_EP_RING);
 
+    spin_lock_irqsave(&device->ctrl_completion_lock, &flags);
     while (!device->ctrl_completed) {
-        usleep(50); // TODO: no clue what to set this to
+        flags = task_wait(&device->ctrl_completion_wq, &device->ctrl_completion_lock, flags);
     }
+    spin_unlock_irqrestore(&device->ctrl_completion_lock, flags);
 
     if (device->ctrl_result.completion_code != XHCI_TRB_COMPLETION_CODE_SUCCESS) {
         if (device->ctrl_result.completion_code == XHCI_TRB_COMPLETION_CODE_STALL_ERROR) {
             (void)xhci_driver_recover_stalled_control_endpoint(driver, device);
         }
+        mutex_unlock(&device->ctrl_transfer_mutex);
         printf("[XHCI DRIVER]: Control transfer failed: %s\n", xhci_trb_completion_code_to_string(device->ctrl_result.completion_code));
         return false;
     }
+
+    mutex_unlock(&device->ctrl_transfer_mutex);
 
     if (data && length > 0 && is_in) {
         barrier_dma_read();
@@ -1898,6 +1953,7 @@ b8 xhci_driver_usb_open_interrupt_in_stream(xhci_driver_t* driver, xhci_device_t
         state->interrupt_in_stream.count = 0;
         state->interrupt_in_stream.next_seq = 1;
         state->interrupt_in_stream.dropped = 0;
+        wait_queue_init(&state->interrupt_in_stream.available_wq);
         for (u8 i = 0; i < STREAM_QUEUE_DEPTH; i++) {
             state->interrupt_in_stream.payloads[i].data = storage + ((size_t)(i) * payload_length);
             state->interrupt_in_stream.payloads[i].seq = 0;
@@ -1937,8 +1993,10 @@ b8 xhci_driver_usb_read_interrupt_in_stream(xhci_driver_t* driver, xhci_device_t
     xhci_endpoint_async_state_t* state = ep->async_state;
     b8 got_payload = false;
     u32 actual = 0;
+
+    u64 flags = 0;
+    spin_lock_irqsave(&ep->completion_lock, &flags);
     while (true) {
-        xhci_driver_run(driver); // TODO: remove
         if (!state->interrupt_in_stream.active) {
             break;
         }
@@ -1955,8 +2013,10 @@ b8 xhci_driver_usb_read_interrupt_in_stream(xhci_driver_t* driver, xhci_device_t
             got_payload = true;
             break;
         }
-        usleep(50); // TODO: no clue what to set this to
+        // TODO: check this
+        flags = task_wait(&state->interrupt_in_stream.available_wq, &ep->completion_lock, flags);
     }
+    spin_unlock_irqrestore(&ep->completion_lock, flags);
 
     if (!got_payload) {
         if (out_length) { *out_length = 0; }
@@ -1986,6 +2046,8 @@ b8 xhci_driver_usb_close_interrupt_in_stream(xhci_driver_t* driver, xhci_device_
     u8* storage = NULL;
     xhci_interrupt_in_payload_t* payloads = NULL;
     b8 need_stop = false;
+    u64 flags = 0;
+    spin_lock_irqsave(&ep->completion_lock, &flags);
     if (state->interrupt_in_stream.active || state->interrupt_in_stream.closing ||
         state->interrupt_in_stream.payload_storage || state->interrupt_in_stream.payloads) {
         need_stop = state->interrupt_in_stream.active;
@@ -2002,15 +2064,19 @@ b8 xhci_driver_usb_close_interrupt_in_stream(xhci_driver_t* driver, xhci_device_
         state->interrupt_in_stream.next_seq = 1;
         state->interrupt_in_stream.dropped = 0;
     }
+    spin_unlock_irqrestore(&ep->completion_lock, flags);
+    wait_queue_wake_all(&state->interrupt_in_stream.available_wq);
 
     if (need_stop) {
         (void)xhci_driver_stop_endpoint(driver, device, ep->dci);
     }
 
+    spin_lock_irqsave(&ep->completion_lock, &flags);
     state->interrupt_in_stream.closing = true;
     if (!state->active_request && !state->pending_head) {
         state->async_enabled = false;
     }
+    spin_unlock_irqrestore(&ep->completion_lock, flags);
 
     if (payloads) {
         kfree(payloads);
@@ -2106,4 +2172,29 @@ void xhci_driver_run(xhci_driver_t* driver) {
     }
 
     // TODO: hub crap
+}
+
+void xhci_driver_task_entry(void* arg) {
+    xhci_driver_t* driver = (xhci_driver_t*)arg;
+    driver->xhci_driver_task = scheduler_current(); // TODO: this should work fine but probably should check
+    
+    // IMPORTANT NOTE: MUST be called from XHCI driver task
+    if (!xhci_driver_start_device(driver)) {
+        xassert(false, "Failed to startup XHCI driver!");
+        return;
+    }
+
+    for (;;) {
+        // sleep until IRQ handler wakes us up
+        task_block_on(&driver->event_wait_queue);
+
+        // now running because hardware generated an interrupt
+        driver->pending_doorbell_count = 0;
+        xhci_driver_process_events(driver);
+        xhci_event_ring_finish_procecssing(&driver->event_ring);
+
+        for (u8 i = 0; i < driver->pending_doorbell_count; ++i) {
+            xhci_doorbell_manager_ring_doorbell(&driver->doorbell_manager, driver->pending_doorbells[i].slot_id, driver->pending_doorbells[i].target);
+        }
+    }
 }

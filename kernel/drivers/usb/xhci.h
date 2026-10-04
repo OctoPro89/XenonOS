@@ -6,6 +6,7 @@
 #include <drivers/usb/xhci_device.h>
 #include <drivers/usb/xhci_rings.h>
 #include <drivers/usb/xhci_regs.h>
+#include <task.h>
 
 typedef struct {
     const char* name;
@@ -70,6 +71,10 @@ typedef struct {
     // deferred endpoint doorbells, run after event processing finishes
     struct pending_doorbell { u8 slot_id; u8 target; } pending_doorbells[32];
     u8 pending_doorbell_count;
+
+    // multitasking
+    wait_queue_t event_wait_queue;
+    task_t* xhci_driver_task; // self reference to this task
 } xhci_driver_t;
 
 b8 xhci_driver_init_driver(xhci_driver_t* driver);
@@ -94,7 +99,11 @@ b8 xhci_driver_usb_close_interrupt_in_stream(xhci_driver_t* driver, xhci_device_
 b8 xhci_driver_usb_submit_transfer_async(xhci_driver_t* driver, xhci_device_t* device, usb_transfer_request_t* request);
 
 void xhci_driver_release_disconnected_device(xhci_driver_t* driver, xhci_device_t* device);
+
 /**
+ * @deprecated Doesn't use new task system
  * @note This function assumes host controller has already been started successfully
  */
 void xhci_driver_run(xhci_driver_t* driver);
+
+void xhci_driver_task_entry(void* arg);
