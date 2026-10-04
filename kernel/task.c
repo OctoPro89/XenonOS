@@ -8,6 +8,7 @@
 #include <xlibc/xstdint.h>
 #include <xlibc/xstddef.h>
 
+#include <process.h>
 #include <kernel.h>
 
 extern ASMCALL void x86_64_restore_interrupt_context(u64 rsp);
@@ -113,45 +114,6 @@ task_t* scheduler_current() {
     return current_task;
 }
 
-task_t* task_create(task_entry_t entry, void* arg) {
-    if (entry == NULL)
-        return NULL;
-
-    u64 flags = irq_save();
-
-    task_t* task = NULL;
-
-    for (u64 i = 0; i < MAX_TASKS; ++i) {
-        if (tasks[i].state == TASK_UNUSED) {
-            task = &tasks[i];
-            break;
-        }
-    }
-
-    if (task == NULL)
-        return NULL;
-
-    u64 index = (u64)(task - tasks);
-
-    task->id = next_task_id++;
-    task->state = TASK_RUNNABLE;
-
-    task->stack = task_stacks[index];
-    task->stack_size = TASK_STACK_SIZE;
-
-    task->entry = entry;
-    task->arg = arg;
-    task->next = NULL;
-    task->name = "TASK";
-
-    task_build_initial_stack(task);
-    run_queue_add(task);
-
-    irq_restore(flags);
-
-    return task;
-}
-
 void scheduler_init(u8 new_timer_vector) {
     timer_vector = new_timer_vector;
 
@@ -173,10 +135,11 @@ void scheduler_init(u8 new_timer_vector) {
         tasks[i].wake_deadline_ns = 0;
         tasks[i].is_idle = false;
         tasks[i].name = "TASK";
+        tasks[i].process = NULL;
     }
 
     // create idle as task 0
-    task_t* idle = task_create(idle_task, NULL);
+    task_t* idle = task_create(NULL, idle_task, NULL);
     xassert(idle != NULL, "Failed to create idle task");
     idle->is_idle = true;
 }
@@ -341,6 +304,47 @@ void scheduler_wake_sleepers(u64 now_ns) {
 
 void scheduler_request_reschedule() {
     need_reschedule = true;
+}
+
+task_t* task_create(process_t* process, task_entry_t entry, void* arg) {
+    if (entry == NULL)
+        return NULL;
+
+    u64 flags = irq_save();
+
+    task_t* task = NULL;
+
+    for (u64 i = 0; i < MAX_TASKS; ++i) {
+        if (tasks[i].state == TASK_UNUSED) {
+            task = &tasks[i];
+            break;
+        }
+    }
+
+    if (task == NULL)
+        return NULL;
+
+    u64 index = (u64)(task - tasks);
+
+    task->id = next_task_id++;
+    task->state = TASK_RUNNABLE;
+
+    task->stack = task_stacks[index];
+    task->stack_size = TASK_STACK_SIZE;
+
+    task->entry = entry;
+    task->arg = arg;
+    task->next = NULL;
+    task->name = "TASK";
+
+    task->process = process;
+
+    task_build_initial_stack(task);
+    run_queue_add(task);
+
+    irq_restore(flags);
+
+    return task;
 }
 
 void task_yield() {

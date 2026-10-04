@@ -30,6 +30,7 @@
 #include <filesystem/vfs/vfs_fat32.h>
 
 #include <task.h>
+#include <process.h>
 
 #include <graphics/graphics.h>
 
@@ -77,13 +78,29 @@ void fat32_list_root(FAT32_FS* fs) {
 }
 
 uint8_t user_code[] = {
-	0xb8, 0x01, 0x00, 0x00, 0x00, 0x48, 0x8d, 0x3d, 
-	0x1c, 0x00, 0x00, 0x00, 0xbe, 0x0c, 0x00, 0x00, 
-	0x00, 0x0f, 0x05, 0xb8, 0x01, 0x00, 0x00, 0x00, 
-	0x48, 0x8d, 0x3d, 0x15, 0x00, 0x00, 0x00, 0xbe, 
-	0x03, 0x00, 0x00, 0x00, 0x0f, 0x05, 0xeb, 0xfe, 
-	0x48, 0x65, 0x6c, 0x6c, 0x6f, 0x20, 0x57, 0x6f, 
-	0x72, 0x6c, 0x64, 0x0a, 0x48, 0x69, 0x0a, 
+    /* mov eax, SYS_WRITE */
+    0xb8, 0x01, 0x00, 0x00, 0x00,
+
+    /* mov edi, 1 */
+    0xbf, 0x01, 0x00, 0x00, 0x00,
+
+    /* mov rsi, 0x40001d */
+    0x48, 0xbe,
+    0x1d, 0x00, 0x40, 0x00,
+    0x00, 0x00, 0x00, 0x00,
+
+    /* mov edx, 16 */
+    0xba, 0x10, 0x00, 0x00, 0x00,
+
+    /* syscall */
+    0x0f, 0x05,
+
+    /* jmp $ */
+    0xeb, 0xfe,
+
+    'H', 'e', 'l', 'l', 'o', ' ',
+    'f', 'r', 'o', 'm', ' ',
+    'u', 's', 'e', 'r', '\n',
 };
 
 #define USER_CODE_START  0x0000000000400000ULL
@@ -112,7 +129,7 @@ void setup_user_memory(vmm_space_t* space) {
     }
 }
 
-extern void ASMCALL enter_user_mode(u64 entry, u64 stack);
+extern void ASMCALL enter_user_mode(u64 entry, u64 stack) __attribute__((noreturn));
 
 void run_user(vmm_space_t* space) {
     setup_user_memory(space);
@@ -122,7 +139,6 @@ void run_user(vmm_space_t* space) {
     while (1);
 }
 
-// TODO: task scheduler
 void timer_handler(struct regs* r, void* _) {
     ktimer_sched_irq_global_tick();
     scheduler_wake_sleepers(ktimer_get_system_time_in_nanoseconds());
@@ -132,6 +148,39 @@ void kernel_assign_usb_drivers() {
     usb_core_register_driver("USB-HID DRIVER", USB_MAKE_MATCH(USB_CLASS_HID, USB_MATCH_ANY, USB_MATCH_ANY), hid_driver_factory);
 }
 
+static void user_task_entry(void* arg) {
+    process_t* process = arg;
+
+    setup_user_memory(process->space);
+
+    vmm_switch(process->space);
+
+    enter_user_mode(USER_CODE_START, USER_STACK_TOP & ~0xFULL);
+
+    __builtin_unreachable();
+}
+
+void launch_test_process(void) {
+    process_t* process;
+    task_t* task;
+
+    process = process_create();
+
+    if (!process) {
+        xassert(false, "failed to create test process");
+    }
+
+    task = task_create(
+        process,
+        user_task_entry,
+        process
+    );
+
+    if (!task) {
+        xassert(false, "failed to create user task");
+    }
+}
+
 static void kernel_main(void* arg) {
     if (!input_init()) {
         xassert(false, "");
@@ -139,8 +188,6 @@ static void kernel_main(void* arg) {
     kernel_assign_usb_drivers();
     
     printf("XenonOS v0.1\n");
-
-    graphics_swap_buffers(); // TODO: remove
 
     printf("Scanning for PCI devices...\n");
 
@@ -263,7 +310,10 @@ static void kernel_main(void* arg) {
     */
 
     printf("Creating XHCI driver task!\n");
-    task_t* xhci_driver_task = task_create(xhci_driver_task_entry, (void*)&xhci_driver);
+    task_t* xhci_driver_task = task_create(NULL, xhci_driver_task_entry, (void*)&xhci_driver);
+
+    printf("Launching usermode process\n");
+    launch_test_process();
 
     printf("Running default loop\n");
 
@@ -279,7 +329,6 @@ static void kernel_main(void* arg) {
 
             graphics_draw_rect(500, 50, 220, 50, 0x0);
             graphics_draw_string(buf, 500, 50, 0xFFFF);
-            graphics_swap_buffers();
 
             last_second = now;
         }
@@ -311,14 +360,10 @@ void ASMCALL kernel_main_trampoline(BootInfo* bootInfo) {
 
     scheduler_init(timer_irq_vector);
     
-    task_t* main_thread = task_create(kernel_main, NULL);
+    task_t* main_thread = task_create(NULL, kernel_main, NULL);
 
     ktimer_start_cpu_periodic_timer(timer_irq_vector); // get timer interrupts
     scheduler_start();
-
-    // vmm_space_t* space = vmm_create_space();
-    // space->user_mode = true;
-    // run_user(space);
     
     while(1);
 }

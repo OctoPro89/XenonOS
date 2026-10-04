@@ -1,36 +1,68 @@
 #include "syscall.h"
 #include <arch/x86_64/io.h>
+#include <io/fd_table.h>
+#include <io/fd.h>
+#include <errno.h>
 
 u64 user_rsp_save;
 
-// NOTE: Must match stack pushes in arch/x86_64/syscall.asm
-struct syscall_regs {
-    uint64_t rax;
-    uint64_t rbx;
-    uint64_t rdx;
-    uint64_t rsi;
-    uint64_t rdi;
-    uint64_t rbp;
-    uint64_t r8, r9, r10, r12, r13, r14, r15;
-};
+ssize_t sys_read(fd_t fd, void* buffer, size_t size) {
+    file_t* file = fd_get(fd);
 
-uint64_t sys_write(uint64_t ptr, uint64_t len) {
-    const char* s = (const char*)ptr;
-
-    for (uint64_t i = 0; i < len; i++) {
-        serial_write_char(s[i]);
+    if (!file) {
+        return -EBADF;
     }
 
-    return len;
+    if (!file->ops || !file->ops->read) {
+        file_put(file);
+        return -EINVAL;
+    }
+
+    // TODO: copy_from_user, copy_to_user, user_range_valid
+    ssize_t result = file->ops->read(file, buffer, size);
+
+    file_put(file);
+
+    return result;
 }
 
-uint64_t syscall_dispatch(struct syscall_regs* r) {
-    switch (r->rax) {
-        case 1: // write
-            return sys_write(r->rdi, r->rsi);
+ssize_t sys_write(fd_t fd, const void* buffer, size_t size) {
+    file_t* file = fd_get(fd);
 
-        default:
-            return (uint64_t)-1;
+    if (!file) {
+        return -EBADF;
+    }
+
+    if (!file->ops || !file->ops->write) {
+        file_put(file);
+        return -EINVAL;
+    }
+
+    ssize_t result = file->ops->write(file, buffer, size);
+
+    file_put(file);
+
+    return result;
+}
+
+int sys_close(fd_t fd) {
+    return fd_close(fd);
+}
+
+u64 syscall_dispatch(struct syscall_regs* r) {
+    switch (r->rax) {
+        case SYS_READ: {
+            return (u64)sys_read((fd_t)r->rdi, (void*)r->rsi, (size_t)r->rdx);
+        }
+        case SYS_WRITE: {
+            return (u64)sys_write((fd_t)r->rdi, (const void*)r->rsi, (size_t)r->rdx);
+        }
+        case SYS_CLOSE: {
+            return (u64)sys_close((fd_t)r->rdi);
+        }
+        default: {
+            return (u64)-ENOSYS;
+        }
     }
 }
 

@@ -149,7 +149,7 @@ void usb_core_device_configured(xhci_driver_t* driver, xhci_device_t* xdev, cons
                 continue;
             }
 
-            task_t* task = task_create(class_driver_task_entry, (void*)drv);
+            task_t* task = task_create(NULL, class_driver_task_entry, (void*)drv);
             if (!task) {
                 printf("[USB CORE]: Failed to create task for %s\n", drv->name);
             }

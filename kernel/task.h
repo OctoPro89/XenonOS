@@ -30,6 +30,7 @@ typedef void (*task_entry_t)(void* arg);
 typedef struct task task_t;
 typedef struct wait_queue wait_queue_t;
 typedef struct spinlock spinlock_t;
+typedef struct process process_t;
 
 struct wait_queue {
     task_t* head;
@@ -40,6 +41,8 @@ struct task {
     u64 id;
     const char* name;
     task_state_t state;
+
+    process_t* process; // resource container shared by this task's threads
 
     /*
      * Points at the saved interrupt frame:
@@ -114,7 +117,16 @@ u64 scheduler_handle_interrupt(u64 interrupted_rsp, u8 vector);
 void scheduler_wake_sleepers(u64 now_ns);
 void scheduler_request_reschedule();
 
-task_t* task_create(task_entry_t entry, void* arg);
+/**
+ * @brief Creates a new process
+ * 
+ * @param process NULL for a kernel task, the parent userspace process otherwise
+ * @param entry Entry function for the task to start executing
+ * @param arg Pointer to an argument to call `entry` with
+ * 
+ * @returns A pointer to the created task
+ */
+task_t* task_create(process_t* process, task_entry_t entry, void* arg);
 void task_yield();
 __attribute__((noreturn)) void task_exit();
 
