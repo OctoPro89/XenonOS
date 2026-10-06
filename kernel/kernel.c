@@ -217,9 +217,6 @@ static void shell_run_program(const char* command) {
         return;
     }
 
-    printf("[SHELL] before launch\n");
-    debug_current_address_space();
-
     result = process_start(process);
 
     if (result < 0) {
@@ -228,15 +225,9 @@ static void shell_run_program(const char* command) {
         return;
     }
 
-    printf("[SHELL] waiting\n");
-    debug_current_address_space();
-
     int exit_code = process_wait(process);
 
     printf("\n[SHELL] process exited with code %d\n", exit_code);
-
-    printf("[SHELL] after wait\n");
-    debug_current_address_space();
 
     process_destroy(process);
 }
