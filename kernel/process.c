@@ -3,11 +3,19 @@
 #include <errno.h>
 #include <xlibc/stdlib.h>
 #include <io/console_file.h>
+#include <tty/terminal.h>
 
 static int process_setup_stdio(process_t* process) {
-    file_t* stdin_file = console_file_create();
-    file_t* stdout_file = console_file_create();
-    file_t* stderr_file = console_file_create();
+    terminal_t* terminal;
+    file_t* stdin_file;
+    file_t* stdout_file;
+    file_t* stderr_file;
+    
+    terminal = console_terminal();
+
+    stdin_file = terminal_file_create(terminal);
+    stdout_file = terminal_file_create(terminal);
+    stderr_file = terminal_file_create(terminal);
 
     if (!stdin_file || !stdout_file || !stderr_file) {
         if (stdin_file) { file_put(stdin_file); }
@@ -71,8 +79,7 @@ process_t* process_create() {
 
     if (process_setup_stdio(process) < 0) {
         fd_table_destroy(&process->fd_table);
-
-        // TODO: destroy space
+        vmm_destroy_space(process->space);
         kfree(process);
         return NULL;
     }
@@ -85,11 +92,58 @@ void process_destroy(process_t* process) {
         return;
     }
     
-    // TODO: destroy address space
-
     fd_table_destroy(&process->fd_table);
-
+    vmm_destroy_space(process->space);
     kfree(process);
+}
+
+int process_start(process_t* process) {
+    if (!process) {
+        return -EINVAL;
+    }
+
+    task_t* task = task_create(process, user_process_task_entry, process);
+    if (!task) {
+        return -ENOMEM;
+    }
+
+    process->main_task = task;
+    return 0;
+}
+
+void process_exit(process_t* process, int exit_code) {
+    if (!process) {
+        return;
+    }
+
+    u64 flags = 0;
+    spin_lock_irqsave(&process->lock, &flags);
+
+    process->exit_code = exit_code;
+    process->state = PROCESS_ZOMBIE;
+
+    wait_queue_wake_all_locked(&process->waiters);
+
+    spin_unlock_irqrestore(&process->lock, flags);
+}
+
+int process_wait(process_t* process) {
+    for (;;) {
+        u64 flags = 0;
+        spin_lock_irqsave(&process->lock, &flags);
+
+        if (process->state == PROCESS_ZOMBIE) {
+            int status = process->exit_code;
+            spin_unlock_irqrestore(&process->lock, flags);
+
+            return status;
+        }
+
+        task_wait(&process->waiters, &process->lock, flags);
+
+        // task_wait() returns with the lock held and ints disabled
+        spin_unlock_irqrestore(&process->lock, flags);
+    }
 }
 
 process_t* process_current() {
@@ -99,4 +153,14 @@ process_t* process_current() {
     }
 
     return task->process;
+}
+
+extern void ASMCALL enter_user_mode(u64 entry, u64 stack) __attribute__((noreturn));
+
+void user_process_task_entry(void* arg) {
+    process_t* process = arg;
+    vmm_switch(process->space);
+    enter_user_mode(process->entry, process->user_stack_top & ~0xFULL);
+
+    __builtin_unreachable();
 }

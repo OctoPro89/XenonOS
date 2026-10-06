@@ -16,7 +16,7 @@ u32 fread(void* ptr, u32 size, u32 count, FILE* stream);
 int fclose(FILE* stream);
 int fgetc(FILE* f);
 u32 ftell(FILE* f);
-int fseek(FILE* stream, int offset, int whence);
+int fseek(FILE* stream, long offset, int whence);
 
 void putc(char c);
 void puts(const char* str);

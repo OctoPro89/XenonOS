@@ -81,9 +81,11 @@ run: image
 	# Mount the image to copy files
 	sudo mount /dev/loop0p1 /mnt
 	sudo mkdir -p /mnt/EFI/BOOT
+	sudo mkdir -p /mnt/bin
 	sudo cp build/BOOTX64.EFI /mnt/EFI/BOOT/
 	sudo cp build/kernel.elf /mnt/
 	sudo cp testlongfilename.txt /mnt/
+	sudo cp hello /mnt/bin/
 	sudo umount /mnt
 
 	sudo losetup -d /dev/loop0

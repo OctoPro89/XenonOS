@@ -3,6 +3,7 @@
 #include <arch/x86_64/sync/critical_section.h>
 #include <arch/x86_64/sync/sync.h>
 #include <arch/x86_64/irq.h>
+#include <memory/vmm.h>
 #include <time/time.h>
 #include <xlibc/xassert.h>
 #include <xlibc/xstdint.h>
@@ -110,6 +111,14 @@ static void task_build_initial_stack(task_t* task) {
     task->rsp = (u64)frame;
 }
 
+static void task_switch_address_space(task_t* task) {
+    if (task->process) {
+        vmm_switch(task->process->space);
+    } else {
+        vmm_switch(&kernel_space);
+    }
+}
+
 task_t* scheduler_current() {
     return current_task;
 }
@@ -166,7 +175,8 @@ void scheduler_start() {
 
     current_task->state = TASK_RUNNING;
 
-    u64* frame = (u64*)current_task->rsp;
+    // the adderss space belongs to the task that is about to be run
+    task_switch_address_space(current_task);
 
     // restore the manufactured interrupt frame, never returns
     x86_64_restore_interrupt_context(current_task->rsp);
@@ -282,6 +292,9 @@ u64 scheduler_handle_interrupt(u64 interrupted_rsp, u8 vector) {
 
     next->state = TASK_RUNNING;
     current_task = next;
+
+    // CR3 must match current_task before the interrupt return restores and resumes that task
+    task_switch_address_space(next);
 
     return next->rsp;
 }

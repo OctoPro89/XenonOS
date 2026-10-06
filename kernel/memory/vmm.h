@@ -3,6 +3,8 @@
 #include <memory/pmm.h>
 #include <memory/paging_arch.h>
 
+#define VMM_USER_MAX 0x00007FFFFFFFFFFFULL
+
 typedef struct vmm_space {
     pte_t* pml4;
     b8 user_mode;
@@ -11,6 +13,7 @@ typedef struct vmm_space {
 extern vmm_space_t kernel_space;
 
 vmm_space_t* vmm_create_space();
+void vmm_destroy_space(vmm_space_t* space);
 
 void vmm_switch(vmm_space_t* space);
 
@@ -26,3 +29,5 @@ vaddr_t vmm_map_physical_page(vmm_space_t* space, paddr_t phys, uint64_t flags);
 void vmm_map_mmio(vmm_space_t* space, vaddr_t virt, paddr_t phys, size_t size);
 
 paddr_t vmm_virt_to_phys(vmm_space_t* space, vaddr_t virt);
+
+b8 vmm_user_range_valid(vmm_space_t* space, vaddr_t addr, size_t size, b8 write);

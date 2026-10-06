@@ -117,6 +117,7 @@ int fat32_name_match_8_3(const char* input, u8* name) {
         int k = 0;
         while (input[i] && k < 3) {
             fat_name[j++] = input[i++];
+            ++k; // TODO: check, I think this is right
         }
     }
 
@@ -129,6 +130,11 @@ FAT32_FILE* fat32_open(FAT32_FS* fs, const char* path) {
 
     u32 current_cluster = fs->root_cluster;
     FAT32_DIRECTORY_ENTRY ent;
+
+    // skip leading '/'
+    while (path[i] == '/') {
+        i++;
+    }
 
     while (1) {
         // extract next path component

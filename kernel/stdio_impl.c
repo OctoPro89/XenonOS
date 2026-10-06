@@ -3,27 +3,55 @@
 
 static u32 cursor_x = 0;
 static u32 cursor_y = 0;
-static u32 max_chars_per_line = 100;
 
-void stdio_impl_putchr(char c) {
-    static u32 xoff = 100;
-    static u32 yoff = 50;
-    static u32 spacingx = 8;
-    static u32 spacingy = 10;
+static const u32 xoff = 100;
+static const u32 yoff = 50;
 
+static const u32 char_width = 8;
+static const u32 char_height = 8;
+
+void stdio_impl_putchr(char c)
+{
     serial_write_char(c);
-    graphics_draw_char(c, xoff + (spacingx * cursor_x), yoff + (spacingy * cursor_y), 0xFFFFFFFF);
-    graphics_swap_buffers();
 
-    ++cursor_x;
+    u32 width = graphics_get_framebuffer_width();
+    u32 height = graphics_get_framebuffer_height();
+
+    u32 chars_per_line =
+        (width - xoff) / char_width;
+
+    u32 lines =
+        (height - yoff) / char_height;
 
     if (c == '\n') {
         cursor_x = 0;
-        cursor_y += 1;
+        cursor_y++;
+    } else {
+        graphics_draw_char(
+            c,
+            xoff + cursor_x * char_width,
+            yoff + cursor_y * char_height,
+            0xFFFFFFFF
+        );
+
+        cursor_x++;
+
+        /*
+         * Automatically wrap at the right edge.
+         */
+        if (cursor_x >= chars_per_line) {
+            cursor_x = 0;
+            cursor_y++;
+        }
     }
 
-    if (cursor_x > max_chars_per_line) {
-        yoff += spacingy;
-        cursor_x = 0;
+    /*
+     * We've gone below the last visible row.
+     */
+    if (cursor_y >= lines) {
+        graphics_scroll(char_height, 0x00000000);
+        cursor_y = lines - 1;
     }
+
+    graphics_swap_buffers();
 }

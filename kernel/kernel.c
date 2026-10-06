@@ -32,6 +32,10 @@
 #include <task.h>
 #include <process.h>
 
+#include <tty/terminal.h>
+
+#include <elf/elf.h>
+
 #include <graphics/graphics.h>
 
 #include <memory/paging.h>
@@ -78,37 +82,34 @@ void fat32_list_root(FAT32_FS* fs) {
 }
 
 uint8_t user_code[] = {
-    /* mov eax, SYS_WRITE */
-    0xb8, 0x01, 0x00, 0x00, 0x00,
-
-    /* mov edi, 1 */
-    0xbf, 0x01, 0x00, 0x00, 0x00,
-
-    /* mov rsi, 0x40001d */
-    0x48, 0xbe,
-    0x1d, 0x00, 0x40, 0x00,
-    0x00, 0x00, 0x00, 0x00,
-
-    /* mov edx, 16 */
-    0xba, 0x10, 0x00, 0x00, 0x00,
-
-    /* syscall */
-    0x0f, 0x05,
-
-    /* jmp $ */
-    0xeb, 0xfe,
-
-    'H', 'e', 'l', 'l', 'o', ' ',
-    'f', 'r', 'o', 'm', ' ',
-    'u', 's', 'e', 'r', '\n',
+	0xb8, 0x01, 0x00, 0x00, 0x00, 0xbf, 0x01, 0x00, 
+	0x00, 0x00, 0x48, 0x8d, 0x35, 0x21, 0x00, 0x00, 
+	0x00, 0xba, 0x0e, 0x00, 0x00, 0x00, 0x0f, 0x05, 
+	0xb8, 0x00, 0x00, 0x00, 0x00, 0xbf, 0x00, 0x00, 
+	0x00, 0x00, 0x48, 0x8d, 0x35, 0x17, 0x00, 0x00, 
+	0x00, 0xba, 0x80, 0x00, 0x00, 0x00, 0x0f, 0x05, 
+	0xeb, 0xce, 0x78, 0x65, 0x6e, 0x6f, 0x6e, 0x6f, 
+	0x73, 0x40, 0x78, 0x65, 0x3a, 0x2f, 0x24, 0x20, 
+	0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 
+	0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 
+	0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 
+	0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 
+	0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 
+	0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 
+	0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 
+	0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 
+	0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 
+	0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 
+	0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 
+	0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 
+	0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 
+	0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 
+	0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 
+	0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00
 };
 
-#define USER_CODE_START  0x0000000000400000ULL
-#define USER_STACK_TOP   0x0000000000800000ULL
-#define USER_STACK_SIZE  (4 * PAGE_SIZE)
-
 void setup_user_memory(vmm_space_t* space) {
-    // Code
+    // code
     paddr_t code_phys = pmm_alloc_page();
     void* code_virt = (void*)phys_to_hhdm(code_phys);
 
@@ -122,10 +123,7 @@ void setup_user_memory(vmm_space_t* space) {
     for (int i = 0; i < 4; i++) {
         paddr_t stack_phys = pmm_alloc_page();
 
-        vmm_map(space,
-            USER_STACK_TOP - (i + 1) * PAGE_SIZE,
-            stack_phys,
-            PAGE_PRESENT | PAGE_USER | PAGE_WRITABLE);
+        vmm_map(space, USER_STACK_TOP - (i + 1) * PAGE_SIZE, stack_phys, PAGE_PRESENT | PAGE_USER | PAGE_WRITABLE);
     }
 }
 
@@ -152,9 +150,6 @@ static void user_task_entry(void* arg) {
     process_t* process = arg;
 
     setup_user_memory(process->space);
-
-    vmm_switch(process->space);
-
     enter_user_mode(USER_CODE_START, USER_STACK_TOP & ~0xFULL);
 
     __builtin_unreachable();
@@ -181,13 +176,118 @@ void launch_test_process(void) {
     }
 }
 
+#include <tty/terminal.h>
+
+#include <process.h>
+#include <xlibc/string.h>
+#include <xlibc/stdio.h>
+
+#define SHELL_LINE_SIZE 256
+
+static const char shell_prompt[] = "xenonos@xe:/$ ";
+
+static void shell_print( terminal_t* terminal, const char* str) {
+    terminal_write(terminal, str, strlen(str));
+}
+
+static void shell_run_program(const char* command) {
+    char path[256];
+
+    if (command[0] == '/') {
+        strncpy(path, command, sizeof(path) - 1);
+        path[sizeof(path) - 1] = 0;
+    } else {
+        snprintf(path, sizeof(path), "bin/%s", command);
+    }
+
+    printf("[SHELL] launching %s\n",path);
+
+    process_t* process = process_create();
+
+    if (!process) {
+        printf("[SHELL] failed to create process\n");
+        return;
+    }
+
+    int result = process_load_elf(process, path);
+
+    if (result < 0) {
+        printf("[SHELL] failed to load %s: %d\n", path, result);
+        process_destroy(process);
+        return;
+    }
+
+    printf("[SHELL] before launch\n");
+    debug_current_address_space();
+
+    result = process_start(process);
+
+    if (result < 0) {
+        printf("[SHELL] failed to start %s: %d\n", path, result);
+        process_destroy(process);
+        return;
+    }
+
+    printf("[SHELL] waiting\n");
+    debug_current_address_space();
+
+    int exit_code = process_wait(process);
+
+    printf("\n[SHELL] process exited with code %d\n", exit_code);
+
+    printf("[SHELL] after wait\n");
+    debug_current_address_space();
+
+    process_destroy(process);
+}
+
+static void shell_task(void* arg) {
+    terminal_t* terminal = arg;
+
+    char line[SHELL_LINE_SIZE];
+
+    for (;;) {
+        shell_print(terminal, shell_prompt);
+
+        ssize_t size = terminal_read(terminal, line, sizeof(line) - 1);
+
+        if (size <= 0) {
+            continue;
+        }
+
+        line[size] = 0;
+
+        if (size > 0 && line[size - 1] == '\n') {
+            line[size - 1] = 0;
+        }
+
+        if (line[0] == 0) {
+            continue;
+        }
+
+        if (strcmp(line, "exit") == 0) {
+            shell_print(terminal, "\n");
+            continue;
+        }
+
+        shell_run_program(line);
+    }
+}
+
+void shell_start() {
+    task_create(NULL, shell_task, console_terminal());
+}
+
 static void kernel_main(void* arg) {
     if (!input_init()) {
         xassert(false, "");
     }
     kernel_assign_usb_drivers();
-    
+
     printf("XenonOS v0.1\n");
+
+    terminal_init(console_terminal());
+    terminal_start_input_task(console_terminal());
 
     printf("Scanning for PCI devices...\n");
 
@@ -219,12 +319,11 @@ static void kernel_main(void* arg) {
     printf("%p\n", xhci_driver.pci_device->bar[0].base);
     printf("\n");
 
-    xhci_driver_log_capability_registers(&xhci_driver);
+    // xhci_driver_log_capability_registers(&xhci_driver);
 
     printf("XHCI Driver initialized successfully\n");
     printf("\n");
 
-    /*
     PCI_Device* ahci_dev = pci_find_ahci(); // find AHCI device
     if (ahci_dev == NULL) {
         printf("Failed to find AHCI device!\n");
@@ -277,6 +376,7 @@ static void kernel_main(void* arg) {
 
     printf("Set up Virtual File System successfully\n");
 
+    /*
     FILE* f = fopen("testlongfilename.txt", "r");
     if (!f) {
         printf("Failed to open file!\n");
@@ -312,10 +412,9 @@ static void kernel_main(void* arg) {
     printf("Creating XHCI driver task!\n");
     task_t* xhci_driver_task = task_create(NULL, xhci_driver_task_entry, (void*)&xhci_driver);
 
-    printf("Launching usermode process\n");
-    launch_test_process();
-
-    printf("Running default loop\n");
+    // printf("Launching usermode process\n");
+    // launch_test_process();
+    shell_start();
 
     u64 last_second = 0;
 

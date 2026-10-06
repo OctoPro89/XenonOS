@@ -47,6 +47,26 @@ static pte_t* get_table_noalloc(pte_t* table, uint16_t index) {
     return (pte_t*)phys_to_hhdm(phys);
 }
 
+static void destroy_table(pte_t* table, int level) {
+    for (int i = 0; i < 512; ++i) {
+        pte_t entry = table[i];
+
+        if (!(entry & PAGE_PRESENT)) {
+            continue;
+        }
+
+        paddr_t phys = entry & ~0xFFFULL;
+        if (level == 1) {
+            pmm_free_page(phys);
+            continue;
+        }
+
+        pte_t* child = (pte_t*)phys_to_hhdm(phys);
+        destroy_table(child, level - 1);
+        pmm_free_page(phys);
+    }   
+}
+
 vmm_space_t* vmm_create_space() {
     paddr_t phys = pmm_alloc_page();
     pte_t* new_pml4 = (pte_t*)phys_to_hhdm(phys);
@@ -62,6 +82,29 @@ vmm_space_t* vmm_create_space() {
     space->pml4 = new_pml4;
 
     return space;
+}
+
+void vmm_destroy_space(vmm_space_t* space) {
+    if (!space) {
+        return;
+    }
+
+    // user mappings occupy PML4 entries 0 through 255,
+    // kernel entries 256 through 511 are shared and must NOT be freeds
+    for (int i = 0; i < 256; ++i) {
+        if (!(space->pml4[i] & PAGE_PRESENT)) {
+            continue;
+        }
+
+        paddr_t phys = space->pml4[i] & ~0xFFFULL;
+        pte_t* table = (pte_t*)phys_to_hhdm(phys);
+        destroy_table(table, 3);
+        pmm_free_page(phys);
+    }
+
+    paddr_t pml4_phys = hhdm_to_phys((u64)space->pml4);
+    pmm_free_page(pml4_phys);
+    kfree(space);
 }
 
 void vmm_switch(vmm_space_t* space) {
@@ -197,4 +240,64 @@ paddr_t vmm_virt_to_phys(vmm_space_t* space, vaddr_t virt) {
     if (!(pt[pt_index(virt)] & PAGE_PRESENT)) { return 0; }
 
     return (pt[pt_index(virt)] & ~0xFFFULL) | (virt & 0xFFF);
+}
+
+b8 vmm_user_range_valid(vmm_space_t* space, vaddr_t addr, size_t size, b8 write) {
+    if (!space || !space->user_mode) {
+        return false;
+    }
+
+    if (size == 0) {
+        return true;
+    }
+
+    // check for overflow and reject non-user addresses
+    if (addr > VMM_USER_MAX) {
+        return false;
+    }
+
+    if ((size - 1) > (VMM_USER_MAX - addr)) {
+        return false;
+    }
+
+    vaddr_t first = addr & ~(PAGE_SIZE - 1);
+    vaddr_t last = (addr + size - 1) & ~(PAGE_SIZE - 1);
+
+    for (vaddr_t page = first;; page += PAGE_SIZE) {
+        pte_t* pml4 = space->pml4;
+        pte_t* pdpt = get_table_noalloc(pml4, pml4_index(page));
+        if (!pdpt) {
+            return false;
+        }
+
+        pte_t* pd = get_table_noalloc(pdpt, pdpt_index(page));
+        if (!pd) {
+            return false;
+        }
+
+        pte_t* pt = get_table_noalloc(pd, pd_index(page));
+
+        if (!pt) {
+            return false;
+        }
+
+        pte_t entry = pt[pt_index(page)];
+        if (!(entry & PAGE_PRESENT)) {
+            return false;
+        }
+
+        if (!(entry & PAGE_USER)) {
+            return false;
+        }
+
+        if (write && !(entry & PAGE_WRITABLE)) {
+            return false;
+        }
+
+        if (page == last) {
+            break;
+        }
+    }
+
+    return true;
 }

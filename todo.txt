@@ -2,6 +2,7 @@ make derefing NULL page fault
 scroll screen on printf
 named tasks
 destroy finished tasks
+cleanup in elf.c
 
 currently can only poll either mouse or keyboard because there are no processes / multitasking,
 this also means plugging USB devices in after boot doesn't work because setup device

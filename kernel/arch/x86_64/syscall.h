@@ -9,6 +9,7 @@
 #define SYS_READ   0
 #define SYS_WRITE  1
 #define SYS_CLOSE  2
+#define SYS_EXIT   3
 
 // NOTE: Must match stack pushes in arch/x86_64/syscall.asm
 struct syscall_regs {
@@ -30,6 +31,7 @@ struct syscall_regs {
 ssize_t sys_read(fd_t fd, void* buffer, size_t size);
 ssize_t sys_write(fd_t fd, const void* buffer, size_t size);
 int sys_close(fd_t fd);
+__attribute__((noreturn)) void sys_exit(int code);
 
 u64 syscall_dispatch(struct syscall_regs* r);
 void syscall_handler(struct syscall_regs* r);

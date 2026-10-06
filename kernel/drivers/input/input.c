@@ -28,22 +28,14 @@ b8 input_push_keyboard_event(const input_keyboard_event_t* evt) {
     if (!g_kbd_rb) {
         return false;
     }
-    
-    printf("[INPUT]: Pressed key %u\n", (u32)evt->usage);
+
     return ring_buffer_push(g_kbd_rb, (const u8*)evt);
 }
-
-#include <graphics/graphics.h>
 
 b8 input_push_mouse_event(const input_mouse_event_t* evt) {
     if (!g_mouse_rb) {
         return false;
     }
-    
-    graphics_draw_rect(700, 600, 400, 50, 0x00000000);
-    char buf[100];
-    snprintf(buf, 100, "Mouse state: X: %d Y: %d Wheel: %d Buttons %x", evt->x_value, evt->y_value, evt->wheel, (u32)evt->buttons);
-    graphics_draw_string(buf, 700, 600, 0xFFFFFFFF);
     
     return ring_buffer_push(g_mouse_rb, (const u8*)evt);
 }

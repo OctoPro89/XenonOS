@@ -52,11 +52,11 @@ u32 ftell(FILE* f) {
     return vfs_tell(vf);
 }
 
-int fseek(FILE* stream, int offset, int whence) {
+int fseek(FILE* stream, long offset, int whence) {
     if (!stream) return -1;
 
     VFS_FILE* vf = (VFS_FILE*)stream->vfs_file;
-    int new_pos;
+    long new_pos;
 
     switch (whence) {
         case SEEK_SET: {
@@ -78,7 +78,7 @@ int fseek(FILE* stream, int offset, int whence) {
 
     if (new_pos < 0) new_pos = 0;
 
-    return vfs_seek(vf, new_pos);
+    return vfs_seek(vf, (u32)new_pos);
 }
 
 extern void stdio_impl_putchr(char c);

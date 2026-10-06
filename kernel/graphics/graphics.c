@@ -237,7 +237,7 @@ uint32_t graphics_convert_color(uint8_t r, uint8_t g, uint8_t b) {
 }
 
 void graphics_clear_screen(uint32_t color) {
-    for (uint64_t i = 0; i < (uint64_t)current_width * current_height; i++) {
+    for (uint64_t i = 0; i < (uint64_t)pixels_per_line * current_height; i++) {
         backbuffer[i] = color;
     }
     mark_dirty(0, 0, current_width, current_height);
@@ -267,6 +267,9 @@ void graphics_draw_rect(uint32_t x, uint32_t y, uint32_t w, uint32_t h, uint32_t
 
 void graphics_draw_char(char c, uint32_t x, uint32_t y, uint32_t color) {
     if (c < 0 || c > 127) return; // unsupported
+    if (x + 8 > current_width || y + 8 > current_height) {
+        return;
+    }
     const uint8_t* glyph = font8x8_basic[(uint8_t)c];  // no -32
     for (uint32_t row = 0; row < 8; row++) {
         uint8_t bits = glyph[row];
@@ -326,4 +329,52 @@ void graphics_draw_decimal(uint64_t val, uint32_t x, uint32_t y, uint32_t color)
     while (i > 0) {
         graphics_draw_char(buf[--i], x, y, color);
     }
+}
+
+void graphics_scroll(uint32_t pixels, uint32_t color) {
+    if (pixels == 0 || pixels >= current_height) {
+        return;
+    }
+
+    uint32_t rows_to_copy = current_height - pixels;
+
+    uint32_t *dst = (uint32_t *)backbuffer;
+    uint32_t *src = (uint32_t *)backbuffer + pixels * pixels_per_line;
+
+    uint64_t qwords_per_row = pixels_per_line / 2;
+
+    for (uint32_t y = 0; y < rows_to_copy; y++) {
+        memcpy_fast_qword(dst + y * pixels_per_line, src + y * pixels_per_line, qwords_per_row);
+
+        if (pixels_per_line & 1) {
+            dst[y * pixels_per_line + pixels_per_line - 1] = src[y * pixels_per_line + pixels_per_line - 1];
+        }
+    }
+
+    uint32_t* clear_start = dst + rows_to_copy * pixels_per_line;
+    uint64_t pixels_to_clear = (uint64_t)pixels * pixels_per_line;
+
+    uint64_t qwords_to_clear = pixels_to_clear / 2;
+    uint64_t packed_color = ((uint64_t)color << 32) | color;
+
+    memset_fast_qword(clear_start, packed_color, qwords_to_clear);
+
+    if (pixels_to_clear & 1) {
+        clear_start[pixels_to_clear - 1] = color;
+    }
+
+    mark_dirty(0, 0, current_width, current_height);
+}
+
+
+u32 graphics_get_framebuffer_width() {
+    return current_width;
+}
+
+u32 graphics_get_framebuffer_height() {
+    return current_height;
+}
+
+u32 graphics_get_framebuffer_stride() {
+    return pixels_per_line;
 }
