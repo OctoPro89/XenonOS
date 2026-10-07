@@ -117,33 +117,24 @@ void terminal_init(terminal_t* terminal) {
     wait_queue_init(&terminal->read_waiters);
 }
 
-static void terminal_push_char(
-    terminal_t* terminal,
-    char c
-) {
+static void terminal_push_char(terminal_t* terminal, char c) {
     u64 flags;
 
-    spin_lock_irqsave(
-        &terminal->lock,
-        &flags
-    );
+    spin_lock_irqsave(&terminal->lock, &flags);
 
     if (terminal->count >= TERMINAL_BUFFER_SIZE) {
-        spin_unlock_irqrestore(
-            &terminal->lock,
-            flags
-        );
-
+        spin_unlock_irqrestore(&terminal->lock, flags);
         return;
     }
 
     terminal->buffer[terminal->write_pos] = (u8)c;
 
-    terminal->write_pos++;
-    if (terminal->write_pos == TERMINAL_BUFFER_SIZE)
+    ++terminal->write_pos;
+    if (terminal->write_pos == TERMINAL_BUFFER_SIZE) {
         terminal->write_pos = 0;
+    }
 
-    terminal->count++;
+    ++terminal->count;
 
     if (c == '\n')
         terminal->line_ready = true;
@@ -158,97 +149,69 @@ static void terminal_push_char(
     );
 }
 
-static void terminal_input_task(void* arg)
-{
+static void terminal_input_task(void* arg){
     terminal_t* terminal = arg;
 
     for (;;) {
         input_keyboard_event_t evt;
 
         if (!input_pop_keyboard_event(&evt)) {
-            /*
-             * No events right now. Sleep briefly for this first
-             * implementation. We can make the input ring wakeable
-             * properly next.
-             */
+            // TODO: wake
             task_sleep_ms(1);
             continue;
         }
 
-        if (evt.action != INPUT_KBD_ACTION_DOWN)
+        if (evt.action != INPUT_KBD_ACTION_DOWN) {
             continue;
+        }
 
         b8 shift = false; // TODO
 
-        char c = keycode_to_ascii(
-            evt.usage,
-            shift
-        );
+        char c = keycode_to_ascii(evt.usage, shift);
 
-        if (!c)
+        if (!c) {
             continue;
+        }
 
-        /*
-         * Echo input.
-         */
         putc(c);
 
-        terminal_push_char(
-            terminal,
-            c
-        );
+        terminal_push_char(terminal, c);
     }
 }
 
-void terminal_start_input_task(terminal_t* terminal)
-{
-    task_create(
-        NULL,
-        terminal_input_task,
-        terminal
-    );
+void terminal_start_input_task(terminal_t* terminal) {
+    task_create(NULL, terminal_input_task, terminal);
 }
 
-ssize_t terminal_read(
-    terminal_t* terminal,
-    void* buffer,
-    size_t size
-) {
+ssize_t terminal_read(terminal_t* terminal, void* buffer, size_t size) {
     u8* out = buffer;
 
-    if (!buffer && size != 0)
+    if (!buffer && size != 0) {
         return -EINVAL;
+    }
 
-    if (size == 0)
+    if (size == 0) {
         return 0;
+    }
 
     for (;;) {
         u64 flags;
 
-        spin_lock_irqsave(
-            &terminal->lock,
-            &flags
-        );
+        spin_lock_irqsave(&terminal->lock, &flags);
 
         if (terminal->line_ready) {
             size_t copied = 0;
 
-            while (copied < size &&
-                   terminal->count != 0) {
+            while (copied < size && terminal->count != 0) {
+                u8 c = terminal->buffer[terminal->read_pos];
+                ++terminal->read_pos;
 
-                u8 c = terminal->buffer[
-                    terminal->read_pos
-                ];
-
-                terminal->read_pos++;
-
-                if (terminal->read_pos ==
-                    TERMINAL_BUFFER_SIZE) {
+                if (terminal->read_pos == TERMINAL_BUFFER_SIZE) {
 
                     terminal->read_pos = 0;
                 }
 
-                terminal->count--;
+                --terminal->count;
 
                 out[copied++] = c;
 
@@ -258,117 +221,35 @@ ssize_t terminal_read(
                 }
             }
 
-            spin_unlock_irqrestore(
-                &terminal->lock,
-                flags
-            );
+            spin_unlock_irqrestore(&terminal->lock, flags);
 
             return (ssize_t)copied;
         }
 
-        /*
-         * Atomically release the terminal lock and sleep.
-         */
-        task_wait(
-            &terminal->read_waiters,
-            &terminal->lock,
-            flags
-        );
+        task_wait(&terminal->read_waiters, &terminal->lock, flags);
 
-        /*
-         * task_wait() returns with the lock held.
-         * Loop and inspect the condition again.
-         */
-        spin_unlock_irqrestore(
-            &terminal->lock,
-            flags
-        );
+        spin_unlock_irqrestore(&terminal->lock, flags );
     }
 }
 
-ssize_t terminal_write(
-    terminal_t* terminal,
-    const void* buffer,
-    size_t size
-) {
+ssize_t terminal_write(terminal_t* terminal, const void* buffer, size_t size) {
     const u8* data = buffer;
 
     (void)terminal;
 
-    if (!buffer && size != 0)
+    if (!buffer && size != 0) {
         return -EINVAL;
+    }
 
-    for (size_t i = 0; i < size; i++)
+    for (size_t i = 0; i < size; i++) {
         putc((char)data[i]);
+    }
 
     return (ssize_t)size;
 }
 
-static ssize_t terminal_file_read(
-    file_t* file,
-    void* buffer,
-    size_t size
-) {
-    terminal_t* terminal = file->private;
-
-    return terminal_read(
-        terminal,
-        buffer,
-        size
-    );
-}
-
-static ssize_t terminal_file_write(
-    file_t* file,
-    const void* buffer,
-    size_t size
-) {
-    terminal_t* terminal = file->private;
-
-    return terminal_write(
-        terminal,
-        buffer,
-        size
-    );
-}
-
-static int terminal_file_close(file_t* file)
-{
-    (void)file;
-    return 0;
-}
-
-static const file_ops_t terminal_file_ops = {
-    .read  = terminal_file_read,
-    .write = terminal_file_write,
-    .seek  = NULL,
-    .close = terminal_file_close,
-};
-
-file_t* terminal_file_create(
-    terminal_t* terminal
-) {
-    file_t* file;
-
-    file = kmalloc(sizeof(*file));
-
-    if (!file)
-        return NULL;
-
-    file_init(
-        file,
-        &terminal_file_ops,
-        terminal
-    );
-
-    return file;
-}
-
-/* drivers/tty/terminal.c */
-
 static terminal_t g_console_terminal;
 
-terminal_t* console_terminal()
-{
+terminal_t* console_terminal() {
     return &g_console_terminal;
 }

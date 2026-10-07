@@ -38,6 +38,13 @@ struct wait_queue {
 };
 
 struct task {
+    // SYSCALL state, accessed by syscall.asm
+    // NOTE: they need to be here exactly and in this order
+    u64 syscall_user_rsp;
+    u64 syscall_user_rip;
+    u64 syscall_user_rflags;
+    u64 kernel_stack_top;
+
     u64 id;
     const char* name;
     task_state_t state;
@@ -156,6 +163,11 @@ void task_block_current_locked(wait_queue_t* queue);
  *  - returned value is the IRQ state saved when reacquiring
  */
 u64 task_wait(wait_queue_t* queue, spinlock_t* lock, u64 flags);
+
+/**
+ * @brief Removes a task from the scheduler's run queue and resets it 
+ */
+void task_reap(task_t* task);
 
 void wait_queue_init(wait_queue_t* queue);
 

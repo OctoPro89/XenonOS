@@ -6,10 +6,14 @@
 #include <xlibc/xstddef.h>
 #include <io/fd.h>
 
+// TODO: maybe align to linux
+// VERY IMPORTANT: IF THESE ARE CHANGED THEY MUST BE UPDATED IN unistd.asm
 #define SYS_READ   0
 #define SYS_WRITE  1
 #define SYS_CLOSE  2
 #define SYS_EXIT   3
+#define SYS_SPAWN  4
+#define SYS_WAIT   5
 
 // NOTE: Must match stack pushes in arch/x86_64/syscall.asm
 struct syscall_regs {

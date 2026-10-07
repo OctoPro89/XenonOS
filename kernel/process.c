@@ -2,8 +2,40 @@
 #include <task.h>
 #include <errno.h>
 #include <xlibc/stdlib.h>
+#include <xlibc/string.h>
+#include <xlibc/xassert.h>
 #include <io/console_file.h>
+#include <io/terminal_file.h>
 #include <tty/terminal.h>
+#include <arch/x86_64/sync/sync.h>
+#include <unistd.h>
+
+static process_t* process_list;
+static spinlock_t process_list_lock;
+static pid_t next_pid = 1;
+
+static void process_register(process_t* process) {
+    u64 flags = 0;
+    spin_lock_irqsave(&process_list_lock, &flags);
+    process->next = process_list;
+    process_list = process;
+    spin_unlock_irqrestore(&process_list_lock, flags);
+}
+
+static void process_unregister(process_t* process) {
+    u64 flags = 0;
+    spin_lock_irqsave(&process_list_lock, &flags);
+    process_t** current = &process_list;
+    while (*current != NULL) {
+        if (*current == process) {
+            *current = process->next;
+            break;
+        }
+
+        current = &(*current)->next; // this shit is cursed
+    }
+    spin_unlock_irqrestore(&process_list_lock, flags);
+}
 
 static int process_setup_stdio(process_t* process) {
     terminal_t* terminal;
@@ -56,13 +88,13 @@ static int process_setup_stdio(process_t* process) {
     return 0;
 }
 
-static u64 next_pid = 1;
-
 process_t* process_create() {
     process_t* process = kmalloc(sizeof(process_t));
     if (!process) {
         return NULL;
     }
+
+    memset(process, 0, sizeof(process_t));
 
     process->pid = __atomic_fetch_add(&next_pid, 1, __ATOMIC_RELAXED);
 
@@ -74,6 +106,7 @@ process_t* process_create() {
     }
 
     process->space->user_mode = true;
+    process->state = PROCESS_RUNNING; // TODO: I assume this is fine
 
     fd_table_init(&process->fd_table);
 
@@ -84,6 +117,8 @@ process_t* process_create() {
         return NULL;
     }
 
+    process_register(process);
+
     return process;
 }
 
@@ -91,6 +126,8 @@ void process_destroy(process_t* process) {
     if (!process) {
         return;
     }
+
+    process_unregister(process);
     
     fd_table_destroy(&process->fd_table);
     vmm_destroy_space(process->space);
@@ -153,6 +190,42 @@ process_t* process_current() {
     }
 
     return task->process;
+}
+
+process_t* process_find(u64 pid) {
+    u64 flags = 0;
+    process_t* result = NULL;
+
+    spin_lock_irqsave(&process_list_lock, &flags);
+    process_t* current = process_list;
+
+    while (current != NULL) {
+        if (current->pid == pid) {
+            result = current;
+            break;
+        }
+
+        current = current->next;
+    }
+
+    spin_unlock_irqrestore(&process_list_lock, flags);
+
+    return result;
+}
+
+void process_reap(process_t* process) {
+    if (!process) {
+        return;
+    }
+
+    xassert(process->state == PROCESS_ZOMBIE, "Attempting to reap non-zombie process");
+
+    if (process->main_task) {
+        task_reap(process->main_task);
+        process->main_task = NULL;
+    }
+
+    process_destroy(process);
 }
 
 extern void ASMCALL enter_user_mode(u64 entry, u64 stack) __attribute__((noreturn));

@@ -19,7 +19,7 @@ static task_t tasks[MAX_TASKS];
 static u8 task_stacks[MAX_TASKS][TASK_STACK_SIZE] __attribute__((aligned(16)));
 
 static u64 next_task_id;
-static task_t* current_task;
+task_t* current_task;
 static task_t* run_queue;
 
 static u8 timer_vector;
@@ -50,6 +50,35 @@ static void run_queue_add(task_t* task) {
     run_queue->next = task;
 }
 
+static void run_queue_remove(task_t* task) {
+    if (run_queue == NULL || task == NULL) {
+        return;
+    }
+
+    // only task in the queue
+    if (run_queue == task && task->next == task) {
+        run_queue = NULL;
+        return;
+    }
+
+    task_t* previous = run_queue;
+
+    do {
+        if (previous->next == task) {
+            previous->next = task->next;
+
+            if (run_queue == task) {
+                run_queue = task->next;
+            }
+
+            return;
+        }
+
+        previous = previous->next;
+    } while (previous != run_queue);
+}
+
+// TODO: probably shouldn't have this here
 #define KERNEL_CS 0x08
 #define KERNEL_SS 0x10
 
@@ -145,6 +174,10 @@ void scheduler_init(u8 new_timer_vector) {
         tasks[i].is_idle = false;
         tasks[i].name = "TASK";
         tasks[i].process = NULL;
+        tasks[i].syscall_user_rsp = 0;
+        tasks[i].syscall_user_rip = 0;
+        tasks[i].syscall_user_rflags = 0;
+        tasks[i].kernel_stack_top = 0;
     }
 
     // create idle as task 0
@@ -320,8 +353,9 @@ void scheduler_request_reschedule() {
 }
 
 task_t* task_create(process_t* process, task_entry_t entry, void* arg) {
-    if (entry == NULL)
+    if (entry == NULL) {
         return NULL;
+    }
 
     u64 flags = irq_save();
 
@@ -334,8 +368,9 @@ task_t* task_create(process_t* process, task_entry_t entry, void* arg) {
         }
     }
 
-    if (task == NULL)
+    if (task == NULL) {
         return NULL;
+    }
 
     u64 index = (u64)(task - tasks);
 
@@ -344,6 +379,10 @@ task_t* task_create(process_t* process, task_entry_t entry, void* arg) {
 
     task->stack = task_stacks[index];
     task->stack_size = TASK_STACK_SIZE;
+    
+    task->stack = task_stacks[index];
+    task->stack_size = TASK_STACK_SIZE;
+    task->kernel_stack_top = (u64)task->stack + task->stack_size;
 
     task->entry = entry;
     task->arg = arg;
@@ -391,6 +430,9 @@ void task_sleep_ns(u64 ns) {
     xassert(task != NULL, "sleep with no current task");
 
     u64 flags = irq_save();
+    if (!irq_was_enabled(flags)) {
+        int i =0;
+    }
     xassert(irq_was_enabled(flags), "task_sleep_ns with interrupts disabled");
 
     u64 now = ktimer_get_system_time_in_nanoseconds();
@@ -454,6 +496,9 @@ void task_block_on(wait_queue_t* queue) {
     u64 flags = irq_save();
 
     // sleeping / blocking with interrupts already disabled is currently not a supported public API
+    if (!irq_was_enabled(flags)) {
+        int i = 0;
+    }
     xassert(irq_was_enabled(flags), "task_block_on with interrupts disabled");
 
     task_block_current_locked(queue);
@@ -520,6 +565,36 @@ u64 task_wait(wait_queue_t* queue, spinlock_t* lock, u64 flags) {
     spin_lock_irqsave(lock, &new_flags);
 
     return new_flags;
+}
+
+void task_reap(task_t* task) {
+    if (task == NULL) {
+        return;
+    }
+
+    u64 flags = irq_save();
+
+    xassert(task != current_task, "Cannot reap current task");
+    xassert(task->state == TASK_DEAD, "Attempted to reap undead task");
+
+    run_queue_remove(task);
+
+    task->id = 0;
+    task->state = TASK_UNUSED;
+    task->rsp = 0;
+    task->stack = NULL;
+    task->stack_size = 0;
+    task->entry = NULL;
+    task->arg = NULL;
+    task->next = NULL;
+    task->wait_next = NULL;
+    task->waiting_on = NULL;
+    task->wake_deadline_ns = 0;
+    task->is_idle = false;
+    task->name = "TASK";
+    task->process = NULL;
+
+    irq_restore(flags);
 }
 
 void wait_queue_init(wait_queue_t* queue) {

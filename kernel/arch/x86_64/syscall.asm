@@ -1,17 +1,19 @@
 global syscall_init
-extern syscall_handler
-extern kernel_stack_top
 
-; extern void ASMCALL syscall_init();
+extern syscall_handler
+extern current_task
+
+; SYSCALL setup
 syscall_init:
-    ; --- Enable SYSCALL (EFER.SCE = bit 0) ---
+    ; Enable SYSCALL (EFER.SCE)
     mov rcx, 0xC0000080
     rdmsr
     or eax, 1
     wrmsr
 
-    ; --- STAR MSR (kernel/user CS selectors) ---
-    ; kernel CS = 0x08, user CS = 0x18
+    ; STAR
+    ; kernel CS = 0x08
+    ; user CS   = 0x18
     mov rcx, 0xC0000081
 
     mov rax, (0x08 << 32) | (0x18 << 48)
@@ -20,42 +22,48 @@ syscall_init:
 
     wrmsr
 
-    ; --- LSTAR MSR (syscall entry point) ---
+    ; LSTAR
     mov rcx, 0xC0000082
     mov rax, syscall_entry
     mov rdx, rax
     shr rdx, 32
+
     wrmsr
 
-    ; --- FMASK MSR (disable IF on syscall) ---
+    ; FMASK
     mov rcx, 0xC0000084
-    mov eax, (1 << 9)      ; clear IF
+    mov eax, (1 << 9)
     xor edx, edx
     wrmsr
 
     ret
 
-; --------------------------------------------
-; Syscall entry point (called via SYSCALL)
-; Kernel stack is switched here
-; --------------------------------------------
-extern user_rsp_save
-
+; syscall_entry
+;
+; Important:
+;   Every task gets its own kernel stack
+;   User RSP/RIP/RFLAGS are stored in task_t
 syscall_entry:
-    ; save critical values
-    mov r12, rcx    ; user RIP
-    mov r13, r11    ; user RFLAGS
+    ; r10 is caller-saved, so we can use it
+    ; as our current-task pointer.
+    mov r10, [rel current_task]
 
-    mov [rel user_rsp_save], rsp
+    ; save userspace state into the current task
+    mov [r10 + 0x00], rsp
+    mov [r10 + 0x08], rcx
+    mov [r10 + 0x10], r11
 
-    mov rsp, [rel kernel_stack_top]
+    ; switch to this task's kernel stack
+    mov rsp, [r10 + 0x18]
     and rsp, -16
 
-    ; save all regs except rcx/r11 (already saved them)
+    ; save registers from syscall_regs plus current task stuff
+    ; NOTE: r10 is intentionally a syscall-clobbered register for now and contains the current_task
     push r15
     push r14
-    push r13   ; saved r11
-    push r12   ; saved rcx
+    push r13
+    push r12
+    push r11
     push r10
     push r9
     push r8
@@ -69,8 +77,12 @@ syscall_entry:
     mov rdi, rsp
     call syscall_handler
 
-    ; Restore
-    pop rax
+    mov rax, [rsp]
+
+    ; Discard saved RAX.
+    add rsp, 8
+
+    ; Restore everything else.
     pop rbx
     pop rdx
     pop rsi
@@ -79,19 +91,20 @@ syscall_entry:
     pop r8
     pop r9
     pop r10
-    pop r12   ; rcx
-    pop r13   ; r11
+    pop r11
+    pop r12
+    pop r13
     pop r14
     pop r15
 
-    ; restore syscall state
-    mov rcx, r12
-    mov r11, r13
+    ; r10 is caller-saved, so it doesn't matter that it no longer contains the user's original value
+    ; NOTE: must update syscalls in C if this is changed later
+    mov r10, [rel current_task]
 
-    mov rax, [rel user_rsp_save]
-
+    mov rcx, [r10 + 0x08]
+    mov r11, [r10 + 0x10]
     push 0x23
-    push rax
+    push qword [r10 + 0x00]
     push r11
     push 0x1B
     push rcx

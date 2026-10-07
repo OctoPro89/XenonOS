@@ -30,6 +30,5 @@ void terminal_start_input_task(terminal_t* terminal);
 
 ssize_t terminal_read(terminal_t* terminal, void* buffer, size_t size);
 ssize_t terminal_write(terminal_t* terminal, const void* buffer, size_t size);
-file_t* terminal_file_create(terminal_t* terminal);
 
 terminal_t* console_terminal();

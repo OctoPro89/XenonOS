@@ -22,7 +22,6 @@ _start:
 
     syscall
 
-
     ; exit(0)
 
     mov eax, SYS_EXIT

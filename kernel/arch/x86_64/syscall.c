@@ -5,6 +5,7 @@
 #include <errno.h>
 #include <process.h>
 #include <memory/user.h>
+#include <elf/elf.h>
 
 // TODO: not sure if chunking is the best
 
@@ -149,6 +150,70 @@ __attribute__((noreturn)) void sys_exit(int code) {
     __builtin_unreachable();
 }
 
+u64 sys_spawn(const char* user_path) {
+    if (!user_path) {
+        return -EFAULT;
+    }
+
+    char path[256];
+
+    // TODO: check <0
+    if (copy_from_user(path, user_path, sizeof(path)) < 0) {
+        return -EFAULT;
+    }
+
+    path[sizeof(path) - 1] = 0;
+
+    process_t* parent = process_current();
+    if (!parent) {
+        return -ESRCH;
+    }
+
+    process_t* process = process_create();
+    if (!process) {
+        return -ENOMEM;
+    }
+
+    process->parent = parent;
+    
+    int result = process_load_elf(process, path);
+
+    if (result < 0) {
+        process_destroy(process);
+        return result;
+    }
+
+    result = process_start(process);
+    if (result < 0) {
+        process_destroy(process);
+        return result;
+    }
+
+    return process->pid;
+}
+
+u64 sys_wait(u64 pid) {
+    process_t* parent = process_current();
+    if (!parent) {
+        return -ESRCH;
+    }
+
+    process_t* child = process_find(pid);
+    if (!child) {
+        return -ESRCH;
+    }
+
+    if (child->parent != parent) {
+        return -ECHILD;
+    }
+
+    // IMPORTANT NOTE: process_wait() doesn't destroy anything, it waits for the zombie, then process_reap() destroys the task / address space
+    int status = process_wait(child);
+    process_reap(child);
+
+    return (u64)(i64)status;
+}
+
 u64 syscall_dispatch(struct syscall_regs* r) {
     switch (r->rax) {
         case SYS_READ: {
@@ -161,7 +226,13 @@ u64 syscall_dispatch(struct syscall_regs* r) {
             return (u64)sys_close((fd_t)r->rdi);
         }
         case SYS_EXIT: {
-            sys_exit((int)r->rdi);
+            sys_exit((int)r->rdi); // TODO: not sure if this returns something or no
+        }
+        case SYS_SPAWN: {
+            return sys_spawn((const char*)r->rdi);
+        }
+        case SYS_WAIT: {
+            return sys_wait(r->rdi);
         }
         default: {
             return (u64)-ENOSYS;
