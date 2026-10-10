@@ -136,17 +136,13 @@ static void terminal_push_char(terminal_t* terminal, char c) {
 
     ++terminal->count;
 
-    if (c == '\n')
+    if (c == '\n') {
         terminal->line_ready = true;
+    }
 
-    spin_unlock_irqrestore(
-        &terminal->lock,
-        flags
-    );
+    spin_unlock_irqrestore(&terminal->lock, flags);
 
-    wait_queue_wake_one(
-        &terminal->read_waiters
-    );
+    wait_queue_wake_one(&terminal->read_waiters);
 }
 
 static void terminal_input_task(void* arg){

@@ -181,7 +181,7 @@ void usb_core_device_configured(xhci_driver_t* driver, xhci_device_t* xdev, cons
     }
 }
 
-// TODO: left off here
+// TODO: check
 void usb_core_device_disconnected(xhci_driver_t* driver, xhci_device_t* xdev) {
     if (!xdev) { return; }
 

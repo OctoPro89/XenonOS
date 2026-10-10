@@ -4,6 +4,9 @@
 #include <xlibc/xstddef.h>
 #include <arch/x86_64/sync/sync.h>
 
+/**
+ * @note Uses spinlocks for synchronization and is thread-safe for push / pop etc
+ */
 typedef struct {
     u8* data;
     size_t capacity;

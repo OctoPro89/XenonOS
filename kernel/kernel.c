@@ -39,6 +39,12 @@
 #include <graphics/graphics.h>
 
 #include <de/de.h>
+#include <windowing/window/window.h>
+#include <windowing/window/surface.h>
+#include <windowing/window/events.h>
+#include <windowing/window/internal.h>
+#include <windowing/window/window_server.h>
+#include <windowing/compositor/compositor.h>
 
 #include <memory/paging.h>
 #include <memory/pmm.h>
@@ -99,6 +105,8 @@ void kernel_assign_usb_drivers() {
 #include <xlibc/stdio.h>
 
 static void launch_shell() {
+    terminal_init(console_terminal());
+    terminal_start_input_task(console_terminal());
     process_t* process = process_create();
 
     if (!process) {
@@ -137,9 +145,6 @@ static void kernel_main(void* arg) {
     kernel_assign_usb_drivers();
 
     printf("XenonOS v0.1\n");
-
-    terminal_init(console_terminal());
-    terminal_start_input_task(console_terminal());
 
     printf("Scanning for PCI devices...\n");
 
@@ -266,13 +271,89 @@ static void kernel_main(void* arg) {
     printf("Creating XHCI driver task!\n");
     task_t* xhci_driver_task = task_create(NULL, xhci_driver_task_entry, (void*)&xhci_driver);
 
-    printf("Launching usermode shell\n");
+    // printf("Launching usermode shell\n");
     // launch_shell();
 
-    task_t* de_task = task_create(NULL, desktop_env_task_entry, NULL);
+    window_server_init();
+    xenon_surface_t framebuffer_surface;
+    framebuffer_surface.height = graphics_get_framebuffer_height();
+    framebuffer_surface.width = graphics_get_framebuffer_width();
+    framebuffer_surface.stride = graphics_get_framebuffer_stride();
+    if (!compositor_init(&framebuffer_surface)) {
+        printf("Failed to init compositor!\n");
+        for (;;);
+    }
+
+    window_config_t wconfig = {
+        .title = "xeterm",
+        .rect = {
+            .x = 180,
+            .y = 120,
+            .width = 480,
+            .height = 320
+        },
+        .type = WINDOW_TYPE_NORMAL,
+        .flags = 0
+    };
+
+    window_t* test_window = window_create(&wconfig);
+    if (!test_window) {
+        printf("Failed to create test window!\n");
+        for(;;);
+    }
+
+    window_surface_t test_surface;
+
+    // content area excludes the window title bar
+    test_surface.width = wconfig.rect.width - 2;
+    test_surface.height = wconfig.rect.height - 30 - 1;
+    test_surface.stride = test_surface.width * sizeof(u32);
+    test_surface.format = WINDOW_PIXEL_FORMAT_RGBX8888;
+    test_surface.generation = 1;
+
+    test_surface.pixels = kmalloc((size_t)test_surface.stride * test_surface.height);
+
+    if (!test_surface.pixels) {
+        printf("Failed to create test surface pixels!\n");
+        for(;;);
+    }
+
+    for (u32 y = 0; y < test_surface.height; ++y) {
+        u32* row = (u32*)((u8*)test_surface.pixels + y * test_surface.stride);
+
+        for (u32 x = 0; x < test_surface.width; ++x) {
+            if (x < 100) {
+                row[x] = 0x00FF0000;
+            } else if (x < 200) {
+                row[x] = 0x0000FF00;
+            } else {
+                row[x] = 0x000000FF;
+            }
+        }
+    }
+
+    if (!window_set_surface(test_window, &test_surface)) {
+        printf("window_set_surface failed!\n");
+        free(test_surface.pixels);
+        test_surface.pixels = NULL;
+        window_destroy(test_window);
+        test_window = NULL;
+        for(;;);
+    }
+
+    window_damage(test_window, 0, 0, (i32)test_surface.width, (i32)test_surface.height);
+
     for (;;) {
+        compositor_process_events();
+        compositor_render();
+
         task_yield();
     }
+
+    // task_t* de_task = task_create(NULL, desktop_env_task_entry, NULL);
+    // for (;;) {
+        // task_yield();
+    // }
 
     u64 last_second = 0;
 

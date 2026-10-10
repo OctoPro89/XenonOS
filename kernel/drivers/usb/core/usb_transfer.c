@@ -14,6 +14,8 @@ usb_transfer_request_t usb_transfer_request_init(u8 endpoint_addr, void* buffer,
     req.buffer = buffer;
     req.requested_length = requested_length;
     req.flags = flags;
+    spin_lock_init(&req.lock);
+    wait_queue_init(&req.complete_wq);
 
     return req;
 }
@@ -29,11 +31,13 @@ b8 usb_transfer_request_submit_async(usb_device_t* dev, usb_transfer_request_t* 
     return xhci_driver_usb_submit_transfer_async(drv, xdev, req);
 }
 
-// TODO: spin lock or something
 usb_transfer_status_t usb_transfer_request_await(usb_transfer_request_t* req) {
+    u64 flags = 0;
+    spin_lock_irqsave(&req->lock, &flags);
     while (req->pending) {
-        usleep(50); // TODO: no clue what to make this, just a guess, SHOULD yield with a scheduler
+        flags = task_wait(&req->complete_wq, &req->lock, flags);
     }
+    spin_unlock_irqrestore(&req->lock, flags);
 
     return req->status;
 }

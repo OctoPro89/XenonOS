@@ -17,3 +17,4 @@ void graphics_scroll(uint32_t pixels, uint32_t color);
 u32 graphics_get_framebuffer_width();
 u32 graphics_get_framebuffer_height();
 u32 graphics_get_framebuffer_stride();
+u32 graphics_get_framebuffer_format();

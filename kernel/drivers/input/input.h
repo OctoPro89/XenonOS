@@ -29,9 +29,6 @@ typedef struct __packed__ {
 STATIC_ASSERT(sizeof(input_keyboard_event_t) == 8);
 STATIC_ASSERT(sizeof(input_mouse_event_t) == 16);
 
-extern u32 crnt_mouse_x;
-extern u32 crnt_mouse_y;
-
 /**
  * @brief Initialize the input subsystem
  */

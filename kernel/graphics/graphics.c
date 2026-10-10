@@ -376,3 +376,7 @@ u32 graphics_get_framebuffer_height() {
 u32 graphics_get_framebuffer_stride() {
     return pixels_per_line;
 }
+
+u32 graphics_get_framebuffer_format() {
+    return pixel_format;
+}

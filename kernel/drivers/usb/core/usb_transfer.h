@@ -1,6 +1,7 @@
 #pragma once
 #include <xlibc/xstdint.h>
 #include <drivers/usb/core/usb_device.h>
+#include <arch/x86_64/sync/sync.h>
 
 typedef enum {
     USB_TRANSFER_STATUS_OK = 0,
@@ -24,6 +25,8 @@ typedef struct usb_transfer_request {
     u32 flags;
     usb_transfer_status_t status;
     b8 pending;
+    spinlock_t lock;
+    wait_queue_t complete_wq;
 
     // internal linkage for per-endpoint software queues
     usb_transfer_request_t* next;

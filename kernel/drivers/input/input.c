@@ -6,11 +6,6 @@
 static ring_buffer_t* g_kbd_rb;
 static ring_buffer_t* g_mouse_rb;
 
-// TODO: mouse input ridiculously slow on real hardware using pop event 
-
-u32 crnt_mouse_x;
-u32 crnt_mouse_y;
-
 #define KBD_RING_CAPACITY 4096
 #define MOUSE_RING_CAPACITY 4096
 
@@ -42,9 +37,6 @@ b8 input_push_mouse_event(const input_mouse_event_t* evt) {
     if (!g_mouse_rb) {
         return false;
     }
-
-    crnt_mouse_x += evt->x_value;
-    crnt_mouse_y += evt->y_value;
 
     return ring_buffer_push(g_mouse_rb, (const u8*)evt);
 }
