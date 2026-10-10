@@ -4,6 +4,7 @@
 #include <xlibc/xstdint.h>
 #include <memory/vmm.h>
 #include <arch/x86_64/sync/sync.h>
+#include <tty/terminal.h>
 
 typedef struct process process_t;
 
@@ -44,5 +45,7 @@ process_t* process_current();
 
 process_t* process_find(u64 pid);
 void process_reap(process_t* process);
+
+int process_setup_stdio(process_t* process, terminal_t* terminal);
 
 void user_process_task_entry(void* arg);

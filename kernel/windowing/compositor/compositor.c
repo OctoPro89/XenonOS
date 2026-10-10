@@ -187,6 +187,7 @@ static void blit_window_surface(xenon_surface_t* dst, const window_snapshot_t* w
         i32 inset = 0;
         i32 row_in_window = dy - wy;
 
+        // TODO: fix
         if (row_in_window >= wh - WINDOW_RADIUS) {
             i32 dy_circle = row_in_window - (wh - WINDOW_RADIUS - 1);
 
@@ -331,7 +332,6 @@ static i32 hit_test(i32 x, i32 y) {
     return -1;
 }
 
-
 static void clamp_window_position(i32* x, i32* y, i32 width, i32 height) {
     if (!target || !x || !y) {
         return;
@@ -421,7 +421,7 @@ static void process_mouse_event(const input_mouse_event_t* evt) {
     previous_buttons = evt->buttons;
 }
 
-void compositor_process_events(void) {
+void compositor_process_events() {
     input_mouse_event_t evt;
 
     while (input_pop_mouse_event(&evt)) { process_mouse_event(&evt); }

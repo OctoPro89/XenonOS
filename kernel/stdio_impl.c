@@ -42,7 +42,6 @@ void stdio_impl_putchr(char c) {
 
     // gone below the last visible row
     if (cursor_y >= lines) {
-        graphics_scroll(char_height, 0x00000000);
         cursor_y = lines - 1;
     }
 

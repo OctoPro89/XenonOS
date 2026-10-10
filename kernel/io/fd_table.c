@@ -1,5 +1,6 @@
 #include <io/fd_table.h>
 #include <errno.h>
+#include <xlibc/string.h>
 
 void fd_table_init(fd_table_t* table) {
     size_t i;
@@ -104,6 +105,55 @@ int fd_table_close(fd_table_t* table, fd_t fd) {
 
     // do not run the file's final close callback while holding the FD table lock
     file_put(file);
+
+    return 0;
+}
+
+int fd_table_clone(fd_table_t* dst, fd_table_t* src) {
+    if (!dst || !src || dst == src) {
+        return -EINVAL;
+    }
+
+    file_t* files[MAX_FDS];
+    memset(files, 0, sizeof(file_t*) * MAX_FDS);
+    
+    // take references to a stable snapshot of the source, release its lock before locking the dst
+    u64 flags = 0;
+    spin_lock_irqsave(&src->lock, &flags);
+
+    for (size_t i = 0; i < MAX_FDS; ++i) {
+        files[i] = src->files[i];
+
+        if (files[i]) {
+            file_get(files[i]);
+        }
+    }
+
+    spin_unlock_irqrestore(&src->lock, flags);
+
+    spin_lock_irqsave(&dst->lock, &flags);
+    
+    // cloning is only supported into an empty uninitialized table
+    for (size_t i = 0; i < MAX_FDS; ++i) {
+        if (dst->files[i] != NULL) {
+            spin_unlock_irqrestore(&dst->lock, flags);
+
+            for (size_t j = 0; j < MAX_FDS; ++j) {
+                if (files[j]) {
+                    file_put(files[j]);
+                }
+            }
+
+            return -EINVAL;
+        }
+    }
+
+    // transfer snapshot references into the dst table, each populated slot now owns exactly one ref
+    for (size_t i = 0; i < MAX_FDS; ++i) {
+        dst->files[i] = files[i];
+    }
+
+    spin_unlock_irqrestore(&dst->lock, flags);
 
     return 0;
 }

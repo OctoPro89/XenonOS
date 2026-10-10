@@ -19,3 +19,4 @@ void fd_table_destroy(fd_table_t* table);
 fd_t fd_table_alloc(fd_table_t* table, file_t* file);
 file_t* fd_table_get(fd_table_t* table, fd_t fd);
 int fd_table_close(fd_table_t* table, fd_t fd);
+int fd_table_clone(fd_table_t* dst, fd_table_t* src);

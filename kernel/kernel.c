@@ -38,7 +38,6 @@
 
 #include <graphics/graphics.h>
 
-#include <de/de.h>
 #include <windowing/window/window.h>
 #include <windowing/window/surface.h>
 #include <windowing/window/events.h>
@@ -104,30 +103,55 @@ void kernel_assign_usb_drivers() {
 #include <xlibc/string.h>
 #include <xlibc/stdio.h>
 
-static void launch_shell() {
-    terminal_init(console_terminal());
-    terminal_start_input_task(console_terminal());
-    process_t* process = process_create();
+void launch_shell_task_entry(void* arg) {
+    (void)arg;
+    window_config_t wconfig = {
+        .title = "xeterm",
+        .rect = {
+            .x = 180,
+            .y = 120,
+            .width = 480,
+            .height = 320
+        },
+        .type = WINDOW_TYPE_NORMAL,
+        .flags = 0
+    };
 
+    window_t* terminal_window = window_create(&wconfig);
+    if (!terminal_window) {
+        printf("Failed to create terminal window\n");
+        return;
+    }
+
+    terminal_t* terminal = console_terminal();
+
+    terminal_init(terminal);
+    terminal_attach_window(terminal, terminal_window);
+    terminal_start_input_task(terminal);
+
+    process_t* process = process_create();
     if (!process) {
         printf("failed to create shell process\n");
         return;
     }
 
-    int result = process_load_elf(process,"bin/sh");
+    int result = process_setup_stdio(process, terminal);
+    if (result < 0) {
+        printf("failed to set up shell stdio: %d\n", result);
+        process_destroy(process);
+        return;
+    }
 
+    result = process_load_elf(process, "bin/sh");
     if (result < 0) {
         printf("failed to load /bin/sh: %d\n", result);
-
         process_destroy(process);
         return;
     }
 
     result = process_start(process);
-
     if (result < 0) {
-        printf("failed to start /bin/sh: %d\n", result);
-
+        printf("failed to start shell: %d\n", result);
         process_destroy(process);
         return;
     }
@@ -135,7 +159,16 @@ static void launch_shell() {
     // TODO:
     int exit_code = process_wait(process);
     printf("shell exited with code %d\n", exit_code);
-    process_destroy(process);
+    process_reap(process);
+
+    window_destroy(terminal_window);
+}
+
+static uint32_t next_random = 123456789;
+
+int my_rand_15bit() {
+    next_random = next_random * 1103515245 + 12345;
+    return (int)(next_random / 65536) % 32768; // Returns 0 to 32767
 }
 
 static void kernel_main(void* arg) {
@@ -181,7 +214,6 @@ static void kernel_main(void* arg) {
     printf("XHCI Driver initialized successfully\n");
     printf("\n");
 
-    /*
     PCI_Device* ahci_dev = pci_find_ahci(); // find AHCI device
     if (ahci_dev == NULL) {
         printf("Failed to find AHCI device!\n");
@@ -233,7 +265,6 @@ static void kernel_main(void* arg) {
     vfs_mount_root(&fat32_ops, (void*)&fs);
 
     printf("Set up Virtual File System successfully\n");
-    */
 
     /*
     FILE* f = fopen("testlongfilename.txt", "r");
@@ -271,9 +302,6 @@ static void kernel_main(void* arg) {
     printf("Creating XHCI driver task!\n");
     task_t* xhci_driver_task = task_create(NULL, xhci_driver_task_entry, (void*)&xhci_driver);
 
-    // printf("Launching usermode shell\n");
-    // launch_shell();
-
     window_server_init();
     xenon_surface_t framebuffer_surface;
     framebuffer_surface.height = graphics_get_framebuffer_height();
@@ -284,94 +312,14 @@ static void kernel_main(void* arg) {
         for (;;);
     }
 
-    window_config_t wconfig = {
-        .title = "xeterm",
-        .rect = {
-            .x = 180,
-            .y = 120,
-            .width = 480,
-            .height = 320
-        },
-        .type = WINDOW_TYPE_NORMAL,
-        .flags = 0
-    };
-
-    window_t* test_window = window_create(&wconfig);
-    if (!test_window) {
-        printf("Failed to create test window!\n");
-        for(;;);
-    }
-
-    window_surface_t test_surface;
-
-    // content area excludes the window title bar
-    test_surface.width = wconfig.rect.width - 2;
-    test_surface.height = wconfig.rect.height - 30 - 1;
-    test_surface.stride = test_surface.width * sizeof(u32);
-    test_surface.format = WINDOW_PIXEL_FORMAT_RGBX8888;
-    test_surface.generation = 1;
-
-    test_surface.pixels = kmalloc((size_t)test_surface.stride * test_surface.height);
-
-    if (!test_surface.pixels) {
-        printf("Failed to create test surface pixels!\n");
-        for(;;);
-    }
-
-    for (u32 y = 0; y < test_surface.height; ++y) {
-        u32* row = (u32*)((u8*)test_surface.pixels + y * test_surface.stride);
-
-        for (u32 x = 0; x < test_surface.width; ++x) {
-            if (x < 100) {
-                row[x] = 0x00FF0000;
-            } else if (x < 200) {
-                row[x] = 0x0000FF00;
-            } else {
-                row[x] = 0x000000FF;
-            }
-        }
-    }
-
-    if (!window_set_surface(test_window, &test_surface)) {
-        printf("window_set_surface failed!\n");
-        free(test_surface.pixels);
-        test_surface.pixels = NULL;
-        window_destroy(test_window);
-        test_window = NULL;
-        for(;;);
-    }
-
-    window_damage(test_window, 0, 0, (i32)test_surface.width, (i32)test_surface.height);
+    printf("Launching usermode shell\n");
+    task_t* launch_shell_task = task_create(NULL, launch_shell_task_entry, NULL);
 
     for (;;) {
         compositor_process_events();
         compositor_render();
 
         task_yield();
-    }
-
-    // task_t* de_task = task_create(NULL, desktop_env_task_entry, NULL);
-    // for (;;) {
-        // task_yield();
-    // }
-
-    u64 last_second = 0;
-
-    for (;;) {
-        u64 now = ktimer_get_system_time_in_seconds();
-
-        if (now != last_second) {
-            char buf[100];
-
-            snprintf(buf, sizeof(buf), "System Uptime (seconds): %llu", now);
-
-            graphics_draw_rect(500, 50, 220, 50, 0x0);
-            graphics_draw_string(buf, 500, 50, 0xFFFF);
-
-            last_second = now;
-        }
-
-        task_sleep_ms(10);
     }
 }
 

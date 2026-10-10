@@ -4,7 +4,6 @@
 #include <xlibc/stdlib.h>
 #include <xlibc/string.h>
 #include <xlibc/xassert.h>
-#include <io/console_file.h>
 #include <io/terminal_file.h>
 #include <tty/terminal.h>
 #include <arch/x86_64/sync/sync.h>
@@ -37,57 +36,6 @@ static void process_unregister(process_t* process) {
     spin_unlock_irqrestore(&process_list_lock, flags);
 }
 
-static int process_setup_stdio(process_t* process) {
-    terminal_t* terminal;
-    file_t* stdin_file;
-    file_t* stdout_file;
-    file_t* stderr_file;
-    
-    terminal = console_terminal();
-
-    stdin_file = terminal_file_create(terminal);
-    stdout_file = terminal_file_create(terminal);
-    stderr_file = terminal_file_create(terminal);
-
-    if (!stdin_file || !stdout_file || !stderr_file) {
-        if (stdin_file) { file_put(stdin_file); }
-        if (stdout_file) { file_put(stdout_file); }
-        if (stderr_file) { file_put(stderr_file); }
-        return -ENOMEM;
-    }
-
-    // the FD table takes a reference
-    if (fd_table_alloc(&process->fd_table, stdin_file) != 0) {
-        file_put(stdin_file);
-        file_put(stdout_file);
-        file_put(stderr_file);
-        return -EMFILE;
-    }
-
-
-    if (fd_table_alloc(&process->fd_table, stdout_file) != 1) {
-        fd_table_close(&process->fd_table, 0);
-        file_put(stdout_file);
-        file_put(stderr_file);
-        return -EMFILE;
-    }
-
-
-    if (fd_table_alloc(&process->fd_table, stderr_file) != 2) {
-        fd_table_close(&process->fd_table, 0);
-        fd_table_close(&process->fd_table, 1);
-        file_put(stderr_file);
-        return -EMFILE;
-    }
-
-    // drop the creator references, the FD table now owns them
-    file_put(stdin_file);
-    file_put(stdout_file);
-    file_put(stderr_file);
-
-    return 0;
-}
-
 process_t* process_create() {
     process_t* process = kmalloc(sizeof(process_t));
     if (!process) {
@@ -109,13 +57,6 @@ process_t* process_create() {
     process->state = PROCESS_RUNNING; // TODO: I assume this is fine
 
     fd_table_init(&process->fd_table);
-
-    if (process_setup_stdio(process) < 0) {
-        fd_table_destroy(&process->fd_table);
-        vmm_destroy_space(process->space);
-        kfree(process);
-        return NULL;
-    }
 
     process_register(process);
 
@@ -226,6 +167,61 @@ void process_reap(process_t* process) {
     }
 
     process_destroy(process);
+}
+
+
+int process_setup_stdio(process_t* process, terminal_t* terminal) {
+    if (!process || !terminal) {
+        return -EINVAL;
+    }
+
+    file_t* stdin_file  = terminal_file_create(terminal);
+    file_t* stdout_file = terminal_file_create(terminal);
+    file_t* stderr_file = terminal_file_create(terminal);
+
+    if (!stdin_file || !stdout_file || !stderr_file) {
+        if (stdin_file)  file_put(stdin_file);
+        if (stdout_file) file_put(stdout_file);
+        if (stderr_file) file_put(stderr_file);
+
+        return -ENOMEM;
+    }
+
+    // this process must have an empty FD table, standard descriptors are in 0, 1, and 2
+        fd_t in_fd = fd_table_alloc(&process->fd_table, stdin_file);
+
+    fd_t out_fd = FD_INVALID;
+    fd_t err_fd = FD_INVALID;
+
+    if (in_fd == 0) {
+        out_fd = fd_table_alloc(&process->fd_table, stdout_file);
+    }
+
+    if (out_fd == 1) {
+        err_fd = fd_table_alloc(&process->fd_table, stderr_file);
+    }
+
+    // drop creator references
+    file_put(stdin_file);
+    file_put(stdout_file);
+    file_put(stderr_file);
+
+    if (in_fd == 0 && out_fd == 1 && err_fd == 2) {
+        return 0;
+    }
+
+    // roll back any descriptors that were successfully allocated
+    if (err_fd >= 0) {
+        fd_table_close(&process->fd_table, err_fd);
+    }
+    if (out_fd >= 0) {
+        fd_table_close(&process->fd_table, out_fd);
+    }
+    if (in_fd >= 0) {
+        fd_table_close(&process->fd_table, in_fd);
+    }
+
+    return -EMFILE;
 }
 
 extern void ASMCALL enter_user_mode(u64 entry, u64 stack) __attribute__((noreturn));

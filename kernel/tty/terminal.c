@@ -1,21 +1,18 @@
 #include <tty/terminal.h>
 #include <drivers/input/input.h>
+#include <windowing/window/window.h>
+#include <arch/x86_64/io.h>
 
 #include <memory/heap.h>
 #include <xlibc/string.h>
 #include <xlibc/stdio.h>
 #include <errno.h>
 
-void terminal_init(terminal_t* terminal);
+#define HID_KEY_BACKSPACE 0x2A
+#define HID_KEY_LEFT_SHIFT 0xE1
+#define HID_KEY_RIGHT_SHIFT 0xE5
 
-void terminal_start_input_task(terminal_t* terminal);
-
-ssize_t terminal_read(terminal_t* terminal, void* buffer, size_t size);
-ssize_t terminal_write(terminal_t* terminal, const void* buffer, size_t size);
-file_t* terminal_file_create(terminal_t* terminal);
-
-static char keycode_to_ascii(u16 usage, b8 shift)
-{
+static char keycode_to_ascii(u16 usage, b8 shift) {
     switch (usage) {
         /* Letters */
         case 0x04: return shift ? 'A' : 'a';
@@ -104,17 +101,110 @@ static char keycode_to_ascii(u16 usage, b8 shift)
     }
 }
 
+#define TERMINAL_FONT_WIDTH 8
+#define TERMINAL_FONT_HEIGHT 8
+
+static void terminal_render_grid(terminal_t* terminal, window_surface_t* surface) {
+    if (!terminal || !surface || !surface->pixels) {
+        return;
+    }
+
+    for (u32 row = 0; row < terminal->rows; ++row) {
+        for (u32 col = 0; col < terminal->columns; ++col) {
+            char c = terminal->cells[row][col].ch;
+
+            window_surface_render_char(surface, c, (i32)(col * TERMINAL_FONT_WIDTH), (i32)(row * TERMINAL_FONT_HEIGHT), terminal->foreground/* TODO: , terminal->background */);
+        }
+    }
+}
+
+static void terminal_advance_line(terminal_t* terminal) {
+    terminal->cursor_x = 0;
+
+    if (terminal->cursor_y + 1 < terminal->rows) {
+        terminal->cursor_y++;
+    } else {
+        // TODO: scroll the terminal's character grid up one row then redraw the affected area.
+    }
+}
+
+static void terminal_process_char(terminal_t* terminal, char c) {
+    serial_write_char(c);
+    switch (c) {
+        case '\n':
+            terminal_advance_line(terminal);
+            break;
+
+        case '\r':
+            terminal->cursor_x = 0;
+            break;
+
+        case '\b':
+            if (terminal->cursor_x > 0) {
+                terminal->cursor_x--;
+
+                terminal->cells[terminal->cursor_y]
+                            [terminal->cursor_x].ch = ' ';
+            }
+            break;
+
+        case '\t':
+            terminal->cursor_x = (terminal->cursor_x + 4) & ~3u;
+
+            if (terminal->cursor_x >= terminal->columns) {
+                terminal_advance_line(terminal);
+            }
+            break;
+        default:
+            if ((u8)c >= 0x20) {
+                if (terminal->cursor_x < terminal->columns &&
+                    terminal->cursor_y < terminal->rows) {
+
+                    terminal->cells[terminal->cursor_y]
+                                [terminal->cursor_x].ch = c;
+                }
+
+                terminal->cursor_x++;
+
+                if (terminal->cursor_x >= terminal->columns) {
+                    terminal_advance_line(terminal);
+                }
+            }
+            break;
+    }
+}
+
 void terminal_init(terminal_t* terminal) {
+    if (!terminal) {
+        return;
+    }
+
     spin_lock_init(&terminal->lock);
+    spin_lock_init(&terminal->output_lock);
 
     terminal->read_pos = 0;
     terminal->write_pos = 0;
     terminal->count = 0;
-
     terminal->line_start = 0;
     terminal->line_ready = false;
 
     wait_queue_init(&terminal->read_waiters);
+
+    terminal->window = NULL;
+    terminal->cursor_x = 0;
+    terminal->cursor_y = 0;
+
+    terminal->columns = TERMINAL_COLUMNS;
+    terminal->rows = TERMINAL_ROWS;
+
+    terminal->foreground = 0x00FFFFFF;
+    terminal->background = 0x00101820;
+
+    for (u32 row = 0; row < terminal->rows; ++row) {
+        for (u32 col = 0; col < terminal->columns; ++col) {
+            terminal->cells[row][col].ch = ' ';
+        }
+    }
 }
 
 static void terminal_push_char(terminal_t* terminal, char c) {
@@ -145,33 +235,50 @@ static void terminal_push_char(terminal_t* terminal, char c) {
     wait_queue_wake_one(&terminal->read_waiters);
 }
 
-static void terminal_input_task(void* arg){
+static void terminal_input_task(void* arg) {
     terminal_t* terminal = arg;
+    b8 left_shift = false;
+    b8 right_shift = false;
 
     for (;;) {
         input_keyboard_event_t evt;
 
         if (!input_pop_keyboard_event(&evt)) {
-            // TODO: wake
-            task_sleep_ms(1);
+            task_yield();
             continue;
         }
 
-        if (evt.action != INPUT_KBD_ACTION_DOWN) {
+        b8 down = evt.action == INPUT_KBD_ACTION_DOWN;
+
+        if (evt.usage == HID_KEY_LEFT_SHIFT) {
+            left_shift = down;
             continue;
         }
 
-        b8 shift = false; // TODO
+        if (evt.usage == HID_KEY_RIGHT_SHIFT) {
+            right_shift = down;
+            continue;
+        }
 
-        char c = keycode_to_ascii(evt.usage, shift);
+        if (!down) {
+            continue;
+        }
+
+        b8 shift = left_shift || right_shift;
+        char c;
+
+        if (evt.usage == HID_KEY_BACKSPACE) {
+            c = '\b';
+        } else {
+            c = keycode_to_ascii(evt.usage, shift);
+        }
 
         if (!c) {
             continue;
         }
 
-        putc(c);
-
         terminal_push_char(terminal, c);
+        terminal_write(terminal, &c, 1);
     }
 }
 
@@ -229,19 +336,84 @@ ssize_t terminal_read(terminal_t* terminal, void* buffer, size_t size) {
 }
 
 ssize_t terminal_write(terminal_t* terminal, const void* buffer, size_t size) {
-    const u8* data = buffer;
-
-    (void)terminal;
-
-    if (!buffer && size != 0) {
+    if (!terminal || (!buffer && size != 0)) {
         return -EINVAL;
     }
 
-    for (size_t i = 0; i < size; i++) {
-        putc((char)data[i]);
+    if (size == 0) {
+        return 0;
     }
 
+    const char* data = buffer;
+    u64 flags;
+
+    spin_lock_irqsave(&terminal->output_lock, &flags);
+
+    for (size_t i = 0; i < size; i++) {
+        terminal_process_char(terminal, data[i]);
+    }
+
+    // TODO: fix don't do in a lock
+    if (terminal->window && terminal->surface.pixels) {
+        terminal_render_grid(terminal, &terminal->surface);
+
+        // damage coordinates are local to the window not desktop
+        window_damage(terminal->window, 0, 0, (i32)terminal->surface.width, (i32)terminal->surface.height);
+    }
+
+    spin_unlock_irqrestore(&terminal->output_lock, flags);
+
     return (ssize_t)size;
+}
+
+void terminal_attach_window(terminal_t* terminal, window_t* window) {
+    if (!terminal || !window) {
+        return;
+    }
+
+    window_rect_t rect = window_get_rect(window);
+
+    if (rect.width <= 2 || rect.height <= 31) {
+        return;
+    }
+
+    u32 width = (u32)rect.width - 2;
+    u32 height = (u32)rect.height - 31;
+
+    size_t stride = (size_t)width * sizeof(u32);
+    size_t bytes = stride * height;
+
+    u32* pixels = kmalloc(bytes);
+    if (!pixels) {
+        return;
+    }
+
+    for (size_t i = 0; i < bytes / sizeof(u32); ++i) {
+        pixels[i] = terminal->background;
+    }
+
+    terminal->surface = (window_surface_t) {
+        .width = width,
+        .height = height,
+        .stride = (u32)stride,
+        .format = WINDOW_PIXEL_FORMAT_RGBX8888,
+        .generation = 1,
+        .pixels = pixels
+    };
+
+    terminal->window = window;
+    terminal->surface.pixels = pixels;
+
+    terminal_render_grid(terminal, &terminal->surface);
+
+    if (!window_set_surface(window, &terminal->surface)) {
+        terminal->window = NULL;
+        terminal->surface.pixels = NULL;
+        kfree(pixels);
+        return;
+    }
+
+    window_damage(window, 0, 0, (i32)width, (i32)height);
 }
 
 static terminal_t g_console_terminal;

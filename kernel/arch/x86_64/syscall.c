@@ -152,7 +152,7 @@ __attribute__((noreturn)) void sys_exit(int code) {
 
 u64 sys_spawn(const char* user_path) {
     if (!user_path) {
-        return -EFAULT;
+        return (u64)(i64)-EFAULT;
     }
 
     char path[256];
@@ -166,27 +166,34 @@ u64 sys_spawn(const char* user_path) {
 
     process_t* parent = process_current();
     if (!parent) {
-        return -ESRCH;
+        return (u64)(i64)-ESRCH;
     }
 
     process_t* process = process_create();
     if (!process) {
-        return -ENOMEM;
+        return (u64)(i64)-ENOMEM;
     }
 
     process->parent = parent;
     
-    int result = process_load_elf(process, path);
+    // inherit stdin, stdout, stderr, and any other open descriptors for the child
+    int result = fd_table_clone(&process->fd_table, &parent->fd_table); 
+    if (result < 0) {
+        process_destroy(process);
+        return (u64)(i64)result;
+    }
+
+    result = process_load_elf(process, path);
 
     if (result < 0) {
         process_destroy(process);
-        return result;
+        return (u64)(i64)result;
     }
 
     result = process_start(process);
     if (result < 0) {
         process_destroy(process);
-        return result;
+        return (u64)(i64)result;
     }
 
     return process->pid;
@@ -195,16 +202,16 @@ u64 sys_spawn(const char* user_path) {
 u64 sys_wait(u64 pid) {
     process_t* parent = process_current();
     if (!parent) {
-        return -ESRCH;
+        return (u64)(i64)-ESRCH;
     }
 
     process_t* child = process_find(pid);
     if (!child) {
-        return -ESRCH;
+        return (u64)(i64)-ESRCH;
     }
 
     if (child->parent != parent) {
-        return -ECHILD;
+        return (u64)(i64)-ECHILD;
     }
 
     // IMPORTANT NOTE: process_wait() doesn't destroy anything, it waits for the zombie, then process_reap() destroys the task / address space

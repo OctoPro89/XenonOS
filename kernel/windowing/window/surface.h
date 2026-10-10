@@ -26,3 +26,18 @@ typedef struct window_surface {
     window_pixel_format_t format;
     u32 generation;
 } window_surface_t;
+
+/**
+ * @brief Renders `c` at `x`,`y` with a bitmap 8x8 font into the surface's `pixels` with `color`
+ */
+void window_surface_render_char(window_surface_t* s, char c, u32 x, u32 y, u32 color);
+
+/**
+ * @brief Renders `str` at `x`,`y` with a bitmap 8x8 font into the surface's `pixels` with `color`
+ */
+void window_surface_render_string(window_surface_t* s, const char* str, u32 x, u32 y, u32 color);
+
+/**
+ * @brief Renders a rect at `x`,`y` with width of `w` and height of `h` and color of `color` into the surface's `pixels` 
+ */
+void window_surface_render_rect(window_surface_t* s, u32 x, u32 y, u32 w, u32 h, u32 color);

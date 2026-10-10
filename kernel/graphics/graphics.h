@@ -12,8 +12,6 @@ void graphics_draw_char(char c, uint32_t x, uint32_t y, uint32_t color);
 void graphics_draw_string(const char* str, uint32_t x, uint32_t y, uint32_t color);
 void graphics_put_pixel(uint32_t x, uint32_t y, uint32_t color);
 
-void graphics_scroll(uint32_t pixels, uint32_t color);
-
 u32 graphics_get_framebuffer_width();
 u32 graphics_get_framebuffer_height();
 u32 graphics_get_framebuffer_stride();
