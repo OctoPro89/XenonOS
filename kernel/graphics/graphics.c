@@ -1,9 +1,10 @@
 #include "graphics.h"
 #include <xlibc/stdlib.h>
+#include <xlibc/xassert.h>
 #include <memory/vmm.h>
 #include <arch/x86_64/io.h>
 
-#define FRAMBUFFER_VIRT_BASE 0xFFFFD00000000000ULL
+#define FRAMEBUFFER_VIRT_BASE 0xFFFFD00000000000ULL
 
 // Basic 8x8 ASCII font for U+0000–U+007F
 // Source: font8x8 project (Public Domain):contentReference[oaicite:1]{index=1}
@@ -143,7 +144,7 @@ static uint32_t dirty_y1 = UINT32_MAX;
 static uint32_t dirty_x2 = 0;
 static uint32_t dirty_y2 = 0;
 
-static volatile uint32_t* backbuffer;
+static uint32_t* backbuffer;
 static uint32_t current_width, current_height, pixels_per_line, pixel_format;
 const static uint32_t bytes_per_pixel = 4;
 static paddr_t framebuffer_phys;
@@ -181,16 +182,16 @@ void graphics_init(Framebuffer* fb) {
     framebuffer_phys = (paddr_t)fb->BaseAddress;
 
     size_t framebuffer_size = pixels_per_line * current_height * bytes_per_pixel;
-    vmm_map_mmio(&kernel_space, FRAMBUFFER_VIRT_BASE, framebuffer_phys, framebuffer_size);
+    vmm_map_mmio(&kernel_space, FRAMEBUFFER_VIRT_BASE, framebuffer_phys, framebuffer_size);
 
     // TODO: Fix heap to be able to handle this
-    backbuffer = (volatile u32*)FRAMBUFFER_VIRT_BASE;
+    // backbuffer = (volatile u32*)FRAMBUFFER_VIRT_BASE;
 
-    // backbuffer = (uint32_t*)kmalloc(framebuffer_size);
-    // if (!backbuffer) {
-    //     serial_write_str("Failed to allocate backbuffer!");
-    //     while(1);
-    // }
+    backbuffer = (uint32_t*)kmalloc(framebuffer_size);
+    if (!backbuffer) {
+        serial_write_str("Failed to allocate backbuffer!");
+        while(1);
+    }
 }
 
 void graphics_shutdown() {
@@ -200,16 +201,15 @@ void graphics_shutdown() {
     pixel_format = 0;
     framebuffer_phys = 0;
     // TODO: Unmap MMIO
-    // if (backbuffer) { kfree(backbuffer); }
+    if (backbuffer) { kfree(backbuffer); }
 }
 
 void graphics_swap_buffers() {
-    /*
     if (dirty_x1 >= dirty_x2 || dirty_y1 >= dirty_y2) return;
 
     for (uint32_t y = dirty_y1; y < dirty_y2; y++) {
         uint32_t* src = backbuffer + y * pixels_per_line + dirty_x1;
-        uint32_t* dst = (uint32_t*)FRAMBUFFER_VIRT_BASE + y * pixels_per_line + dirty_x1;
+        uint32_t* dst = (uint32_t*)FRAMEBUFFER_VIRT_BASE + y * pixels_per_line + dirty_x1;
 
         uint32_t width = dirty_x2 - dirty_x1;
         memcpy_fast_qword(dst, src, width / 2);
@@ -223,7 +223,6 @@ void graphics_swap_buffers() {
     dirty_y1 = UINT32_MAX;
     dirty_x2 = 0;
     dirty_y2 = 0;
-    */
 }
 
 uint32_t graphics_convert_color(uint8_t r, uint8_t g, uint8_t b) {
@@ -244,20 +243,16 @@ void graphics_clear_screen(uint32_t color) {
 }
 
 static inline void put_pixel(uint32_t x, uint32_t y, uint32_t color) {
-    /*
     if (x >= current_width || y >= current_height) {
-        serial_write_str("Failed to put pixel, out of bounds");
-        while(1) {} // Hang
         return;
     }
-        */
     // ((volatile uint32_t*)backbuffer)[y * pixels_per_line + x] = color;
-    ((volatile uint32_t*)backbuffer)[y * pixels_per_line + x] = color; // regular RAM buffer doesn't need volatile
+    backbuffer[y * pixels_per_line + x] = color; // regular RAM buffer doesn't need volatile
 }
 
 void graphics_draw_rect(uint32_t x, uint32_t y, uint32_t w, uint32_t h, uint32_t color) {
     for (uint32_t j = 0; j < h; j++) {
-        volatile uint32_t* row = (uint32_t*)backbuffer + (y + j) * pixels_per_line + x;
+        uint32_t* row = (uint32_t*)backbuffer + (y + j) * pixels_per_line + x;
         uint64_t packed = ((uint64_t)color << 32) | color;
         memset_fast_qword((void*)row, packed, w / 2);
         if (w & 1) row[w - 1] = color;
@@ -273,7 +268,7 @@ void graphics_draw_char(char c, uint32_t x, uint32_t y, uint32_t color) {
     const uint8_t* glyph = font8x8_basic[(uint8_t)c];  // no -32
     for (uint32_t row = 0; row < 8; row++) {
         uint8_t bits = glyph[row];
-        volatile uint32_t* row_ptr = backbuffer + (y + row) * pixels_per_line + x;
+        uint32_t* row_ptr = backbuffer + (y + row) * pixels_per_line + x;
 
         for (uint32_t col1 = 0; col1 < 8; col1++) {
             if (bits & (1 << col1)) {
@@ -298,10 +293,13 @@ void graphics_draw_string(const char* str, uint32_t x, uint32_t y, uint32_t colo
     }
 }
 
+void graphics_put_pixel(uint32_t x, uint32_t y, uint32_t color) {
+    put_pixel(x, y, color);
+    mark_dirty(x, y, 1, 1);
+}
+
 void graphics_draw_hex(uint64_t val, uint32_t x, uint32_t y, uint32_t color) {
     const char* hex = "0123456789ABCDEF";
-
-    serial_write_str("0x");
 
     for (int i = 60; i >= 0; i -= 4) {
         uint8_t nibble = (val >> i) & 0xF;

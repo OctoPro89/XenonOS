@@ -10,18 +10,15 @@ static const u32 yoff = 50;
 static const u32 char_width = 8;
 static const u32 char_height = 8;
 
-void stdio_impl_putchr(char c)
-{
+void stdio_impl_putchr(char c) {
     serial_write_char(c);
 
     u32 width = graphics_get_framebuffer_width();
     u32 height = graphics_get_framebuffer_height();
 
-    u32 chars_per_line =
-        (width - xoff) / char_width;
+    u32 chars_per_line = (width - xoff) / char_width;
 
-    u32 lines =
-        (height - yoff) / char_height;
+    u32 lines = (height - yoff) / char_height;
 
     if (c == '\n') {
         cursor_x = 0;
@@ -36,18 +33,14 @@ void stdio_impl_putchr(char c)
 
         cursor_x++;
 
-        /*
-         * Automatically wrap at the right edge.
-         */
+        // automatically wrap at the right edge
         if (cursor_x >= chars_per_line) {
             cursor_x = 0;
             cursor_y++;
         }
     }
 
-    /*
-     * We've gone below the last visible row.
-     */
+    // gone below the last visible row
     if (cursor_y >= lines) {
         graphics_scroll(char_height, 0x00000000);
         cursor_y = lines - 1;

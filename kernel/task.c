@@ -430,9 +430,6 @@ void task_sleep_ns(u64 ns) {
     xassert(task != NULL, "sleep with no current task");
 
     u64 flags = irq_save();
-    if (!irq_was_enabled(flags)) {
-        int i =0;
-    }
     xassert(irq_was_enabled(flags), "task_sleep_ns with interrupts disabled");
 
     u64 now = ktimer_get_system_time_in_nanoseconds();
@@ -496,9 +493,6 @@ void task_block_on(wait_queue_t* queue) {
     u64 flags = irq_save();
 
     // sleeping / blocking with interrupts already disabled is currently not a supported public API
-    if (!irq_was_enabled(flags)) {
-        int i = 0;
-    }
     xassert(irq_was_enabled(flags), "task_block_on with interrupts disabled");
 
     task_block_current_locked(queue);

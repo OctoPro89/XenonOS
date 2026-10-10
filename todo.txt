@@ -1,11 +1,7 @@
 make derefing NULL page fault
-scroll screen on printf
+scroll screen on printf - sorta
 named tasks
-destroy finished tasks
 cleanup in elf.c
 mass storage driver
 
-currently can only poll either mouse or keyboard because there are no processes / multitasking,
-this also means plugging USB devices in after boot doesn't work because setup device
-had to be moved out of irq handler
-timer doesn't work quite right
+maybe timer doesn't work quite right on some real hardware systems

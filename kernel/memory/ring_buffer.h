@@ -2,6 +2,7 @@
 
 #include <xlibc/xstdint.h>
 #include <xlibc/xstddef.h>
+#include <arch/x86_64/sync/sync.h>
 
 typedef struct {
     u8* data;
@@ -10,6 +11,7 @@ typedef struct {
     size_t head; // write position
     size_t tail; // read position
     size_t count; // number of elements currently stored
+    spinlock_t lock;
 } ring_buffer_t;
 
 /**
@@ -41,5 +43,5 @@ b8 ring_buffer_pop(ring_buffer_t* rb, void* elem);
 /**
  * Look at the oldest / newest element without removing it.
  */
-b8 ring_buffer_peek(const ring_buffer_t* rb, void* elem);
-b8 ring_buffer_peek_back(const ring_buffer_t* rb, void* elem);
+b8 ring_buffer_peek(ring_buffer_t* rb, void* elem);
+b8 ring_buffer_peek_back(ring_buffer_t* rb, void* elem);

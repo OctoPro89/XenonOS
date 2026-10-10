@@ -38,6 +38,8 @@
 
 #include <graphics/graphics.h>
 
+#include <de/de.h>
+
 #include <memory/paging.h>
 #include <memory/pmm.h>
 #include <memory/vmm.h>
@@ -174,6 +176,7 @@ static void kernel_main(void* arg) {
     printf("XHCI Driver initialized successfully\n");
     printf("\n");
 
+    /*
     PCI_Device* ahci_dev = pci_find_ahci(); // find AHCI device
     if (ahci_dev == NULL) {
         printf("Failed to find AHCI device!\n");
@@ -225,6 +228,7 @@ static void kernel_main(void* arg) {
     vfs_mount_root(&fat32_ops, (void*)&fs);
 
     printf("Set up Virtual File System successfully\n");
+    */
 
     /*
     FILE* f = fopen("testlongfilename.txt", "r");
@@ -263,7 +267,12 @@ static void kernel_main(void* arg) {
     task_t* xhci_driver_task = task_create(NULL, xhci_driver_task_entry, (void*)&xhci_driver);
 
     printf("Launching usermode shell\n");
-    launch_shell();
+    // launch_shell();
+
+    task_t* de_task = task_create(NULL, desktop_env_task_entry, NULL);
+    for (;;) {
+        task_yield();
+    }
 
     u64 last_second = 0;
 
@@ -304,7 +313,7 @@ void ASMCALL kernel_main_trampoline(BootInfo* bootInfo) {
 
     printf("Starting kernel main task!\n");
 
-    ktimer_calibrate_cpu_timer(4);
+    ktimer_calibrate_cpu_timer(1);
 
     scheduler_init(timer_irq_vector);
     
