@@ -35,4 +35,7 @@ typedef struct {
     uint16_t name[36]; // UTF-16
 } gpt_entry;
 
+/**
+ * @brief Searches for a GPT partition using `dev`
+ */
 int gpt_find_fat32(block_device* dev, uint64_t* out_lba);

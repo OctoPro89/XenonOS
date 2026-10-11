@@ -5,6 +5,10 @@
 #include <xlibc/string.h>
 #include <xlibc/xassert.h>
 
+#include <memory/paging.h>
+
+#include <kernel.h>
+
 #include <drivers/usb/usb_descriptors.h>
 
 #define MSC_BOT_RESET          0xFF
@@ -17,13 +21,25 @@
 
 #define USB_TRANSFER_TYPE_BULK 0x02
 
+static msc_driver_initalize_notify_t g_initialize_callback = NULL;
+
 /**
  * @brief SCSI multi-byte response fields are big-endian.
  * BOT CBW/CSW integer fields use the host's little-endian
  * representation on x86-64 kernel
  */
-static u32 msc_be32(const u8* p) {
+static __hint_inline__ u32 msc_be32(const u8* p) {
     return ((u32)p[0] << 24) | ((u32)p[1] << 16) | ((u32)p[2] << 8)  | ((u32)p[3]);
+}
+
+/**
+ * @brief Write a big endian value into a pointer
+ */
+static __hint_inline__ void msc_put_be32(u8* p, u32 value) {
+    p[0] = (u8)(value >> 24);
+    p[1] = (u8)(value >> 16);
+    p[2] = (u8)(value >> 8);
+    p[3] = (u8)value;
 }
 
 /**
@@ -196,6 +212,32 @@ static b8 msc_scsi_read_capacity(msc_driver_t* self) {
     return true;
 }
 
+static b8 msc_scsi_read10(msc_driver_t* self, u32 lba, u16 block_count, void* buffer) {
+    if (!self || !self->initialized || !buffer || block_count == 0 || self->block_size == 0) {
+        return false;
+    }
+
+    // check that the requested range is within the device
+    if (lba >= self->block_count || (u32)block_count > self->block_count - lba) {
+        return false;
+    }
+
+    // avoid overflowing the transfer length of BOT API limits
+    u64 bytes64 = (u64)block_count * self->block_size;
+    if (bytes64 > 0xFFFFFFFFu) {
+        return false;
+    }
+
+    u8 cdb[10];
+    memset(cdb, 0, sizeof(cdb));
+    cdb[0] = SCSI_READ_10;
+    msc_put_be32(&cdb[2], lba);
+    cdb[7] = (u8)(block_count >> 8);
+    cdb[8] = (u8)block_count;
+
+    return msc_bot_command(self, cdb, sizeof(cdb), buffer, (u32)bytes64, true);
+}
+
 static const usb_endpoint_t* msc_find_endpoint(const usb_interface_t* iface, u8 transfer_type, b8 direction_in) {
     if (!iface) { return NULL; }
 
@@ -215,6 +257,8 @@ static const usb_endpoint_t* msc_find_endpoint(const usb_interface_t* iface, u8 
 
     return NULL;
 }
+
+// --- IUSBDRIVER --- //
 
 static b8 msc_driver_probe(void* _self, usb_device_t* dev, usb_interface_t* iface) {
     msc_driver_t* self = (msc_driver_t*)_self;
@@ -285,7 +329,20 @@ static void msc_driver_run(void* _self) {
         return;
     }
 
-    task_yield(); // nothing to do yet
+    if (!msc_scsi_read_capacity(self)) {
+        printf("[MSC]: Initialization stopped at READ CAPACITY\n");
+        return;
+    }
+
+    if (self->disconnected || self->dev->disconnect_pending) {
+        return;
+    }
+
+    self->initialized = true;
+
+    printf("[USB-MSC]: Device initialized successfully\n");
+
+    g_initialize_callback(self);
 }
 
 static void msc_driver_disconnect(void* _self) {
@@ -310,6 +367,76 @@ static void msc_driver_destroy(void* _self) {
 
     self->iface = NULL;
     self->initialized = false;
+}
+
+// --- IUSBDRIVER --- //
+
+// --- BLOCK DEVICE DRIVER --- //
+
+int msc_block_read(void* driver_data, u64 lba, u32 count, void* buffer) {
+    msc_driver_t* msc = (msc_driver_t*)driver_data;
+
+    if (!msc || !msc->initialized || !buffer || count == 0) {
+        return 0;
+    }
+
+    if (msc->block_size == 0 || lba >= msc->block_count) {
+        return 0;
+    }
+
+    if ((u64)count > msc->block_count - lba) {
+        return 0;
+    }
+
+    /*
+     * READ (10) uses a 32-bit LBA. Your XHCI normal-transfer
+     * implementation also currently limits each transfer to PAGE_SIZE.
+     * Split larger reads into smaller commands.
+     */
+    if (lba > 0xFFFFFFFFULL) {
+        return 0;
+    }
+
+    u32 max_blocks = PAGE_SIZE / msc->block_size;
+    if (max_blocks == 0) {
+        return 0;
+    }
+
+    if (max_blocks > 65535) {
+        max_blocks = 65535;
+    }
+
+    u8* dst = (u8*)buffer;
+
+    while (count > 0) {
+        u32 chunk = count;
+        if (chunk > max_blocks) {
+            chunk = max_blocks;
+        }
+
+        if (lba > 0xFFFFFFFFULL) {
+            return 0;
+        }
+
+        if (!msc_scsi_read10(msc, (u32)lba, (u16)chunk, dst)) {
+            printf("[USB-MSC]: Read failed at LBA %llu\n", (unsigned long long)lba);
+            return 0;
+        }
+
+        u64 bytes = (u64)chunk * msc->block_size;
+        dst += bytes;
+        lba += chunk;
+        count -= chunk;
+    }
+
+    return 1;
+}
+
+// --- BLOCK DEVICE DRIVER --- //
+
+void msc_driver_set_initialize_notify_callback(msc_driver_initalize_notify_t callback) {
+    // TODO: probably needs lock but screw it
+    g_initialize_callback = callback;
 }
 
 IUSBDRIVER* msc_driver_factory(usb_device_t* dev, usb_interface_t* iface) {

@@ -94,10 +94,43 @@ void timer_handler(struct regs* r, void* _) {
     scheduler_wake_sleepers(ktimer_get_system_time_in_nanoseconds());
 } 
 
+static b8 boot_usb_ready = false;
+static spinlock_t boot_usb_lock;
+static wait_queue_t boot_usb_wq;
+
+block_device boot_usb;
+u64 part_lba;
+
+void usb_drive_init(msc_driver_t* drv) {
+    boot_usb = (block_device){
+        .driver_data = (void*)drv,
+        .read = msc_block_read,
+    };
+    
+    printf("Finding FAT32 partition\n");
+
+    if (!gpt_find_fat32(&boot_usb, &part_lba)) {
+        printf("No FAT32 partition found\n");
+        return;
+    }
+
+    printf("Found FAT32 partition successfully\n");
+
+    u64 flags = 0;
+    spin_lock_irqsave(&boot_usb_lock, &flags);
+    boot_usb_ready = true;
+    spin_unlock_irqrestore(&boot_usb_lock, flags);
+    wait_queue_wake_all(&boot_usb_wq);
+    msc_driver_set_initialize_notify_callback(NULL); // don't get another callback
+}
+
 void kernel_assign_usb_drivers() {
     usb_core_register_driver("USB-HID DRIVER", USB_MAKE_MATCH(USB_CLASS_HID, USB_MATCH_ANY, USB_MATCH_ANY), hid_driver_factory);
     // registers USB Mass Storage interface using SCSI tranparent commands over Bulk-Only-Transport only
     usb_core_register_driver("USB-MSC DRIVER", USB_MAKE_MATCH(USB_CLASS_MASS_STORAGE, MSC_SUBCLASS_SCSI, MSC_PROTOCOL_BULK_ONLY), msc_driver_factory);
+
+    // make sure to get one callback from boot USB
+    msc_driver_set_initialize_notify_callback(usb_drive_init); // don't get another callback
 }
 
 u32 system_console_write_len = 0;
@@ -230,18 +263,6 @@ static void kernel_main(void* arg) {
 
     printf("XenonOS v0.1\n");
 
-    window_server_init();
-    xenon_surface_t framebuffer_surface;
-    framebuffer_surface.height = graphics_get_framebuffer_height();
-    framebuffer_surface.width = graphics_get_framebuffer_width();
-    framebuffer_surface.stride = graphics_get_framebuffer_stride();
-    if (!compositor_init(&framebuffer_surface)) {
-        printf("Failed to init compositor!\n");
-        for (;;);
-    }
-
-    task_t* system_console_task = task_create(NULL, system_console_task_entry, NULL);
-
     printf("Scanning for PCI devices...\n");
 
     pci_scan(); // find pci devices
@@ -277,6 +298,7 @@ static void kernel_main(void* arg) {
     printf("XHCI Driver initialized successfully\n");
     printf("\n");
 
+    /*
     PCI_Device* ahci_dev = pci_find_ahci(); // find AHCI device
     if (ahci_dev == NULL) {
         printf("Failed to find AHCI device!\n");
@@ -302,32 +324,7 @@ static void kernel_main(void* arg) {
         .driver_data = (void*)port,
         .read = ahci_block_read,
     };
-
-    printf("Finding FAT32 partition\n");
-
-    u64 part_lba;
-
-    if (!gpt_find_fat32(&boot_disk, &part_lba)) {
-        printf("No FAT32 partition found\n");
-        while (1);
-    }
-
-    printf("Found FAT32 partition successfully\n");
-
-    printf("Initializing FAT32 driver\n");
-
-    FAT32_FS fs;
-    fat32_init(&fs, &boot_disk, part_lba);
-    fat32_list_root(&fs);
-
-    printf("Initialized FAT32 driver successfully\n");
-    printf("\n");
-
-    printf("Setting up Virtual File System\n");
-
-    vfs_mount_root(&fat32_ops, (void*)&fs);
-
-    printf("Set up Virtual File System successfully\n");
+    */
 
     /*
     FILE* f = fopen("testlongfilename.txt", "r");
@@ -365,6 +362,42 @@ static void kernel_main(void* arg) {
     printf("Creating XHCI driver task!\n");
     task_t* xhci_driver_task = task_create(NULL, xhci_driver_task_entry, (void*)&xhci_driver);
 
+    // wait until boot USB drive is set up before launching shit
+    u64 flags = 0;
+    spin_lock_irqsave(&boot_usb_lock, &flags);
+    while (!boot_usb_ready) {
+        flags = task_wait(&boot_usb_wq, &boot_usb_lock, flags);
+    }
+    spin_unlock_irqrestore(&boot_usb_lock, flags);
+
+    printf("Initializing FAT32 driver\n");
+
+    FAT32_FS fs;
+    fat32_init(&fs, &boot_usb, part_lba);
+    fat32_list_root(&fs);
+
+    printf("Initialized FAT32 driver successfully\n");
+    printf("\n");
+
+    printf("Setting up Virtual File System\n");
+
+    vfs_mount_root(&fat32_ops, (void*)&fs);
+
+    printf("Set up Virtual File System successfully\n");
+
+    // boot USB plugged in and set up
+    window_server_init();
+    xenon_surface_t framebuffer_surface;
+    framebuffer_surface.height = graphics_get_framebuffer_height();
+    framebuffer_surface.width = graphics_get_framebuffer_width();
+    framebuffer_surface.stride = graphics_get_framebuffer_stride();
+    if (!compositor_init(&framebuffer_surface)) {
+        printf("Failed to init compositor!\n");
+        for (;;);
+    }
+
+    task_t* system_console_task = task_create(NULL, system_console_task_entry, NULL);
+
     printf("Launching usermode shell\n");
     task_t* launch_shell_task = task_create(NULL, launch_shell_task_entry, NULL);
 
@@ -395,6 +428,9 @@ void ASMCALL kernel_main_trampoline(BootInfo* bootInfo) {
 
     // needs to run before any printing
     spin_lock_init(&system_console_lock);
+
+    spin_lock_init(&boot_usb_lock);
+    wait_queue_init(&boot_usb_wq);
 
     printf("Starting kernel main task!\n");
 

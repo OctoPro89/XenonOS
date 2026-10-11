@@ -27,4 +27,10 @@ typedef struct msc_driver {
     b8 disconnected;
 } msc_driver_t;
 
+int msc_block_read(void* driver_data, u64 lba, u32 count, void* buffer);
+
+// TODO: find better solution
+typedef void (*msc_driver_initalize_notify_t)(msc_driver_t* drv);
+void msc_driver_set_initialize_notify_callback(msc_driver_initalize_notify_t callback);
+
 IUSBDRIVER* msc_driver_factory(usb_device_t* dev, usb_interface_t* iface);

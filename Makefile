@@ -138,12 +138,28 @@ run: image userapps
 
 	# USB drive for testing
 	dd if=/dev/zero of=image/usb.img bs=1M count=64
-	sudo mkfs.fat -F 32 -I image/usb.img
-	
-	sudo losetup -f image/usb.img
-	sudo mount /dev/loop0 /mnt
+
+	sudo parted image/usb.img --script \
+    mklabel gpt \
+    mkpart ESP fat32 1MiB 100% \
+    set 1 esp on
+
+	sudo losetup -Pf image/usb.img
+
+	# Format it as FAT32
+	sudo mkfs.fat -F 32 /dev/loop0p1
+
+	# Mount the image to copy files
+	sudo mount /dev/loop0p1 /mnt
+	sudo mkdir -p /mnt/EFI/BOOT
+	sudo mkdir -p /mnt/bin
+	sudo cp build/BOOTX64.EFI /mnt/EFI/BOOT/
+	sudo cp build/kernel.elf /mnt/
 	sudo cp testlongfilename.txt /mnt/
+	sudo cp build/applications/sh /mnt/bin/
+	sudo cp hello /mnt/bin/
 	sudo umount /mnt
+
 	sudo losetup -d /dev/loop0
 
 	qemu-system-x86_64 \

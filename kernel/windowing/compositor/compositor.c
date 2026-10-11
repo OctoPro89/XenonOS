@@ -296,8 +296,9 @@ void compositor_invalidate() { frame_invalidated = true; }
 void compositor_render() {
     if (!target || !frame_invalidated) { return; }
 
+    // TODO: this can cause buggyness, should probably use an atomic or some shit
     frame_invalidated = false;
-    
+
     // copy metadata under the window-server lock, the surface lifetime msut remain valid until this frame finishes, still a prototype
     snapshot_count = window_server_snapshot(snapshots, COMPOSITOR_MAX_WINDOWS);
 

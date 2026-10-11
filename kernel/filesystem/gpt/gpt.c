@@ -16,13 +16,16 @@ int gpt_find_fat32(block_device* dev, uint64_t* out_lba) {
     void* sector = kmalloc(512);
 
     // Read GPT header
-    if (!dev->read(dev->driver_data, 1, 1, sector))
+    if (!dev->read(dev->driver_data, 1, 1, sector)) {
+        kfree(sector);
         return 0;
+    }
 
     gpt_header* hdr = (gpt_header*)sector;
 
     if (memcmp(hdr->signature, "EFI PART", 8) != 0) {
         serial_write_str("No GPT\n");
+        kfree(sector);
         return 0;
     }
 
@@ -41,6 +44,7 @@ int gpt_find_fat32(block_device* dev, uint64_t* out_lba) {
 
         if (memcmp(ent->type_guid, ESP_GUID, 16) == 0) {
             *out_lba = ent->first_lba;
+            kfree(sector);
             return 1;
         }
     }

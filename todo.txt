@@ -1,7 +1,7 @@
 make derefing NULL page fault
-scroll screen on printf - sorta
 named tasks
 cleanup in elf.c
 mass storage driver
+printf needs to work atomically
 
 maybe timer doesn't work quite right on some real hardware systems

@@ -263,13 +263,13 @@ static void xhci_driver_process_events(xhci_driver_t* driver) {
                             }
                         }
                         else {
-                            xhci_driver_complete_endpoint_transfer(driver, &dev->ctrl_completion_lock, &dev->ctrl_completion_wq, &ep->result, &ep->completed, e);
+                            xhci_driver_complete_endpoint_transfer(driver, &ep->completion_lock, &ep->completion_wq, &ep->result, &ep->completed, e);
                         }
 
                         break;
                     }
 
-                    xhci_driver_complete_endpoint_transfer(driver, &dev->ctrl_completion_lock, &dev->ctrl_completion_wq, &ep->result, &ep->completed, e);
+                    xhci_driver_complete_endpoint_transfer(driver, &ep->completion_lock, &ep->completion_wq, &ep->result, &ep->completed, e);
 
                     break;
                 }
@@ -993,7 +993,7 @@ static b8 xhci_driver_submit_normal_transfer(xhci_driver_t* driver, xhci_device_
     if (!state_rc) { return false; }
 
     // copy OUT data into DMA buffer before enqueue
-    if (XHCI_ENDPOINT_IS_IN(*ep) && buffer && length > 0) {
+    if (!XHCI_ENDPOINT_IS_IN(*ep) && buffer && length > 0) {
         memcpy((void*)ep->dma_buffer.virt, buffer, length);
     }
 
