@@ -244,7 +244,7 @@ static task_t* scheduler_next() {
     } while (candidate != start);
 
     // if the current normal task can continue, keep running it
-    if (current_task->state == TASK_RUNNABLE && !current_task->is_idle) {
+    if ((current_task->state == TASK_RUNNABLE || current_task->state == TASK_RUNNING) && !current_task->is_idle) {
         return current_task;
     }
 

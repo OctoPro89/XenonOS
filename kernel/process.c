@@ -117,7 +117,7 @@ int process_wait(process_t* process) {
             return status;
         }
 
-        task_wait(&process->waiters, &process->lock, flags);
+        flags = task_wait(&process->waiters, &process->lock, flags);
 
         // task_wait() returns with the lock held and ints disabled
         spin_unlock_irqrestore(&process->lock, flags);

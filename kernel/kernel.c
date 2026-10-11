@@ -172,6 +172,7 @@ void system_console_task_entry(void* arg) {
 
     char local_buffer[1024];
 
+    /*
     for (;;) {
         size_t len;
 
@@ -192,6 +193,7 @@ void system_console_task_entry(void* arg) {
             task_yield();
         }
     }
+    */
 }
 
 void launch_shell_task_entry(void* arg) {
@@ -217,8 +219,8 @@ void launch_shell_task_entry(void* arg) {
     terminal_t* terminal = console_terminal();
 
     terminal_init(terminal);
-    terminal_attach_window(terminal, terminal_window);
-    terminal_start_input_task(terminal);
+    // terminal_attach_window(terminal, terminal_window);
+    // terminal_start_input_task(terminal);
 
     process_t* process = process_create();
     if (!process) {
@@ -396,9 +398,9 @@ static void kernel_main(void* arg) {
         for (;;);
     }
 
-    task_t* system_console_task = task_create(NULL, system_console_task_entry, NULL);
+    // task_t* system_console_task = task_create(NULL, system_console_task_entry, NULL);
 
-    printf("Launching usermode shell\n");
+    // printf("Launching usermode shell\n");
     task_t* launch_shell_task = task_create(NULL, launch_shell_task_entry, NULL);
 
     for (;;) {

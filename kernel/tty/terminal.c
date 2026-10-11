@@ -272,7 +272,7 @@ static void terminal_input_task(void* arg) {
         input_keyboard_event_t evt;
 
         if (!input_pop_keyboard_event(&evt)) {
-            task_yield();
+            task_sleep_ms(10);
             continue;
         }
 
@@ -357,9 +357,9 @@ ssize_t terminal_read(terminal_t* terminal, void* buffer, size_t size) {
             return (ssize_t)copied;
         }
 
-        task_wait(&terminal->read_waiters, &terminal->lock, flags);
+        flags = task_wait(&terminal->read_waiters, &terminal->lock, flags);
 
-        spin_unlock_irqrestore(&terminal->lock, flags );
+        spin_unlock_irqrestore(&terminal->lock, flags);
     }
 }
 
