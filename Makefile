@@ -136,13 +136,25 @@ run: image userapps
 
 	sudo losetup -d /dev/loop0
 
+	# USB drive for testing
+	dd if=/dev/zero of=image/usb.img bs=1M count=64
+	sudo mkfs.fat -F 32 -I image/usb.img
+	
+	sudo losetup -f image/usb.img
+	sudo mount /dev/loop0 /mnt
+	sudo cp testlongfilename.txt /mnt/
+	sudo umount /mnt
+	sudo losetup -d /dev/loop0
+
 	qemu-system-x86_64 \
     -drive if=none,id=disk0,format=raw,file=image/disk.img \
+	-drive if=none,id=stick,format=raw,file=image/usb.img \
     -device ahci,id=ahci \
     -device ide-hd,bus=ahci.0,drive=disk0 \
 	-device qemu-xhci,p3=2,id=xhci \
 	-device usb-kbd,bus=xhci.0 \
 	-device usb-mouse,bus=xhci.0 \
+	-device usb-storage,bus=xhci.0,drive=stick \
     -bios /usr/share/ovmf/OVMF.fd \
     -boot order=c \
     -serial stdio \

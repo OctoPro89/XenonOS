@@ -10,8 +10,6 @@
 #define MAX_USB_DEVICES 16
 static usb_device_t* g_devices[MAX_USB_DEVICES];
 static IUSBDRIVER* g_bound_drivers[MAX_USB_DEVICES * 16];
-static IUSBDRIVER* g_active_drivers[MAX_USB_DEVICES * 16];
-static u16 g_active_driver_count = 0;
 static usb_core_interface_driver_entry_t g_registered_drivers[MAX_USB_DEVICES * 16];
 static u16 g_registered_driver_count = 0;
 
@@ -151,7 +149,9 @@ void usb_core_device_configured(xhci_driver_t* driver, xhci_device_t* xdev, cons
 
             task_t* task = task_create(NULL, class_driver_task_entry, (void*)drv);
             if (!task) {
+                xassert(false, "");
                 printf("[USB CORE]: Failed to create task for %s\n", drv->name);
+                return;
             }
 
             task->name = drv->name;

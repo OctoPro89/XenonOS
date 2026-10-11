@@ -296,6 +296,8 @@ void compositor_invalidate() { frame_invalidated = true; }
 void compositor_render() {
     if (!target || !frame_invalidated) { return; }
 
+    frame_invalidated = false;
+    
     // copy metadata under the window-server lock, the surface lifetime msut remain valid until this frame finishes, still a prototype
     snapshot_count = window_server_snapshot(snapshots, COMPOSITOR_MAX_WINDOWS);
 
@@ -308,7 +310,6 @@ void compositor_render() {
     xenon_surface_image_data(target, (u32)cursor_x, (u32)cursor_y, mouse_cursor_data, CURSOR_W, CURSOR_H, true);
 
     xenon_surface_present(target);
-    frame_invalidated = false;
 }
 
 static i32 hit_test(i32 x, i32 y) {

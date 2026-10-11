@@ -112,9 +112,37 @@ static void terminal_render_grid(terminal_t* terminal, window_surface_t* surface
     for (u32 row = 0; row < terminal->rows; ++row) {
         for (u32 col = 0; col < terminal->columns; ++col) {
             char c = terminal->cells[row][col].ch;
-
+            if (c == ' ') { continue; }
             window_surface_render_char(surface, c, (i32)(col * TERMINAL_FONT_WIDTH), (i32)(row * TERMINAL_FONT_HEIGHT), terminal->foreground/* TODO: , terminal->background */);
         }
+    }
+}
+
+static void terminal_scroll_up(terminal_t* terminal) {
+    if (!terminal || terminal->rows == 0 || terminal->columns == 0) {
+        return;
+    }
+
+    for (u32 row = 1; row < terminal->rows; ++row) {
+        for (u32 col = 0; col < terminal->columns; ++col) {
+            terminal->cells[row - 1][col] = terminal->cells[row][col];
+        }
+    }
+
+    u32 last_row = terminal->rows - 1;
+
+    for (u32 col = 0; col < terminal->columns; ++col) {
+        terminal->cells[last_row][col].ch = ' ';
+    }
+
+    terminal->cursor_y = last_row;
+
+    if (terminal->window && terminal->surface.pixels) {
+        window_surface_render_rect(&terminal->surface, 0, 0, terminal->surface.width, terminal->surface.height, 0xFF101722);
+        terminal_render_grid(terminal, &terminal->surface);
+
+        // damage coordinates are local to the window not desktop
+        window_damage(terminal->window, 0, 0, (i32)terminal->surface.width, (i32)terminal->surface.height);
     }
 }
 
@@ -124,7 +152,7 @@ static void terminal_advance_line(terminal_t* terminal) {
     if (terminal->cursor_y + 1 < terminal->rows) {
         terminal->cursor_y++;
     } else {
-        // TODO: scroll the terminal's character grid up one row then redraw the affected area.
+        terminal_scroll_up(terminal);
     }
 }
 
@@ -355,9 +383,10 @@ ssize_t terminal_write(terminal_t* terminal, const void* buffer, size_t size) {
 
     // TODO: fix don't do in a lock
     if (terminal->window && terminal->surface.pixels) {
+        window_surface_render_rect(&terminal->surface, 0, 0, terminal->surface.width, terminal->surface.height, terminal->background);
+
         terminal_render_grid(terminal, &terminal->surface);
 
-        // damage coordinates are local to the window not desktop
         window_damage(terminal->window, 0, 0, (i32)terminal->surface.width, (i32)terminal->surface.height);
     }
 

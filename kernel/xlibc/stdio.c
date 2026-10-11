@@ -81,22 +81,54 @@ int fseek(FILE* stream, long offset, int whence) {
     return vfs_seek(vf, (u32)new_pos);
 }
 
+// TODO: need a better solution
+#include <arch/x86_64/sync/sync.h>
+
+extern u32 system_console_write_len;
+extern char system_console_buffer[1024];
+extern spinlock_t system_console_lock;
+extern b8 system_console_initialized;
+
 extern void stdio_impl_putchr(char c);
 
 void putc(char c)
 {
     switch (c)
     {
-        case '\t':
-            for (int i = 0; i < 4; i++) { stdio_impl_putchr(' '); }
+        case '\t': {
+            u64 flags = 0;
+            spin_lock_irqsave(&system_console_lock, &flags);
+            if (system_console_initialized) {
+                if (system_console_write_len + 4 < 1024) {
+                    memset((void*)&system_console_buffer[system_console_write_len], ' ', 4);
+                    system_console_write_len += 4;
+                }
+            }
+            else {
+                for (int i = 0; i < 4; i++) { stdio_impl_putchr(' '); }
+            }
+            spin_unlock_irqrestore(&system_console_lock, flags);
             break;
+        }
 
         case '\r':
             break;
 
-        default:
-            stdio_impl_putchr(c);
+        default: {
+            u64 flags = 0;
+            spin_lock_irqsave(&system_console_lock, &flags);
+            if (system_console_initialized) {
+                if (system_console_write_len + 1 < 1024) {
+                    system_console_buffer[system_console_write_len++] = c;
+                }
+            }
+            else {
+                stdio_impl_putchr(c);
+            }
+
+            spin_unlock_irqrestore(&system_console_lock, flags);
             break;
+        }
     }
 }
 

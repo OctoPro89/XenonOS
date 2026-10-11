@@ -20,6 +20,7 @@
 
 #include <drivers/usb/core/usb_core.h>
 #include <drivers/usb/hid/hid_driver.h>
+#include <drivers/usb/mass_storage/msc_driver.h>
 
 #include <drivers/input/input.h>
 
@@ -95,13 +96,70 @@ void timer_handler(struct regs* r, void* _) {
 
 void kernel_assign_usb_drivers() {
     usb_core_register_driver("USB-HID DRIVER", USB_MAKE_MATCH(USB_CLASS_HID, USB_MATCH_ANY, USB_MATCH_ANY), hid_driver_factory);
+    // registers USB Mass Storage interface using SCSI tranparent commands over Bulk-Only-Transport only
+    usb_core_register_driver("USB-MSC DRIVER", USB_MAKE_MATCH(USB_CLASS_MASS_STORAGE, MSC_SUBCLASS_SCSI, MSC_PROTOCOL_BULK_ONLY), msc_driver_factory);
 }
 
-#include <tty/terminal.h>
+u32 system_console_write_len = 0;
+char system_console_buffer[1024];
+spinlock_t system_console_lock;
+b8 system_console_initialized = false;
 
-#include <process.h>
-#include <xlibc/string.h>
-#include <xlibc/stdio.h>
+void system_console_task_entry(void* arg) {
+    (void)arg;
+
+    window_config_t wconfig = {
+        .title = "System Console",
+        .rect = {
+            .x = 780,
+            .y = 120,
+            .width = 400,
+            .height = 300
+        },
+        .type = WINDOW_TYPE_NORMAL,
+        .flags = 0
+    };
+
+    terminal_t system_console_term;
+    window_t* system_console = window_create(&wconfig);
+
+    if (!system_console) {
+        return;
+    }
+
+    terminal_init(&system_console_term);
+    terminal_attach_window(&system_console_term, system_console);
+
+    u64 flags;
+
+    spin_lock_irqsave(&system_console_lock, &flags);
+    system_console_write_len = 0;
+    system_console_initialized = true;
+    spin_unlock_irqrestore(&system_console_lock, flags);
+
+    char local_buffer[1024];
+
+    for (;;) {
+        size_t len;
+
+        spin_lock_irqsave(&system_console_lock, &flags);
+
+        len = system_console_write_len;
+
+        if (len > 0) {
+            memcpy(local_buffer, system_console_buffer, len);
+            system_console_write_len = 0;
+        }
+
+        spin_unlock_irqrestore(&system_console_lock, flags);
+
+        if (len > 0) {
+            terminal_write(&system_console_term, local_buffer, len);
+        } else {
+            task_yield();
+        }
+    }
+}
 
 void launch_shell_task_entry(void* arg) {
     (void)arg;
@@ -164,13 +222,6 @@ void launch_shell_task_entry(void* arg) {
     window_destroy(terminal_window);
 }
 
-static uint32_t next_random = 123456789;
-
-int my_rand_15bit() {
-    next_random = next_random * 1103515245 + 12345;
-    return (int)(next_random / 65536) % 32768; // Returns 0 to 32767
-}
-
 static void kernel_main(void* arg) {
     if (!input_init()) {
         xassert(false, "");
@@ -178,6 +229,18 @@ static void kernel_main(void* arg) {
     kernel_assign_usb_drivers();
 
     printf("XenonOS v0.1\n");
+
+    window_server_init();
+    xenon_surface_t framebuffer_surface;
+    framebuffer_surface.height = graphics_get_framebuffer_height();
+    framebuffer_surface.width = graphics_get_framebuffer_width();
+    framebuffer_surface.stride = graphics_get_framebuffer_stride();
+    if (!compositor_init(&framebuffer_surface)) {
+        printf("Failed to init compositor!\n");
+        for (;;);
+    }
+
+    task_t* system_console_task = task_create(NULL, system_console_task_entry, NULL);
 
     printf("Scanning for PCI devices...\n");
 
@@ -302,16 +365,6 @@ static void kernel_main(void* arg) {
     printf("Creating XHCI driver task!\n");
     task_t* xhci_driver_task = task_create(NULL, xhci_driver_task_entry, (void*)&xhci_driver);
 
-    window_server_init();
-    xenon_surface_t framebuffer_surface;
-    framebuffer_surface.height = graphics_get_framebuffer_height();
-    framebuffer_surface.width = graphics_get_framebuffer_width();
-    framebuffer_surface.stride = graphics_get_framebuffer_stride();
-    if (!compositor_init(&framebuffer_surface)) {
-        printf("Failed to init compositor!\n");
-        for (;;);
-    }
-
     printf("Launching usermode shell\n");
     task_t* launch_shell_task = task_create(NULL, launch_shell_task_entry, NULL);
 
@@ -339,6 +392,9 @@ void ASMCALL kernel_main_trampoline(BootInfo* bootInfo) {
 
     graphics_init(&bootInfo->fb);
     graphics_clear_screen(0);
+
+    // needs to run before any printing
+    spin_lock_init(&system_console_lock);
 
     printf("Starting kernel main task!\n");
 

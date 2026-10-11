@@ -6,17 +6,15 @@
 #include <arch/x86_64/sync/sync.h>
 #include <windowing/window/surface.h>
 
-#define TERMINAL_BUFFER_SIZE 4096
+#define TERMINAL_BUFFER_SIZE 1024
 
 #define TERMINAL_COLUMNS  100
-#define TERMINAL_ROWS     30
+#define TERMINAL_ROWS     20
 
 typedef struct window window_t;
 
 typedef struct {
     char ch;
-    u32 foreground;
-    u32 background;
 } terminal_cell_t;
 
 typedef struct terminal {

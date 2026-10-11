@@ -36,7 +36,7 @@ void window_surface_render_string(window_surface_t* s, const char* str, u32 x, u
 
 void window_surface_render_rect(window_surface_t* s, u32 x, u32 y, u32 w, u32 h, u32 color) {
     for (uint32_t j = 0; j < h; j++) {
-        uint32_t* row = (uint32_t*)s->pixels + (y + j) * s->stride + x;
+        uint32_t* row = (uint32_t*)s->pixels + (y + j) * s->width + x;
         uint64_t packed = ((uint64_t)color << 32) | color;
         memset_fast_qword((void*)row, packed, w / 2);
         if (w & 1) row[w - 1] = color;
