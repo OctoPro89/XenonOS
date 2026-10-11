@@ -57,3 +57,10 @@ b8 input_pop_keyboard_event(input_keyboard_event_t* evt);
  * @returns True on success else false
  */
 b8 input_pop_mouse_event(input_mouse_event_t* evt);
+
+/**
+ * @brief Blocks until a keyboard event happens
+ * @note Should be used in an if statement
+ * @note NEVER use in an IRQ handler
+ */
+b8 input_wait_pop_keyboard_event(input_keyboard_event_t* evt);

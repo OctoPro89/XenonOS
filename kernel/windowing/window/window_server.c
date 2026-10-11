@@ -312,6 +312,7 @@ void window_damage(window_t* window, i32 x, i32 y, i32 width, i32 height) {
         window->damage = (window_rect_t){ .x = x, .y = y, .width = width, .height = height };
         window->damaged = true;
         spin_unlock_irqrestore(&window_server_lock, flags);
+        notify_compositor();
         return;
     }
 
@@ -333,6 +334,21 @@ void window_damage(window_t* window, i32 x, i32 y, i32 width, i32 height) {
     notify_compositor();
 }
 
+void window_clear_damage(window_t* window) {
+    if (!window) {
+        return;
+    }
+
+    u64 flags = 0;
+    spin_lock_irqsave(&window_server_lock, &flags);
+
+    if (valid_window(window)) {
+        window->damaged = false;
+        window->damage = (window_rect_t){0};
+    }
+
+    spin_unlock_irqrestore(&window_server_lock, flags);
+}
 
 void window_server_set_invalidate_callback(window_invalidate_callback_t callback) {
     u64 flags = 0;

@@ -8,7 +8,8 @@
 #include <graphics/graphics.h>
 #include <kernel.h>
 
-// IMPORTANT NOTE: shouldn't need any locking AS LONG AS this is all on one task
+// TODO: partial redrawing
+// TODO: use window damaging
 
 #define DESKTOP_BG    0xFF18212F
 #define DESKTOP_PANEL 0xFF101722
@@ -306,6 +307,7 @@ void compositor_render() {
 
     for (u32 i = 0; i < snapshot_count; ++i) {
         render_window(target, &snapshots[i]);
+        window_clear_damage(snapshots[i].handle);
     }
 
     xenon_surface_image_data(target, (u32)cursor_x, (u32)cursor_y, mouse_cursor_data, CURSOR_W, CURSOR_H, true);

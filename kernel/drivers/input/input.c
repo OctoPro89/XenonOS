@@ -1,10 +1,14 @@
 #include <drivers/input/input.h>
 #include <memory/ring_buffer.h>
 #include <xlibc/stdio.h>
-#include <arch/x86_64/io.h>
+#include <arch/x86_64/sync/sync.h>
+#include <task.h>
 
 static ring_buffer_t* g_kbd_rb;
 static ring_buffer_t* g_mouse_rb;
+
+static wait_queue_t g_kbd_waiters;
+static spinlock_t g_kbd_wait_lock;
 
 #define KBD_RING_CAPACITY 4096
 #define MOUSE_RING_CAPACITY 4096
@@ -26,11 +30,22 @@ b8 input_init() {
 }
 
 b8 input_push_keyboard_event(const input_keyboard_event_t* evt) {
-    if (!g_kbd_rb) {
+    if (!g_kbd_rb || !evt) {
         return false;
     }
 
-    return ring_buffer_push(g_kbd_rb, (const u8*)evt);
+    u64 flags;
+    spin_lock_irqsave(&g_kbd_wait_lock, &flags);
+
+    b8 pushed = ring_buffer_push(g_kbd_rb, evt);
+
+    if (pushed) {
+        wait_queue_wake_one_locked(&g_kbd_waiters);
+    }
+
+    spin_unlock_irqrestore(&g_kbd_wait_lock, flags);
+
+    return pushed;
 }
 
 b8 input_push_mouse_event(const input_mouse_event_t* evt) {
@@ -42,11 +57,18 @@ b8 input_push_mouse_event(const input_mouse_event_t* evt) {
 }
 
 b8 input_pop_keyboard_event(input_keyboard_event_t* evt) {
-    if (!g_kbd_rb) {
+    if (!g_kbd_rb || !evt) {
         return false;
     }
 
-    return ring_buffer_pop(g_kbd_rb, (void*)evt);
+    u64 flags;
+    spin_lock_irqsave(&g_kbd_wait_lock, &flags);
+
+    b8 popped = ring_buffer_pop(g_kbd_rb, evt);
+
+    spin_unlock_irqrestore(&g_kbd_wait_lock, flags);
+
+    return popped;
 }
 
 b8 input_pop_mouse_event(input_mouse_event_t* evt) {
@@ -55,4 +77,28 @@ b8 input_pop_mouse_event(input_mouse_event_t* evt) {
     }
 
     return ring_buffer_pop(g_mouse_rb, (void*)evt);
+}
+
+b8 input_wait_pop_keyboard_event(input_keyboard_event_t* evt) {
+    if (!g_kbd_rb || !evt) {
+        return false;
+    }
+
+    for (;;) {
+        u64 flags;
+        spin_lock_irqsave(&g_kbd_wait_lock, &flags);
+
+        if (ring_buffer_pop(g_kbd_rb, evt)) {
+            spin_unlock_irqrestore(&g_kbd_wait_lock, flags);
+            return true;
+        }
+
+        flags = task_wait(
+            &g_kbd_waiters,
+            &g_kbd_wait_lock,
+            flags
+        );
+
+        spin_unlock_irqrestore(&g_kbd_wait_lock, flags);
+    }
 }

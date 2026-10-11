@@ -219,8 +219,8 @@ void launch_shell_task_entry(void* arg) {
     terminal_t* terminal = console_terminal();
 
     terminal_init(terminal);
-    // terminal_attach_window(terminal, terminal_window);
-    // terminal_start_input_task(terminal);
+    terminal_attach_window(terminal, terminal_window);
+    terminal_start_input_task(terminal);
 
     process_t* process = process_create();
     if (!process) {

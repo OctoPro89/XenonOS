@@ -44,7 +44,7 @@ typedef struct {
 
 /**
  * @brief Copies the current visible-window state in back-to-front order for the compositor
- * @returns 
+ * @returns The number of windows
  */
 u32 window_server_snapshot(window_snapshot_t* out, u32 capacity);
 
@@ -54,3 +54,9 @@ typedef void (*window_invalidate_callback_t)(void);
  * @brief Internal dirty-frame notification
  */
 void window_server_set_invalidate_callback(window_invalidate_callback_t callback);
+
+/**
+ * @brief Tells a window that its damage has been rendered
+ * @note Called by the compositor in `compositor_render()`
+ */
+void window_clear_damage(window_t* window);

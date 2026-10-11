@@ -271,8 +271,7 @@ static void terminal_input_task(void* arg) {
     for (;;) {
         input_keyboard_event_t evt;
 
-        if (!input_pop_keyboard_event(&evt)) {
-            task_sleep_ms(10);
+        if (!input_wait_pop_keyboard_event(&evt)) {
             continue;
         }
 

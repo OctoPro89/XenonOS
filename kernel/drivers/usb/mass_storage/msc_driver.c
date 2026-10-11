@@ -308,6 +308,8 @@ static b8 msc_driver_probe(void* _self, usb_device_t* dev, usb_interface_t* ifac
     return true;
 }
 
+#include <time/time.h>
+
 static void msc_driver_run(void* _self) {
     msc_driver_t* self = (msc_driver_t*)_self;
 
@@ -316,6 +318,8 @@ static void msc_driver_run(void* _self) {
     }
 
     printf("[USB-MSC]: Initializing BOT device...\n");
+
+    msleep(5); // TODO: remove, fixes some weirdness on qemu, doesn't seem to be required on real hardware though...
 
     if (!msc_scsi_inquiry(self)) {
         printf("[USB-MSC]: Initialization stopped at INQUIRY\n");
