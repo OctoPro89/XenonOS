@@ -1,6 +1,7 @@
 #include <windowing/window/window.h>
 #include <windowing/window/events.h>
 #include <windowing/window/internal.h>
+#include <windowing/compositor/compositor.h>
 #include <arch/x86_64/sync/sync.h>
 #include <xlibc/string.h>
 #include <xlibc/stdlib.h>
@@ -55,7 +56,7 @@ void window_server_init() {
     next_id = 1;
 }
 
-window_t* window_create(const window_config_t* config) {
+window_t* window_server_create_window(const window_config_t* config) {
     if (!config) { return NULL; }
 
     if (active_count >= WINDOW_MAX_COUNT) {
@@ -105,12 +106,19 @@ window_t* window_create(const window_config_t* config) {
     
     spin_unlock_irqrestore(&window_server_lock, flags);
 
+    // TODO: I think this is right
+    // this resource is owned by the compositor, not the window server so the
+    // lock to be used is the compositor's
+    w->surface = compositor_create_surface_for_window(w);
+
+    window_server_damage(w, 0, 0, (i32)w->rect.width, (i32)w->rect.height);
+
     notify_compositor();
 
     return w;
 }
 
-void window_destroy(window_t* window) {
+void window_server_destroy_window(window_t* window) {
     if (!valid_window(window)) { return; }
 
     u64 flags = 0;
@@ -138,7 +146,7 @@ void window_destroy(window_t* window) {
     notify_compositor();
 }
 
-void window_set_title(window_t* window, const char* title) {
+void window_server_set_title(window_t* window, const char* title) {
     if (!valid_window(window)) { return; }
 
     u64 flags = 0;
@@ -156,7 +164,7 @@ void window_set_title(window_t* window, const char* title) {
     notify_compositor();
 }
 
-void window_set_position(window_t* window, i32 x, i32 y) {
+void window_server_set_position(window_t* window, i32 x, i32 y) {
     if (!valid_window(window)) { return; }
 
     if (window->rect.x == x && window->rect.y == y) { return; }
@@ -201,7 +209,7 @@ void window_set_size(window_t* window, i32 width, i32 height) {
 
 // TODO: window_set_state
 
-void window_raise(window_t* window) {
+void window_server_raise(window_t* window) {
     if (!valid_window(window)) { return; }
 
     u64 flags = 0;
@@ -229,11 +237,11 @@ void window_raise(window_t* window) {
     notify_compositor();
 }
 
-window_rect_t window_get_rect(const window_t* window) {
+window_rect_t window_server_get_rect(const window_t* window) {
     return valid_window(window) ? window->rect : (window_rect_t){ 0, 0, 0, 0 };
 }
 
-b8 window_set_surface(window_t* window, window_surface_t* surface) {
+b8 window_server_set_surface(window_t* window, const window_surface_t* surface) {
     if (!valid_window(window)) return false;
 
     if (surface) {
@@ -258,11 +266,7 @@ b8 window_set_surface(window_t* window, window_surface_t* surface) {
     return true;
 }
 
-window_surface_t* window_get_surface(window_t* window) {
-    return valid_window(window) ? window->surface : NULL;
-}
-
-void window_request_close(window_t* window) {
+void window_server_request_close(window_t* window) {
     if (!window) {
         return;
     }
@@ -287,26 +291,24 @@ void window_request_close(window_t* window) {
     notify_compositor();
 }
 
-void window_damage(window_t* window, i32 x, i32 y, i32 width, i32 height) {
+void window_server_damage(window_t* window, i32 x, i32 y, i32 width, i32 height) {
     if (!valid_window(window)) { return; }
     if (width == 0 || height == 0) { return; }
     
-    window_surface_t* s = window->surface;
-    if (!s) { return; }
-
-    if (x >= (i32)s->width || y >= (i32)s->height) { return; }
+    // TODO
+    // if (x >= (i32)s->width || y >= (i32)s->height) { return; }
 
     u64 flags = 0;
     spin_lock_irqsave(&window_server_lock, &flags);
 
     // clip to bounds
-    if (width > ((i32)(s->width) - x)) { width = (((i32)(s->width) - x)); }
-    if (height > ((i32)(s->height) - y)) { height = (((i32)(s->height) - y)); }
+    // if (width > ((i32)(s->width) - x)) { width = (((i32)(s->width) - x)); }
+    // if (height > ((i32)(s->height) - y)) { height = (((i32)(s->height) - y)); }
 
-    if (width == 0 || height == 0) {
-        spin_unlock_irqrestore(&window_server_lock, flags);
-        return;
-    }
+    // if (width == 0 || height == 0) {
+        // spin_unlock_irqrestore(&window_server_lock, flags);
+        // return;
+    // }
 
     if (!window->damaged) {
         window->damage = (window_rect_t){ .x = x, .y = y, .width = width, .height = height };

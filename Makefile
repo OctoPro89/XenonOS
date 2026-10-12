@@ -22,7 +22,8 @@ USERCFLAGS = -ffreestanding \
          -fno-stack-protector \
          -fshort-wchar \
          -mno-red-zone \
-		 -I"libc" -I"kernel/xlibc" \
+		 -I"kernel/xlibc" \
+		 -I"user/" -I"kernel/" \
          -c -g -O0 -D XENONOS_DEBUG=1 \
 		 -Werror=return-type \
 		 -Werror=incompatible-pointer-types \
@@ -37,8 +38,11 @@ KERNEL_ASM_SRCS := $(shell find kernel -name '*.asm')
 KERNEL_C_OBJS := $(patsubst kernel/%.c, build/%_c.o, $(KERNEL_C_SRCS))
 KERNEL_ASM_OBJS := $(patsubst kernel/%.asm, build/%_asm.o, $(KERNEL_ASM_SRCS))
 
-LIBC_C_SRCS := $(shell find libc -name '*.c')
-LIBC_C_OBJS := $(patsubst libc/%.c, build/libc/%_c.o, $(LIBC_C_SRCS))
+LIBC_C_SRCS := $(shell find user/libc -name '*.c')
+LIBC_C_OBJS := $(patsubst user/libc/%.c, build/user/libc/%_c.o, $(LIBC_C_SRCS))
+
+LIBWINDOW_C_SRCS := $(shell find user/libwindow -name '*.c')
+LIBWINDOW_C_OBJS := $(patsubst user/libwindow/%.c, build/user/libwindow/%_c.o, $(LIBWINDOW_C_SRCS))
 
 KERNEL_OBJS := $(KERNEL_C_OBJS) $(KERNEL_ASM_OBJS)
 
@@ -59,7 +63,7 @@ build/BOOTX64.EFI: build/bootloader.o
 # Compile C files
 build/%_c.o: kernel/%.c
 	mkdir -p $(dir $@)
-	clang $(KERNCFLAGS) $< -o $@ -I"kernel/"
+	clang $(KERNCFLAGS) $< -o $@ -I"kernel/" -I"user/"
 
 # Assemble ASM files
 build/%_asm.o: kernel/%.asm
@@ -71,36 +75,47 @@ build/kernel.elf: $(KERNEL_OBJS)
 	ld.lld -T kernel/linker.ld $(KERNEL_OBJS) -o $@
 
 # user libc
-build/libc/%_c.o: libc/%.c
+build/user/libc/%_c.o: user/libc/%.c
 	mkdir -p $(dir $@)
-	clang $(USERCFLAGS) -I"kernel/" -c $< -o $@
+	clang $(USERCFLAGS) -c $< -o $@
 
-build/libc/libc.a: $(LIBC_C_OBJS)
+build/user/libc/libc.a: $(LIBC_C_OBJS)
+	mkdir -p $(dir $@)
+	ar rcs $@ $^
+
+# user libwindow
+build/user/libwindow/%_c.o: user/libwindow/%.c
+	mkdir -p $(dir $@)
+	clang $(USERCFLAGS) -c $< -o $@
+
+build/user/libwindow/libwindow.a: $(LIBWINDOW_C_OBJS)
 	mkdir -p $(dir $@)
 	ar rcs $@ $^
 
 # xeterm
-build/applications/start.o: applications/start.c
+build/user/start.o: user/start.c
 	mkdir -p $(dir $@)
-	clang $(USERCFLAGS) $< -o $@ -I"kernel/"
+	clang $(USERCFLAGS) $< -o $@ -I"kernel/" -I"user/"
 
-build/applications/xeterm.o: applications/xeterm/xeterm.c
+build/user/apps/xeterm.o: user/apps/xeterm/xeterm.c
 	mkdir -p $(dir $@)
-	clang $(USERCFLAGS) $< -o $@ -I"kernel/"
+	clang $(USERCFLAGS) $< -o $@ -I"kernel/" -I"user/"
 
-build/applications/sh: \
-	build/applications/start.o \
-	build/applications/xeterm.o \
+build/user/apps/sh: \
+	build/user/start.o \
+	build/user/apps/xeterm.o \
 	build/unistd_c.o \
-	build/libc/libc.a
-	ld.lld -T applications/user.ld \
-		build/applications/xeterm.o \
-		build/applications/start.o \
+	build/user/libc/libc.a \
+	build/user/libwindow/libwindow.a
+	ld.lld -T user/user.ld \
+		build/user/apps/xeterm.o \
+		build/user/start.o \
 		build/unistd_c.o \
-		build/libc/libc.a \
+		build/user/libc/libc.a \
+		build/user/libwindow/libwindow.a \
 		-o $@
 
-userapps: build/applications/sh
+userapps: build/user/apps/sh
 
 # --- Image ---
 image: build/BOOTX64.EFI build/kernel.elf
@@ -130,7 +145,7 @@ run: image userapps
 	sudo cp build/BOOTX64.EFI /mnt/EFI/BOOT/
 	sudo cp build/kernel.elf /mnt/
 	sudo cp testlongfilename.txt /mnt/
-	sudo cp build/applications/sh /mnt/bin/
+	sudo cp build/user/apps/sh /mnt/bin/
 	sudo cp hello /mnt/bin/
 	sudo umount /mnt
 
@@ -156,7 +171,7 @@ run: image userapps
 	sudo cp build/BOOTX64.EFI /mnt/EFI/BOOT/
 	sudo cp build/kernel.elf /mnt/
 	sudo cp testlongfilename.txt /mnt/
-	sudo cp build/applications/sh /mnt/bin/
+	sudo cp build/user/apps/sh /mnt/bin/
 	sudo cp hello /mnt/bin/
 	sudo umount /mnt
 

@@ -25,7 +25,7 @@ sudo cp build/kernel.elf /mnt/usb/
 
 # Copy extra files
 sudo cp testlongfilename.txt /mnt/usb/
-sudo cp build/applications/sh /mnt/usb/bin/
+sudo cp build/user/apps/sh /mnt/usb/bin/
 sudo cp hello /mnt/usb/bin/
 
 # Unmount

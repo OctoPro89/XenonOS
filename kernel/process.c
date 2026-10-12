@@ -188,7 +188,7 @@ int process_setup_stdio(process_t* process, terminal_t* terminal) {
     }
 
     // this process must have an empty FD table, standard descriptors are in 0, 1, and 2
-        fd_t in_fd = fd_table_alloc(&process->fd_table, stdin_file);
+    fd_t in_fd = fd_table_alloc(&process->fd_table, stdin_file);
 
     fd_t out_fd = FD_INVALID;
     fd_t err_fd = FD_INVALID;

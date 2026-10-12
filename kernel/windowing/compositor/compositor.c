@@ -5,7 +5,9 @@
 #include <drivers/input/input.h>
 #include <task.h>
 #include <xlibc/string.h>
+#include <xlibc/stdlib.h>
 #include <graphics/graphics.h>
+#include <arch/x86_64/sync/sync.h>
 #include <kernel.h>
 
 // TODO: partial redrawing
@@ -38,9 +40,17 @@ static u32 previous_buttons;
 static i32 dragging_id = -1;
 static i32 drag_offset_x, drag_offset_y;
 
+// all current window surface
+static u32 surface_invalid = WINDOW_SURFACE_INVALID_HANDLE;
+static window_surface_t surfaces[COMPOSITOR_MAX_WINDOWS];
+static u32 surfaces_count;
+spinlock_t surfaces_lock;
+
 // stable per-frame copies of window meta
 static window_snapshot_t snapshots[COMPOSITOR_MAX_WINDOWS];
 static u32 snapshot_count;
+
+static void compositor_mark_surface_invalid(window_surface_handle_t handle);
 
 static void clamp_cursor() {
     i32 max_x = target->width > CURSOR_W ? (i32)target->width - CURSOR_W : 0;
@@ -149,7 +159,7 @@ static void blit_window_surface(xenon_surface_t* dst, const window_snapshot_t* w
 
 // more-expensive rounded version
 static void blit_window_surface(xenon_surface_t* dst, const window_snapshot_t* win) {
-    window_surface_t* src = win->surface;
+    const window_surface_t* src = win->surface;
     if (!src || !src->pixels) {
         return;
     }
@@ -284,6 +294,8 @@ b8 compositor_init(xenon_surface_t* surface) {
     previous_buttons = 0;
     dragging_id = -1;
 
+    spin_lock_init(&surfaces_lock);
+
     window_server_set_invalidate_callback(compositor_invalidate);
     clamp_cursor();
     frame_invalidated = true;
@@ -300,12 +312,24 @@ void compositor_render() {
     // TODO: this can cause buggyness, should probably use an atomic or some shit
     frame_invalidated = false;
 
+    // TODO: remove this sucks
+    window_surface_handle_t invalid_surface = WINDOW_SURFACE_INVALID_HANDLE;
+
     // copy metadata under the window-server lock, the surface lifetime msut remain valid until this frame finishes, still a prototype
     snapshot_count = window_server_snapshot(snapshots, COMPOSITOR_MAX_WINDOWS);
 
     render_desktop_background();
 
+    u64 flags = 0;
     for (u32 i = 0; i < snapshot_count; ++i) {
+        // TODO: maybe better solution idk
+        spin_lock_irqsave(&surfaces_lock, &flags);
+        if (invalid_surface == __atomic_load_n(&surface_invalid, __ATOMIC_SEQ_CST) == snapshots[i].surface->handle) {
+            spin_unlock_irqrestore(&surfaces_lock, flags);
+        continue; // this surface has been marked invalid so skip it
+        }
+        spin_unlock_irqrestore(&surfaces_lock, flags);
+
         render_window(target, &snapshots[i]);
         window_clear_damage(snapshots[i].handle);
     }
@@ -313,6 +337,18 @@ void compositor_render() {
     xenon_surface_image_data(target, (u32)cursor_x, (u32)cursor_y, mouse_cursor_data, CURSOR_W, CURSOR_H, true);
 
     xenon_surface_present(target);
+
+    if (invalid_surface != WINDOW_SURFACE_INVALID_HANDLE) {
+        void* surface_pixels_ptr = NULL;
+        spin_lock_irqsave(&surfaces_lock, &flags);
+        surface_pixels_ptr = surfaces[invalid_surface].pixels;
+        // mark invalid without freeing in lock (expensive)
+        surfaces[invalid_surface].pixels = NULL;
+        spin_unlock_irqrestore(&surfaces_lock, flags);
+        if (surface_pixels_ptr) {
+            kfree(surface_pixels_ptr); // IMPORTANT NOTE: DO NOT CALL IN LOCK, not cheap call
+        }
+    }
 }
 
 static i32 hit_test(i32 x, i32 y) {
@@ -383,9 +419,9 @@ static void process_mouse_event(const input_mouse_event_t* evt) {
 
             // close button hit test, queue CLOSE_REQUEST don't destroy the window here
             if (cursor_y >= wy + 9 && cursor_y < wy + 19 && cursor_x >= wx + (i32)hit->rect.width - 23 && cursor_x < wx + (i32)hit->rect.width - 13) {
-                window_request_close(hit->handle);
+                window_server_request_close(hit->handle);
             } else {
-                window_raise(hit->handle);
+                window_server_raise(hit->handle);
                 // only the title bar initiates dragging
                 if (cursor_y >= wy &&
                     cursor_y < wy + TITLEBAR_H) {
@@ -409,7 +445,7 @@ static void process_mouse_event(const input_mouse_event_t* evt) {
             i32 new_y = cursor_y - drag_offset_y;
 
             clamp_window_position(&new_x, &new_y, (i32)snapshots[i].rect.width, (i32)snapshots[i].rect.height);
-            window_set_position(snapshots[i].handle, new_x, new_y);
+            window_server_set_position(snapshots[i].handle, new_x, new_y);
             break;
         }
     }
@@ -429,4 +465,72 @@ void compositor_process_events() {
     input_mouse_event_t evt;
 
     while (input_pop_mouse_event(&evt)) { process_mouse_event(&evt); }
+}
+
+const window_surface_t* compositor_create_surface_for_window(window_t* window) {
+    // NOTE: window_server's lock is held here
+    if (!window) { return NULL; }
+    
+    window_rect_t rect = window->rect; // DON'T DOUBLE LOCK | window_server_get_rect(window);
+
+    if (rect.width <= 2 || rect.height <= 31) {
+        return NULL;
+    }
+
+    // TODO: change if needed
+    u32 width = (u32)rect.width - 2;
+    u32 height = (u32)rect.height - 31;
+
+    size_t stride = (size_t)width * sizeof(u32);
+    size_t bytes = stride * height;
+
+    if (!width || !height || stride < width * sizeof(u32)) {
+        return NULL;
+    }
+
+    u32* pixels = kmalloc(bytes);
+    if (!pixels) {
+        return NULL;
+    }
+
+    u64 flags = 0;
+    spin_lock_irqsave(&surfaces_lock, &flags);
+
+    __atomic_add_fetch(&surfaces[surfaces_count].refcount, 1, __ATOMIC_RELAXED);
+
+    surfaces[surfaces_count] = (window_surface_t) {
+        .width = width,
+        .height = height,
+        .stride = (u32)stride,
+        .format = WINDOW_PIXEL_FORMAT_RGBX8888,
+        .handle = (window_surface_handle_t)surfaces_count, // TODO: better
+        .pixels = pixels
+    };
+    
+    if (!window_server_set_surface(window, &surfaces[surfaces_count])) {
+        surfaces[surfaces_count].pixels = NULL;
+        kfree(pixels);
+        return NULL;
+    }
+
+    const window_surface_t* retval = &surfaces[surfaces_count];
+
+    ++surfaces_count;
+
+    spin_unlock_irqrestore(&surfaces_lock, flags);
+
+    return (const window_surface_t*)retval;
+}
+
+void compositor_release_surface(window_surface_handle_t surface_handle) {
+    if (surface_handle == WINDOW_SURFACE_INVALID_HANDLE) { return; }
+    if (__atomic_sub_fetch(&surfaces[surface_handle].refcount, 1, __ATOMIC_ACQ_REL) == 0) {
+        compositor_mark_surface_invalid(surface_handle);
+    }
+}
+
+static void compositor_mark_surface_invalid(window_surface_handle_t handle) {
+    // TODO: probably handle shouldn't be an index into live shit
+    // TODO: terrible assumption but don't assume that two windows don't close on the same frame
+    __atomic_store_n(&surface_invalid, (u32)handle, __ATOMIC_SEQ_CST);
 }

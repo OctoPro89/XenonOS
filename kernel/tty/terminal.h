@@ -4,7 +4,6 @@
 #include <xlibc/xstdint.h>
 #include <xlibc/xstddef.h>
 #include <arch/x86_64/sync/sync.h>
-#include <windowing/window/surface.h>
 
 #define TERMINAL_BUFFER_SIZE 1024
 
@@ -36,7 +35,6 @@ typedef struct terminal {
     spinlock_t output_lock;
 
     window_t* window;
-    window_surface_t surface;
 
     u32 cursor_x;
     u32 cursor_y;
@@ -46,6 +44,8 @@ typedef struct terminal {
 
     u32 foreground;
     u32 background;
+
+    size_t edit_length;
 
     terminal_cell_t cells[TERMINAL_ROWS][TERMINAL_COLUMNS];
 } terminal_t;

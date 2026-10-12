@@ -2,7 +2,7 @@
 #include <graphics/font8x8.h>
 #include <graphics/memops.h>
 
-void window_surface_render_char(window_surface_t* s, char c, u32 x, u32 y, u32 color) {
+void window_surface_render_char(const window_surface_t* s, char c, u32 x, u32 y, u32 color) {
     if (c < 0 || c > 127) return; // unsupported
     if (x + 8 > s->width || y + 8 > s->height) {
         return;
@@ -20,7 +20,7 @@ void window_surface_render_char(window_surface_t* s, char c, u32 x, u32 y, u32 c
     }
 }
 
-void window_surface_render_string(window_surface_t* s, const char* str, u32 x, u32 y, u32 color) {
+void window_surface_render_string(const window_surface_t* s, const char* str, u32 x, u32 y, u32 color) {
     uint32_t orig_x = x;
     while (*str) {
         if (*str == '\n') {
@@ -34,7 +34,7 @@ void window_surface_render_string(window_surface_t* s, const char* str, u32 x, u
     }
 }
 
-void window_surface_render_rect(window_surface_t* s, u32 x, u32 y, u32 w, u32 h, u32 color) {
+void window_surface_render_rect(const window_surface_t* s, u32 x, u32 y, u32 w, u32 h, u32 color) {
     for (uint32_t j = 0; j < h; j++) {
         uint32_t* row = (uint32_t*)s->pixels + (y + j) * s->width + x;
         uint64_t packed = ((uint64_t)color << 32) | color;

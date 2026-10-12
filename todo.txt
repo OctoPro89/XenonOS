@@ -3,5 +3,6 @@ named tasks
 cleanup in elf.c
 mass storage driver
 printf needs to work atomically
+atomic types
 
 maybe timer doesn't work quite right on some real hardware systems

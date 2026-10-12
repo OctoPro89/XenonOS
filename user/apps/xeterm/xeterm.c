@@ -1,5 +1,6 @@
 #include <xlibc/xstdint.h>
 #include <xlibc/xstddef.h>
+#include <xlibc/string.h>
 
 #include <arch/x86_64/syscall.h>
 #include <process.h>
@@ -32,6 +33,25 @@ int main(void) {
     static const char prompt[] = "xenonos@xe:/$ ";
     char line[256];
 
+    // create window
+    window_config_t wconfig = {
+        .title = "xeterm",
+        .rect = {
+            .x = 180,
+            .y = 120,
+            .width = 480,
+            .height = 320
+        },
+        .type = WINDOW_TYPE_NORMAL,
+        .flags = 0
+    };
+
+    if (window_create(&wconfig) < 0) {
+        return -1;
+    }
+
+    window_setup_terminal_io();
+
     for (;;) {
         write(STDOUT_FILENO, prompt, sizeof(prompt) - 1);
 
@@ -51,6 +71,13 @@ int main(void) {
             continue;
         }
 
+        if (strncmp(line, "exit", 4) == 0) {
+            if (window_destroy() < 0) {
+                return -1;
+            }
+            return 0;
+        }
+
         char path[256];
 
         snprintf(path, sizeof(path), "bin/%s", line);
@@ -67,6 +94,10 @@ int main(void) {
         int status = wait(pid);
 
         printf("\nprocess %llu exited with return code %d\n", (unsigned long long)pid, status);
+    }
+
+    if (!window_destroy()) {
+        return -1;
     }
 
     return 0;

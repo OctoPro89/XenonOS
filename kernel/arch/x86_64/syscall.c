@@ -6,6 +6,11 @@
 #include <process.h>
 #include <memory/user.h>
 #include <elf/elf.h>
+#include <windowing/window/window.h>
+#include <windowing/window/internal.h>
+#include <windowing/compositor/compositor.h>
+#include <xlibc/string.h>
+#include <tty/terminal.h>
 
 // TODO: not sure if chunking is the best
 
@@ -221,6 +226,103 @@ u64 sys_wait(u64 pid) {
     return (u64)(i64)status;
 }
 
+ssize_t sys_window_create(const window_config_t* user_config) {
+    if (!user_config) {
+        return -EINVAL;
+    }
+
+    process_t* crnt = process_current();
+
+    if (!crnt) {
+        return -ESRCH;
+    }
+
+    if (crnt->window) {
+        return -EFAULT;
+    }
+
+    window_config_t config;
+
+    if (copy_from_user(&config, user_config, sizeof(config)) < 0) {
+        return -EFAULT;
+    }
+
+    if (config.rect.width == 0 || config.rect.height == 0) {
+        return -EINVAL;
+    }
+
+    char title[WINDOW_TITLE_MAX];
+    memset(title, 0, WINDOW_TITLE_MAX);
+
+    if (config.title) {
+        u32 i = 0;
+        b8 terminated = false;
+
+        for (i = 0; i < WINDOW_TITLE_MAX - 1; ++i) {
+            if (copy_from_user(&title[i], config.title + i, 1) < 0) {
+                return -EFAULT;
+            }
+
+            if (title[i] == '\0') {
+                terminated = true;
+                break;
+            }
+        }
+
+        if (!terminated) {
+            return -ENAMETOOLONG;
+        }
+    }
+
+    // TODO: may need a lock on this not sure...
+    config.title = (const char*)title; // DO NOT pass user string to kernel
+    crnt->window = window_server_create_window(&config);
+    if (!crnt->window) {
+        return -ENOMEM;
+    }
+
+    return 0;
+}
+
+ssize_t sys_window_destroy() {
+    // TODO: may need a lock on this not sure...
+    process_t* crnt = process_current();
+
+    if (!crnt) {
+        return -ESRCH;
+    }
+
+    if (!crnt->window) {
+        return -EFAULT;
+    }
+
+    compositor_release_surface(crnt->window->surface->handle);
+    window_server_destroy_window(crnt->window);
+
+    return 0;
+}
+
+ssize_t sys_window_setup_terminal_io() {
+    // TODO: remove
+    // TODO: may need a lock on this not sure...
+    process_t* crnt = process_current();
+
+    if (!crnt) {
+        return -ESRCH;
+    }
+
+    if (!crnt->window) {
+        return -EFAULT;
+    }
+    
+    terminal_t* terminal = console_terminal();
+
+    terminal_init(terminal);
+    terminal_attach_window(terminal, crnt->window);
+    terminal_start_input_task(terminal); // todo: stop task
+    return process_setup_stdio(crnt, terminal);
+}
+
 u64 syscall_dispatch(struct syscall_regs* r) {
     switch (r->rax) {
         case SYS_READ: {
@@ -240,6 +342,15 @@ u64 syscall_dispatch(struct syscall_regs* r) {
         }
         case SYS_WAIT: {
             return sys_wait(r->rdi);
+        }
+        case SYS_WINDOW_CREATE: {
+            return (u64)sys_window_create((const window_config_t*)r->rdi);
+        }
+        case SYS_WINDOW_DESTROY: {
+            return (u64)sys_window_destroy();
+        }
+        case SYS_WINDOW_SETUP_TERMINAL_IO: {
+            return (u64)sys_window_setup_terminal_io();
         }
         default: {
             return (u64)-ENOSYS;

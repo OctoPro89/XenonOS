@@ -21,7 +21,7 @@ struct window {
     b8 alive;
     b8 focused;
 
-    window_surface_t* surface; // borrowed pointer for now
+    const window_surface_t* surface;
     ring_buffer_t* events;
 
     b8 damaged;
@@ -38,7 +38,7 @@ typedef struct {
     char title[WINDOW_TITLE_MAX];
     b8 focused;
 
-    window_surface_t* surface; // borroed, pixel memory is not copied
+    const window_surface_t* surface;
     window_t* handle; // non-owning, valid only while window lifetime is guaranteed
 } window_snapshot_t;
 

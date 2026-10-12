@@ -7,7 +7,7 @@ ssize_t read(int fd, void *buf, size_t count) {
     asm volatile (
         "syscall"
         : "=a"(ret)
-        : "a"(0),
+        : "a"(SYS_READ),
           "D"(fd),
           "S"(buf),
           "d"(count)
@@ -23,7 +23,7 @@ ssize_t write(int fd, const void *buf, size_t count) {
     asm volatile (
         "syscall"
         : "=a"(ret)
-        : "a"(1),
+        : "a"(SYS_WRITE),
           "D"(fd),
           "S"(buf),
           "d"(count)
@@ -39,7 +39,7 @@ pid_t spawn(const char *path) {
     asm volatile (
         "syscall"
         : "=a"(ret)
-        : "a"(4),
+        : "a"(SYS_SPAWN),
           "D"(path)
         : "rcx", "r11", "r10", "memory"
     );
@@ -53,7 +53,7 @@ int wait(pid_t pid) {
     asm volatile (
         "syscall"
         : "=a"(ret)
-        : "a"(5),
+        : "a"(SYS_WAIT),
           "D"(pid)
         : "rcx", "r11", "r10", "memory"
     );

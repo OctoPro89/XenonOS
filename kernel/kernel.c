@@ -87,6 +87,8 @@ void fat32_list_root(FAT32_FS* fs) {
 
         cluster = fat32_read_fat_entry(fs, cluster);
     }
+
+    free(buf);
 }
 
 void timer_handler(struct regs* r, void* _) {
@@ -154,7 +156,7 @@ void system_console_task_entry(void* arg) {
     };
 
     terminal_t system_console_term;
-    window_t* system_console = window_create(&wconfig);
+    window_t* system_console = window_server_create_window(&wconfig);
 
     if (!system_console) {
         return;
@@ -198,29 +200,6 @@ void system_console_task_entry(void* arg) {
 
 void launch_shell_task_entry(void* arg) {
     (void)arg;
-    window_config_t wconfig = {
-        .title = "xeterm",
-        .rect = {
-            .x = 180,
-            .y = 120,
-            .width = 480,
-            .height = 320
-        },
-        .type = WINDOW_TYPE_NORMAL,
-        .flags = 0
-    };
-
-    window_t* terminal_window = window_create(&wconfig);
-    if (!terminal_window) {
-        printf("Failed to create terminal window\n");
-        return;
-    }
-
-    terminal_t* terminal = console_terminal();
-
-    terminal_init(terminal);
-    terminal_attach_window(terminal, terminal_window);
-    terminal_start_input_task(terminal);
 
     process_t* process = process_create();
     if (!process) {
@@ -228,14 +207,7 @@ void launch_shell_task_entry(void* arg) {
         return;
     }
 
-    int result = process_setup_stdio(process, terminal);
-    if (result < 0) {
-        printf("failed to set up shell stdio: %d\n", result);
-        process_destroy(process);
-        return;
-    }
-
-    result = process_load_elf(process, "bin/sh");
+    int result = process_load_elf(process, "bin/sh");
     if (result < 0) {
         printf("failed to load /bin/sh: %d\n", result);
         process_destroy(process);
@@ -253,8 +225,6 @@ void launch_shell_task_entry(void* arg) {
     int exit_code = process_wait(process);
     printf("shell exited with code %d\n", exit_code);
     process_reap(process);
-
-    window_destroy(terminal_window);
 }
 
 static void kernel_main(void* arg) {
@@ -400,7 +370,7 @@ static void kernel_main(void* arg) {
 
     // task_t* system_console_task = task_create(NULL, system_console_task_entry, NULL);
 
-    // printf("Launching usermode shell\n");
+    printf("Launching usermode shell\n");
     task_t* launch_shell_task = task_create(NULL, launch_shell_task_entry, NULL);
 
     for (;;) {

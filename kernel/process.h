@@ -15,8 +15,10 @@ typedef enum {
     PROCESS_ZOMBIE
 } process_state_t;
 
+typedef struct window window_t;
+
 struct process {
-    pid_t pid;
+    pid_t pid; // TODO: this may need to be marked volatile
     vmm_space_t* space;
     fd_table_t fd_table;
 
@@ -30,6 +32,7 @@ struct process {
     u64 user_stack_top;
 
     task_t* main_task;
+    window_t* window; // for now processes only have one window
 
     process_t* parent;
     process_t* next;
