@@ -1,6 +1,6 @@
 #pragma once
 
-// TODO: bad solution, fix later
-#include <memory/heap.h>
-#define malloc kmalloc
-#define free   kfree
+#include <xlibc/xstddef.h>
+
+void* malloc(size_t size);
+void free(void* ptr);

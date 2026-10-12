@@ -11,10 +11,12 @@
 #define ENOMEM          12 // Out of memory
 #define EACCES          13 // Permission denied
 #define EFAULT          14 // Bad address
+#define	ENOTDIR		    20 // Not a directory
+#define	EISDIR		    21 // Is a directory
 #define EINVAL          22 // Invalid argument
 #define EMFILE          24 // Too many open files
 #define ENOSPC          28 // No space left on device
 #define ESPIPE          29 // Illegal seek
 #define EPIPE           32 // Broken pipe
 #define ENAMETOOLONG    36 // File name too long
-#define ENOSYS          38 // 
+#define ENOSYS          38 // Invalid syscall number

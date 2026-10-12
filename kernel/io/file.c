@@ -1,5 +1,5 @@
 #include <io/file.h>
-#include <xlibc/stdlib.h>
+#include <memory/heap.h>
 
 static void file_destroy(file_t* file) {
     if (file->ops && file->ops->close) {

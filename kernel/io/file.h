@@ -4,6 +4,8 @@
 #include <xlibc/xstdint.h>
 #include <xlibc/xstddef.h>
 
+#define FILE_FLAG_DIRECTORY (1u << 0)
+
 typedef struct file file_t;
 
 typedef struct {

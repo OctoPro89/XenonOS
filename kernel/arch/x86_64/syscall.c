@@ -4,19 +4,89 @@
 #include <io/fd.h>
 #include <errno.h>
 #include <process.h>
-#include <memory/user.h>
 #include <elf/elf.h>
 #include <windowing/window/window.h>
 #include <windowing/window/internal.h>
 #include <windowing/compositor/compositor.h>
 #include <xlibc/string.h>
 #include <tty/terminal.h>
+#include <filesystem/vfs/vfs.h>
+#include <memory/user.h>
+#include <memory/heap.h>
+#include <memory/paging.h>
 
 // TODO: not sure if chunking is the best
 
 u64 user_rsp_save;
 
 #define SYSCALL_IO_BUFFER_SIZE 512
+
+#define USER_PATH_MAX 256
+
+static ssize_t directory_read(file_t* file, void* buffer, size_t size) {
+    (void)file;
+    (void)buffer;
+    (void)size;
+    return -EISDIR;
+}
+
+static ssize_t directory_write(file_t* file, const void* buffer, size_t size) {
+    (void)file;
+    (void)buffer;
+    (void)size;
+    return -EISDIR;
+}
+
+static ssize_t directory_seek(file_t* file, ssize_t offset, int whence) {
+    (void)file;
+    (void)offset;
+    (void)whence;
+    return -EISDIR;
+}
+
+static int directory_close(file_t* file) {
+    if (!file) { return -EINVAL; }
+
+    VFS_DIR* dir = (VFS_DIR*)file->private;
+
+    file->private = NULL;
+
+    if (dir) {
+        vfs_closedir(dir);
+    }
+
+    return 0;
+}
+
+static const file_ops_t directory_file_ops = {
+    .read  = directory_read,
+    .write = directory_write,
+    .seek  = directory_seek,
+    .close = directory_close,
+};
+
+/**
+ * @brief Copy a bounded, NULL-terminated path from userspace.
+ * @returns 0 on success or a negative errno value
+ */
+static int copy_user_path(char out[USER_PATH_MAX], const char* user_path) {
+    if (!user_path) {
+        return -EFAULT;
+    }
+
+    for (size_t i = 0; i < USER_PATH_MAX; ++i) {
+        if (copy_from_user(&out[i], user_path + i, 1) < 0) {
+            return -EFAULT;
+        }
+
+        if (out[i] == '\0') {
+            return 0;
+        }
+    }
+
+    out[USER_PATH_MAX - 1] = '\0';
+    return -ENAMETOOLONG;
+}
 
 ssize_t sys_read(fd_t fd, void* user_buffer, size_t size) {
     u8 buffer[SYSCALL_IO_BUFFER_SIZE];
@@ -58,7 +128,7 @@ ssize_t sys_read(fd_t fd, void* user_buffer, size_t size) {
             break;
         }
 
-        if (copy_to_user((u8*)user_buffer + total, buffer, (size_t)result) > 0) {
+        if (copy_to_user((u8*)user_buffer + total, buffer, (size_t)result) < 0) {
             file_put(file);
             if (total != 0) {
                 return (ssize_t)total;
@@ -323,6 +393,181 @@ ssize_t sys_window_setup_terminal_io() {
     return process_setup_stdio(crnt, terminal);
 }
 
+ssize_t sys_opendir(const char* user_path) {
+    char path[USER_PATH_MAX];
+
+    int result = copy_user_path(path, user_path);
+    if (result < 0) {
+        return result;
+    }
+
+    VFS_DIR* dir = vfs_opendir(path);
+    if (!dir) {
+        // TODO: future VFS error interface can distinguish ENOENT, ENOTDIR, and I/O errors instead of returning NULL
+        return -ENOENT;
+    }
+
+    file_t* file = kmalloc(sizeof(file_t));
+    if (!file) {
+        vfs_closedir(dir);
+        return -ENOMEM;
+    }
+
+    file_init(file, &directory_file_ops, dir);
+    file->flags |= FILE_FLAG_DIRECTORY;
+
+    fd_t fd = fd_alloc(file);
+
+    // drop initial reference
+    file_put(file);
+
+    if (fd == FD_INVALID) {
+        return -EMFILE;
+    }
+
+    return (ssize_t)fd;
+}
+
+ssize_t sys_readdir(fd_t fd, sys_dirent_t* user_entry) {
+    if (!user_entry) {
+        return -EFAULT;
+    }
+
+    file_t* file = fd_get(fd);
+    if (!file) {
+        return -EBADF;
+    }
+
+    if (!(file->flags & FILE_FLAG_DIRECTORY)) {
+        file_put(file);
+        return -ENOTDIR;
+    }
+
+    VFS_DIR* dir = (VFS_DIR*)file->private;
+    if (!dir) {
+        file_put(file);
+        return -EBADF;
+    }
+
+    VFS_DIRENT vfs_entry;
+    int result = vfs_readdir(dir, &vfs_entry);
+
+    if (result == 0) {
+        file_put(file);
+        return 0;
+    }
+
+    if (result < 0) {
+        file_put(file);
+        return -EIO;
+    }
+
+    sys_dirent_t entry;
+    memset(&entry, 0, sizeof(sys_dirent_t));
+    memcpy(entry.name, vfs_entry.name, sizeof(entry.name));
+    entry.name[SYS_DIRENT_NAME_MAX] = '\0';
+    entry.size = vfs_entry.size;
+    entry.type = (u32)vfs_entry.type;
+
+    int copy_result = copy_to_user(user_entry, &entry, sizeof(sys_dirent_t));
+
+    file_put(file);
+
+    if (copy_result < 0) {
+        return -EFAULT;
+    }
+
+    return 1;
+}
+
+// TODO: implement shrinking
+// TODO: this version assumes only one thread can modify a process's heap at a time,
+// this will need a dedicated per-process heap lock. however don't use spinlock for this idk wat to do
+ssize_t sys_sbrk(ssize_t increment) {
+    process_t* process = process_current();
+
+    if (!process) {
+        return -ESRCH;
+    }
+
+    // TODO:
+    if (increment < 0) {
+        return -EINVAL;
+    }
+
+    u64 old_break = process->heap_break;
+
+    if (increment == 0) {
+        return (ssize_t)old_break;
+    }
+
+    u64 new_break;
+
+    if (__builtin_add_overflow(old_break, (u64)increment, &new_break)) {
+        return -ENOMEM;
+    }
+
+    if (new_break > process->heap_limit) {
+        return -ENOMEM;
+    }
+
+    u64 map_start;
+    u64 map_end;
+
+    if (__builtin_add_overflow(old_break, (u64)(PAGE_SIZE - 1), &map_start)) {
+        return -ENOMEM;
+    }
+
+    map_start &= ~(PAGE_SIZE - 1);
+
+    if (__builtin_add_overflow(new_break, (u64)(PAGE_SIZE - 1), &map_end)) {
+        return -ENOMEM;
+    }
+
+    map_end &= ~(PAGE_SIZE - 1);
+
+    u64 page_va;
+
+    for (page_va = map_start; page_va < map_end; page_va += PAGE_SIZE) {
+
+        if (vmm_virt_to_phys(process->space, page_va) != 0) {
+            break;
+        }
+
+        paddr_t phys = pmm_alloc_page();
+        if (!phys) {
+            break;
+        }
+
+        memset((void*)phys_to_hhdm(phys), 0, PAGE_SIZE);
+
+        /* TODO: int result = */ vmm_map(process->space, page_va, phys, PAGE_PRESENT | PAGE_USER | PAGE_WRITABLE);
+
+        // if (result < 0) {
+            // pmm_free_page(phys);
+            // break;
+        // }
+    }
+
+    if (page_va < map_end) {
+        // roll back pages mapped by this request, heap_break remains unchanged
+        for (u64 rollback = map_start; rollback < page_va; rollback += PAGE_SIZE) {
+            paddr_t phys = vmm_virt_to_phys(process->space, rollback);
+
+            if (phys) {
+                vmm_unmap(process->space, rollback);
+                pmm_free_page(phys & ~(PAGE_SIZE - 1));
+            }
+        }
+
+        return -ENOMEM;
+    }
+
+    process->heap_break = new_break;
+
+    return (ssize_t)old_break;
+}
+
 u64 syscall_dispatch(struct syscall_regs* r) {
     switch (r->rax) {
         case SYS_READ: {
@@ -351,6 +596,15 @@ u64 syscall_dispatch(struct syscall_regs* r) {
         }
         case SYS_WINDOW_SETUP_TERMINAL_IO: {
             return (u64)sys_window_setup_terminal_io();
+        }
+        case SYS_OPENDIR: {
+            return (u64)sys_opendir((const char*)r->rdi);
+        }
+        case SYS_READDIR: {
+            return (u64)sys_readdir((fd_t)r->rdi, (sys_dirent_t*)r->rsi);
+        }
+        case SYS_SBRK: {
+            return (u64)sys_sbrk((ssize_t)r->rdi);
         }
         default: {
             return (u64)-ENOSYS;

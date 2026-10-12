@@ -4,7 +4,7 @@
 
 #include <xlibc/xstddef.h>
 #include <xlibc/xstdint.h>
-#include <xlibc/stdlib.h>
+#include <memory/heap.h>
 
 #include <process.h>
 #include <errno.h>

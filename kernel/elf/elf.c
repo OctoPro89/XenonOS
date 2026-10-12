@@ -74,7 +74,7 @@ static int elf_load_segment(FILE* file, process_t* process, const elf64_program_
         }
 
         u64 flags = PAGE_PRESENT | PAGE_USER;
-        if (ph->p_align & PF_W) {
+        if (ph->p_flags & PF_W) {
             flags |= PAGE_WRITABLE;
         }
 
@@ -125,6 +125,8 @@ int process_load_elf(process_t* process, const char* path) {
         return -EINVAL;
     }
 
+    u64 highest_segment_end = 0;
+
     for (u16 i = 0; i < header.e_phnum; ++i) {
         elf64_program_header_t ph;
         u64 offset = header.e_phoff + (u64)i * header.e_phentsize;
@@ -137,6 +139,19 @@ int process_load_elf(process_t* process, const char* path) {
 
         if (ph.p_type != PT_LOAD) {
             continue;
+        }
+
+        if (ph.p_memsz != 0) {
+            u64 segment_end;
+
+            if (__builtin_add_overflow(ph.p_vaddr, ph.p_memsz, &segment_end)) {
+                fclose(file);
+                return -EINVAL;
+            }
+
+            if (segment_end > highest_segment_end) {
+                highest_segment_end = segment_end;
+            }
         }
 
         int result = elf_load_segment(file, process, &ph);
@@ -161,6 +176,19 @@ int process_load_elf(process_t* process, const char* path) {
     }
 
     process->user_stack_top = USER_STACK_TOP;
+
+    vaddr_t stack_bottom = USER_STACK_TOP - (8 * PAGE_SIZE);
+
+    // leave at least one unmapped page below the stack
+    vaddr_t heap_limit = stack_bottom - PAGE_SIZE;
+
+    if (highest_segment_end > heap_limit) {
+        return -ENOMEM;
+    }
+
+    process->heap_start = (highest_segment_end + PAGE_SIZE - 1) & ~(PAGE_SIZE - 1);
+    process->heap_break = process->heap_start;
+    process->heap_limit = heap_limit;
 
     return 0;
 }

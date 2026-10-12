@@ -4,7 +4,7 @@
 #include <drivers/usb/usb_descriptors.h>
 #include <memory/paging.h>
 #include <xlibc/xassert.h>
-#include <xlibc/stdlib.h>
+#include <memory/heap.h>
 #include <xlibc/string.h>
 #include <xlibc/stdio.h>
 

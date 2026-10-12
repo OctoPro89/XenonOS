@@ -7,6 +7,9 @@
 #include <kernel.h>
 #include <xlibc/xstdint.h>
 #include <filesystem/block_device/block_device.h>
+#include <filesystem/vfs/vfs.h>
+
+#define MAX_LFN_PARTS 20
 
 typedef struct __packed__ {
     u8  jmp[3];
@@ -94,6 +97,21 @@ typedef struct {
     u8* cluster_buffer;
 } FAT32_FILE;
 
+typedef struct {
+    FAT32_FS* fs;
+    u32 cluster;
+    u32 offset;
+    u32 cluster_size;
+    u8* buffer;
+
+    // for assembling LFNs
+    char lfn_parts[20][14];
+    u32 lfn_count;
+    u8 lfn_checksum;
+
+    int end; // 0 = active, 1 = EOF, -1 = error
+} FAT32_DIR;
+
 int fat32_init(FAT32_FS* fs, block_device* dev, u32 part_lba);
 u32 fat32_cluster_to_lba(FAT32_FS* fs, u32 cluster);
 u32 fat32_read_fat_entry(FAT32_FS* fs, u32 cluster);
@@ -109,3 +127,7 @@ void fat32_lfn_extract(FAT32_LFN_ENTRY* lfn, char* out);
 u32 fat32_get_size(FAT32_FILE* file);
 int fat32_seek(FAT32_FILE* f, u32 offset);
 u32 fat32_tell(FAT32_FILE* f);
+
+FAT32_DIR* fat32_opendir(FAT32_FS* fs, const char* path);
+int fat32_readdir(FAT32_DIR* dir, VFS_DIRENT* out);
+void fat32_closedir(FAT32_DIR* dir);

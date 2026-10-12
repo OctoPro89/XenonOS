@@ -22,6 +22,11 @@ struct process {
     vmm_space_t* space;
     fd_table_t fd_table;
 
+    // userspace heap
+    vaddr_t heap_start;
+    vaddr_t heap_break;
+    vaddr_t heap_limit;
+
     spinlock_t lock;
     wait_queue_t waiters;
 

@@ -1,7 +1,7 @@
 #include <drivers/usb/mass_storage/msc_driver.h>
 
 #include <xlibc/stdio.h>
-#include <xlibc/stdlib.h>
+#include <memory/heap.h>
 #include <xlibc/string.h>
 #include <xlibc/xassert.h>
 

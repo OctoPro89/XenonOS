@@ -4,7 +4,7 @@
 #include <xlibc/xassert.h>
 #include <xlibc/xstdint.h>
 #include <xlibc/string.h>
-#include <xlibc/stdlib.h>
+#include <memory/heap.h>
 #include <xlibc/stdio.h>
 
 static void hid_mouse_handler_reset_state(hid_mouse_handler_t* handler) {

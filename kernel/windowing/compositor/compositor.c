@@ -5,7 +5,7 @@
 #include <drivers/input/input.h>
 #include <task.h>
 #include <xlibc/string.h>
-#include <xlibc/stdlib.h>
+#include <memory/heap.h>
 #include <graphics/graphics.h>
 #include <arch/x86_64/sync/sync.h>
 #include <kernel.h>

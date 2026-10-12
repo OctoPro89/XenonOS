@@ -3,7 +3,7 @@
 #include <drivers/usb/xhci.h>
 #include <xlibc/xassert.h>
 #include <xlibc/string.h>
-#include <xlibc/stdlib.h>
+#include <memory/heap.h>
 #include <time/time.h>
 
 usb_transfer_request_t usb_transfer_request_init(u8 endpoint_addr, void* buffer, u32 requested_length, u32 flags) {

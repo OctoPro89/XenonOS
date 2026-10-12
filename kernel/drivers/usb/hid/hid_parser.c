@@ -1,7 +1,7 @@
 #include <drivers/usb/hid/hid_parser.h>
 #include <xlibc/xstddef.h>
 #include <xlibc/xassert.h>
-#include <xlibc/stdlib.h>
+#include <memory/heap.h>
 #include <xlibc/string.h>
 #include <kernel.h>
 

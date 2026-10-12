@@ -1,6 +1,6 @@
 #include "stdio.h"
 #include <xlibc/string.h>
-#include <xlibc/stdlib.h>
+#include <memory/heap.h>
 #include <unistd.h>
 
 // TODO: file ops

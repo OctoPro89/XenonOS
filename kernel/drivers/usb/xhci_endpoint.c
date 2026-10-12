@@ -1,5 +1,5 @@
 #include <drivers/usb/xhci_endpoint.h>
-#include <xlibc/stdlib.h>
+#include <memory/heap.h>
 #include <memory/paging.h>
 
 // Convert USB endpoint descriptor attributes to xHCI endpoint type

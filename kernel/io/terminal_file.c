@@ -1,6 +1,6 @@
 #include <io/terminal_file.h>
 
-#include <xlibc/stdlib.h>
+#include <memory/heap.h>
 #include <xlibc/string.h>
 
 static ssize_t terminal_file_read(file_t* file, void* buffer, size_t size) {

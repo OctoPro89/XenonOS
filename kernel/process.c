@@ -1,7 +1,7 @@
 #include <process.h>
 #include <task.h>
 #include <errno.h>
-#include <xlibc/stdlib.h>
+#include <memory/heap.h>
 #include <xlibc/string.h>
 #include <xlibc/xassert.h>
 #include <io/terminal_file.h>

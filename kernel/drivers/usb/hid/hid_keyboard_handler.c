@@ -4,7 +4,7 @@
 #include <xlibc/xassert.h>
 #include <xlibc/xstdint.h>
 #include <xlibc/string.h>
-#include <xlibc/stdlib.h>
+#include <memory/heap.h>
 #include <xlibc/stdio.h>
 
 // USB HID scancode to key name (US layout)

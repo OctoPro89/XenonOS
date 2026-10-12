@@ -92,11 +92,11 @@ build/user/libwindow/libwindow.a: $(LIBWINDOW_C_OBJS)
 	mkdir -p $(dir $@)
 	ar rcs $@ $^
 
-# xeterm
 build/user/start.o: user/start.c
 	mkdir -p $(dir $@)
 	clang $(USERCFLAGS) $< -o $@ -I"kernel/" -I"user/"
 
+# xeterm
 build/user/apps/xeterm.o: user/apps/xeterm/xeterm.c
 	mkdir -p $(dir $@)
 	clang $(USERCFLAGS) $< -o $@ -I"kernel/" -I"user/"
@@ -104,18 +104,31 @@ build/user/apps/xeterm.o: user/apps/xeterm/xeterm.c
 build/user/apps/sh: \
 	build/user/start.o \
 	build/user/apps/xeterm.o \
-	build/unistd_c.o \
 	build/user/libc/libc.a \
 	build/user/libwindow/libwindow.a
 	ld.lld -T user/user.ld \
 		build/user/apps/xeterm.o \
 		build/user/start.o \
-		build/unistd_c.o \
 		build/user/libc/libc.a \
 		build/user/libwindow/libwindow.a \
 		-o $@
 
-userapps: build/user/apps/sh
+# ls
+build/user/apps/ls.o: user/apps/ls/ls.c
+	mkdir -p $(dir $@)
+	clang $(USERCFLAGS) $< -o $@ -I"kernel/" -I"user/"
+
+build/user/apps/ls: \
+	build/user/start.o \
+	build/user/apps/ls.o \
+	build/user/libc/libc.a
+	ld.lld -T user/user.ld \
+		build/user/apps/ls.o \
+		build/user/start.o \
+		build/user/libc/libc.a \
+		-o $@
+
+userapps: build/user/apps/sh build/user/apps/ls
 
 # --- Image ---
 image: build/BOOTX64.EFI build/kernel.elf
@@ -146,6 +159,7 @@ run: image userapps
 	sudo cp build/kernel.elf /mnt/
 	sudo cp testlongfilename.txt /mnt/
 	sudo cp build/user/apps/sh /mnt/bin/
+	sudo cp build/user/apps/ls /mnt/bin/
 	sudo cp hello /mnt/bin/
 	sudo umount /mnt
 
@@ -172,6 +186,7 @@ run: image userapps
 	sudo cp build/kernel.elf /mnt/
 	sudo cp testlongfilename.txt /mnt/
 	sudo cp build/user/apps/sh /mnt/bin/
+	sudo cp build/user/apps/ls /mnt/bin/
 	sudo cp hello /mnt/bin/
 	sudo umount /mnt
 

@@ -2,7 +2,7 @@
 #include <drivers/usb/xhci_device.h>
 #include <drivers/usb/xhci_device_ctx.h>
 #include <xlibc/string.h>
-#include <xlibc/stdlib.h>
+#include <memory/heap.h>
 
 static void xhci_device_alloc_input_ctx(xhci_device_t* dev) {
     // calculate the input context size based on the capability register parameters

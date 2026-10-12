@@ -1,7 +1,7 @@
 #include "../shared/boot_info.h"
 
 #include <xlibc/string.h>
-#include <xlibc/stdlib.h>
+#include <memory/heap.h>
 #include <xlibc/stdio.h>
 
 #include <acpi/acpi.h>
@@ -62,11 +62,44 @@
 static u8 kernel_stack[KERNEL_STACK_SIZE] __attribute__((aligned(16)));
 uint64_t kernel_stack_top = (u64)(((u8*)kernel_stack) + KERNEL_STACK_SIZE);
 
+static void fs_test() {
+    FILE* f = fopen("testlongfilename.txt", "r");
+    if (!f) {
+        printf("Failed to open file!\n");
+        while(1);
+    }
+
+    fseek(f, 0, SEEK_END);
+    u32 size = ftell(f);
+    fseek(f, 0, SEEK_SET);
+    printf("Filesize: %u bytes\n", size);
+
+    u8* buffer = kmalloc(26);
+    fread(buffer, 10, 1, f);
+    for (int i = 0; i < 10; ++i) { putc((char)buffer[i]); }
+
+    printf("\n");
+
+    fread(buffer, 16, 1, f);
+    for (int i = 0; i < 16; ++i) { putc((char)buffer[i]); }
+
+    fseek(f, -20, SEEK_CUR);
+
+    fread(buffer, 16, 1, f);
+    for (int i = 0; i < 16; ++i) { putc((char)buffer[i]); }
+
+    kfree(buffer);
+    fclose(f);
+
+    printf("\n");
+    printf("\n");
+}
+
 void fat32_list_root(FAT32_FS* fs) {
     u32 cluster = fs->root_cluster;
 
     u32 cluster_size = fs->sectors_per_cluster * 512;
-    u8* buf = malloc(cluster_size);
+    u8* buf = kmalloc(cluster_size);
 
     while (cluster < 0x0FFFFFF8) {
         fat32_read_cluster(fs, cluster, buf);
@@ -75,7 +108,7 @@ void fat32_list_root(FAT32_FS* fs) {
             FAT32_DIRECTORY_ENTRY* ent = (FAT32_DIRECTORY_ENTRY*)(buf + i);
 
             if (ent->name[0] == 0x00) return;
-            if (ent->name[0] == 0xE5) continue;
+        if (ent->name[0] == 0xE5) continue;
             if (ent->attr == 0x0F) continue; // skip LFN5
 
             char name[12];
@@ -88,7 +121,7 @@ void fat32_list_root(FAT32_FS* fs) {
         cluster = fat32_read_fat_entry(fs, cluster);
     }
 
-    free(buf);
+    kfree(buf);
 }
 
 void timer_handler(struct regs* r, void* _) {
@@ -298,39 +331,6 @@ static void kernel_main(void* arg) {
     };
     */
 
-    /*
-    FILE* f = fopen("testlongfilename.txt", "r");
-    if (!f) {
-        printf("Failed to open file!\n");
-        while(1);
-    }
-
-    fseek(f, 0, SEEK_END);
-    u32 size = ftell(f);
-    fseek(f, 0, SEEK_SET);
-    printf("Filesize: %u bytes\n", size);
-
-    u8* buffer = kmalloc(26);
-    fread(buffer, 10, 1, f);
-    for (int i = 0; i < 10; ++i) { putc((char)buffer[i]); }
-
-    printf("\n");
-
-    fread(buffer, 16, 1, f);
-    for (int i = 0; i < 16; ++i) { putc((char)buffer[i]); }
-
-    fseek(f, -20, SEEK_CUR);
-
-    fread(buffer, 16, 1, f);
-    for (int i = 0; i < 16; ++i) { putc((char)buffer[i]); }
-
-    free(buffer);
-    fclose(f);
-
-    printf("\n");
-    printf("\n");
-    */
-
     printf("Creating XHCI driver task!\n");
     task_t* xhci_driver_task = task_create(NULL, xhci_driver_task_entry, (void*)&xhci_driver);
 
@@ -356,6 +356,38 @@ static void kernel_main(void* arg) {
     vfs_mount_root(&fat32_ops, (void*)&fs);
 
     printf("Set up Virtual File System successfully\n");
+
+    VFS_DIR* dir = vfs_opendir("/");
+
+    if (!dir) {
+        serial_write_str("opendir failed\n");
+        return;
+    }
+
+    VFS_DIRENT entry;
+
+    for (;;) {
+        int result = vfs_readdir(dir, &entry);
+
+        if (result == 0) {
+            break; // End of directory
+        }
+
+        if (result < 0) {
+            serial_write_str("readdir failed\n");
+            break;
+        }
+
+        serial_write_str(entry.name);
+
+        if (entry.type == VFS_TYPE_DIRECTORY) {
+            serial_write_str("/");
+        }
+
+        serial_write_str("\n");
+    }
+
+    vfs_closedir(dir);
 
     // boot USB plugged in and set up
     window_server_init();

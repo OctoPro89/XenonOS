@@ -1,5 +1,5 @@
 #include "graphics.h"
-#include <xlibc/stdlib.h>
+#include <memory/heap.h>
 #include <xlibc/xassert.h>
 #include <memory/vmm.h>
 #include <arch/x86_64/io.h>

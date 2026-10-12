@@ -1,7 +1,7 @@
 #include <memory/ring_buffer.h>
 #include <arch/x86_64/sync/sync.h>
 #include <xlibc/string.h>
-#include <xlibc/stdlib.h>
+#include <memory/heap.h>
 #include <kernel.h>
 
 [[nodiscard]]

@@ -4,5 +4,8 @@ cleanup in elf.c
 mass storage driver
 printf needs to work atomically
 atomic types
+fat32 driver read cluster and read fat entry ignore block device read return vals. LFNs are converted from UTF-16 to char which can cause problems if non-ASCII
+you can fat32_open("/")
+errno
 
 maybe timer doesn't work quite right on some real hardware systems

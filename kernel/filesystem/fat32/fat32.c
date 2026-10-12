@@ -2,9 +2,51 @@
 #include <arch/x86_64/io.h>
 #include <xlibc/string.h>
 #include <xlibc/ctype.h>
-#include <xlibc/stdlib.h>
+#include <memory/heap.h>
+#include <kernel.h>
 
-#define MAX_LFN_PARTS 20
+static int fat32_is_data_cluster(u32 cluster) {
+    // exclude free, reserved, bad, and end-of-chain marker values
+    return cluster >= 2 && cluster < 0x0FFFFFF0;
+}
+
+static __hint_inline__ int fat32_is_eoc(u32 cluster) {
+    return cluster >= 0x0FFFFFF8;
+}
+
+static u8 fat32_lfn_checksum(const u8 name[11]) {
+    u8 sum = 0;
+
+    for (u32 i = 0; i < 11; ++i) {
+        sum = (u8)(((sum & 1) ? 0x80 : 0) + (sum >> 1) + name[i]);
+    }
+
+    return sum;
+}
+
+static __hint_inline__ void fat32_reset_lfn(FAT32_DIR* dir) {
+    dir->lfn_count = 0;
+    dir->lfn_checksum = 0;
+    memset(dir->lfn_parts, 0, sizeof(dir->lfn_parts));
+}
+
+static void fat32_advance_directory_cluster(FAT32_DIR* dir) {
+    u32 next = fat32_read_fat_entry(dir->fs, dir->cluster);
+
+    if (fat32_is_eoc(next)) {
+        dir->end = 1;
+        return;
+    }
+
+    if (!fat32_is_data_cluster(next)) {
+        dir->end = -1;
+        return;
+    }
+
+    dir->cluster = next;
+    dir->offset = 0;
+    fat32_read_cluster(dir->fs, dir->cluster, dir->buffer);
+}
 
 static int fat32_stricmp(const char* a, const char* b) {
     while (*a && *b) {
@@ -130,6 +172,7 @@ FAT32_FILE* fat32_open(FAT32_FS* fs, const char* path) {
 
     u32 current_cluster = fs->root_cluster;
     FAT32_DIRECTORY_ENTRY ent;
+    memset(&ent, 0, sizeof(FAT32_DIRECTORY_ENTRY));
 
     // skip leading '/'
     while (path[i] == '/') {
@@ -168,6 +211,12 @@ FAT32_FILE* fat32_open(FAT32_FS* fs, const char* path) {
 }
 
 void fat32_close(FAT32_FILE* f) {
+    if (!f) return;
+
+    if (f->cluster_buffer) {
+        kfree(f->cluster_buffer);
+    }
+
     kfree(f);
 }
 
@@ -348,4 +397,207 @@ int fat32_seek(FAT32_FILE* f, u32 offset) {
 
 u32 fat32_tell(FAT32_FILE* f) {
     return f->pos;
+}
+
+FAT32_DIR* fat32_opendir(FAT32_FS* fs, const char* path) {
+    if (!fs || !fs->dev || !path) {
+        return NULL;
+    }
+
+    u32 current_cluster = fs->root_cluster;
+    int i = 0;
+
+    // accept "/", repeated leading slashes, and an empty path as root
+    while (path[i] == '/') {
+        ++i;
+    }
+
+    while (path[i] != '\0') {
+        char component[256];
+        u32 length = 0;
+
+        while (path[i] != '\0' && path[i] != '/') {
+            if (length >= sizeof(component) - 1) {
+                return NULL;
+            }
+
+            component[length++] = path[i++];
+        }
+
+        component[length] = '\0';
+
+        while (path[i] == '/') {
+            ++i;
+        }
+
+        // ignore empty components caused by repeated slashes
+        if (length == 0) {
+            continue;
+        }
+
+        FAT32_DIRECTORY_ENTRY entry;
+
+        if (!fat32_find_in_dir( fs, current_cluster, component, &entry)) {
+            return NULL;
+        }
+
+        // every component in this path must be a directory
+        if (!(entry.attr & 0x10) || (entry.attr & 0x08)) {
+            return NULL;
+        }
+
+        current_cluster = fat32_entry_cluster(&entry);
+
+        if (!fat32_is_data_cluster(current_cluster)) {
+            return NULL;
+        }
+    }
+
+    FAT32_DIR* dir = kmalloc(sizeof(FAT32_DIR));
+    if (!dir) {
+        return NULL;
+    }
+
+    memset(dir, 0, sizeof(FAT32_DIR));
+
+    dir->fs = fs;
+    dir->cluster = current_cluster;
+    dir->offset = 0;
+    dir->cluster_size = fs->sectors_per_cluster * fs->bytes_per_sector;
+    dir->end = 0;
+
+    if (dir->cluster_size == 0) {
+        kfree(dir);
+        return NULL;
+    }
+
+    dir->buffer = kmalloc(dir->cluster_size);
+    if (!dir->buffer) {
+        kfree(dir);
+        return NULL;
+    }
+
+    fat32_read_cluster(fs, dir->cluster, dir->buffer);
+    fat32_reset_lfn(dir);
+
+    return dir;
+}
+
+int fat32_readdir(FAT32_DIR* dir, VFS_DIRENT* out)
+{
+    if (!dir || !out || !dir->fs || !dir->buffer || dir->end < 0) { return -1; }
+    if (dir->end == 1) { return 0; }
+
+    for (;;) {
+        // move to the next cluster when this one is exhausted
+        if (dir->offset >= dir->cluster_size) {
+            fat32_advance_directory_cluster(dir);
+
+            if (dir->end == 1) {
+                return 0;
+            }
+
+            if (dir->end < 0) {
+                return -1;
+            }
+        }
+
+        FAT32_DIRECTORY_ENTRY entry;
+        memcpy(&entry, dir->buffer + dir->offset, sizeof(entry));
+        dir->offset += sizeof(entry);
+
+        // a zero first byte marks the end of the directory
+        if (entry.name[0] == 0x00) {
+            dir->end = 1;
+            return 0;
+        }
+
+        // deleted entries invalidate any pending LFN sequence
+        if (entry.name[0] == 0xE5) {
+            fat32_reset_lfn(dir);
+            continue;
+        }
+
+        if (entry.attr == 0x0F) {
+            FAT32_LFN_ENTRY lfn;
+            memcpy(&lfn, &entry, sizeof(lfn));
+
+            u32 order = lfn.order & 0x1F;
+
+            if (lfn.order & 0x40) {
+                // this is the first on-disk record of a new LFN
+                fat32_reset_lfn(dir);
+
+                if (order == 0 || order > MAX_LFN_PARTS) {
+                    continue;
+                }
+
+                dir->lfn_count = order;
+                dir->lfn_checksum = lfn.checksum;
+            }
+
+            if (dir->lfn_count == 0 || order == 0 || order > dir->lfn_count || lfn.checksum != dir->lfn_checksum) { fat32_reset_lfn(dir);
+                continue;
+            }
+
+            fat32_lfn_extract(&lfn, dir->lfn_parts[order - 1]);
+            continue;
+        }
+
+        // volume labels are not files or directories
+        if (entry.attr & 0x08) {
+            fat32_reset_lfn(dir);
+            continue;
+        }
+
+        char short_name[32];
+        fat32_format_8_3(entry.name, short_name);
+
+        char name[VFS_NAME_MAX + 1];
+        name[0] = '\0';
+
+        // use the long name only if its checksum matches the short entry
+        if (dir->lfn_count != 0 && dir->lfn_checksum == fat32_lfn_checksum(entry.name)) {
+            u32 pos = 0;
+
+            for (u32 part = 0; part < dir->lfn_count && pos < VFS_NAME_MAX; ++part) {
+                for (u32 j = 0; dir->lfn_parts[part][j] != '\0' && pos < VFS_NAME_MAX; ++j) {
+                    name[pos++] = dir->lfn_parts[part][j];
+                }
+            }
+
+            name[pos] = '\0';
+        }
+
+        // fall back to the 8.3 alias if there was no usable LFN
+        if (name[0] == '\0') {
+            u32 i = 0;
+
+            while (short_name[i] != '\0' && i < VFS_NAME_MAX) {
+                name[i] = short_name[i];
+                ++i;
+            }
+
+            name[i] = '\0';
+        }
+
+        fat32_reset_lfn(dir);
+
+        memset(out, 0, sizeof(*out));
+        memcpy(out->name, name, strlen(name) + 1);
+        out->size = entry.size;
+        out->type = (entry.attr & 0x10) ? VFS_TYPE_DIRECTORY : VFS_TYPE_FILE;
+
+        return 1;
+    }
+}
+
+void fat32_closedir(FAT32_DIR* dir) {
+    if (!dir) { return; }
+
+    if (dir->buffer) {
+        kfree(dir->buffer);
+    }
+
+    kfree(dir);
 }

@@ -6,6 +6,7 @@
 #include <xlibc/xstddef.h>
 #include <io/fd.h>
 #include <libwindow/window_client.h>
+#include <filesystem/sys_dirent.h>
 
 // TODO: maybe align to linux
 // VERY IMPORTANT: IF THESE ARE CHANGED THEY MUST BE UPDATED IN unistd and libwindow
@@ -18,6 +19,10 @@
 #define SYS_WINDOW_CREATE               6
 #define SYS_WINDOW_DESTROY              7
 #define SYS_WINDOW_SETUP_TERMINAL_IO    8
+#define SYS_OPENDIR                     9
+#define SYS_READDIR                     10
+#define SYS_SBRK                        11
+// NOTE: userspace should just use SYS_CLOSE on directories it'll work fine
 
 // NOTE: Must match stack pushes in arch/x86_64/syscall.asm
 struct syscall_regs {
@@ -46,8 +51,11 @@ u64 sys_spawn(const char* user_path);
 u64 sys_wait(u64 pid);
 ssize_t sys_window_create(const window_config_t* user_config);
 ssize_t sys_window_destroy();
-ssize_t sys_window_damage();
+ssize_t sys_window_damage(); // TODO:
 ssize_t sys_window_setup_terminal_io();
+ssize_t sys_opendir(const char* user_path);
+ssize_t sys_readdir(fd_t fd, sys_dirent_t* user_entry);
+ssize_t sys_sbrk(ssize_t increment);
 
 u64 syscall_dispatch(struct syscall_regs* r);
 void syscall_handler(struct syscall_regs* r);

@@ -1,6 +1,6 @@
 #include <drivers/usb/core/usb_core.h>
 #include <drivers/usb/core/usb_device.h>
-#include <xlibc/stdlib.h>
+#include <memory/heap.h>
 #include <xlibc/string.h>
 #include <xlibc/stdio.h>
 #include <task.h>

@@ -1,7 +1,7 @@
 #include "stdio.h"
 #include <filesystem/vfs/vfs.h>
 #include <xlibc/string.h>
-#include <xlibc/stdlib.h>
+#include <memory/heap.h>
 #include <arch/x86_64/io.h>
 
 FILE* fopen(const char* path, const char* mode) {
@@ -13,7 +13,7 @@ FILE* fopen(const char* path, const char* mode) {
     VFS_FILE* vf = vfs_open(path);
     if (!vf) { return NULL; }
 
-    FILE* f = malloc(sizeof(FILE));
+    FILE* f = kmalloc(sizeof(FILE));
     f->vfs_file = vf;
 
     return f;
@@ -34,7 +34,7 @@ int fclose(FILE* stream) {
     if (!stream) return -1;
 
     vfs_close((VFS_FILE*)stream->vfs_file);
-    free(stream);
+    kfree(stream);
 
     return 0;
 }
