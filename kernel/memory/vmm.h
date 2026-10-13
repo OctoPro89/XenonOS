@@ -17,7 +17,11 @@ void vmm_destroy_space(vmm_space_t* space);
 
 void vmm_switch(vmm_space_t* space);
 
-void vmm_map(vmm_space_t* space, vaddr_t virt, paddr_t phys, uint64_t flags);
+/**
+ * @brief Maps a page into `space`'s page tables.
+ * @returns 0 on success, negative errno on failure
+ */
+int vmm_map(vmm_space_t* space, vaddr_t virt, paddr_t phys, uint64_t flags);
 void vmm_unmap(vmm_space_t* space, vaddr_t virt);
 
 vaddr_t vmm_alloc_virtual_pages(size_t pages);

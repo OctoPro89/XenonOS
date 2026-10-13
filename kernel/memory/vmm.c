@@ -3,6 +3,7 @@
 #include <xlibc/string.h>
 #include <memory/heap.h>
 #include <memory/paging.h>
+#include <errno.h>
 
 #define VMM_ALLOC_BASE  0xFFFFE00000000000ULL
 #define VMM_ALLOC_SIZE  (1024ULL * 1024ULL * 1024ULL) // 1 GiB
@@ -111,29 +112,57 @@ void vmm_switch(vmm_space_t* space) {
     asm volatile("mov %0, %%cr3" :: "r"(hhdm_to_phys((u64)space->pml4)));
 }
 
-void vmm_map(vmm_space_t* space, vaddr_t virt, paddr_t phys, uint64_t flags) {
+int vmm_map(vmm_space_t* space, vaddr_t virt, paddr_t phys, uint64_t flags) {
+    if (!space || !space->pml4) {
+        return -EINVAL;
+    }
+
+    if ((virt & (PAGE_SIZE - 1)) != 0 || (phys & (PAGE_SIZE - 1)) != 0) {
+        return -EINVAL;
+    }
+
     pte_t* pml4 = space->pml4;
 
     pte_t* pdpt = get_table(space, pml4, pml4_index(virt), 1);
-    pte_t* pd = get_table(space, pdpt, pdpt_index(virt), 1);
-    pte_t* pt = get_table(space, pd, pd_index(virt), 1);
+    if (!pdpt) {
+        return -ENOMEM;
+    }
 
-    pt[pt_index(virt)] = phys | flags | PAGE_PRESENT;
+    pte_t* pd = get_table(space, pdpt, pdpt_index(virt), 1);
+    if (!pd) {
+        return -ENOMEM;
+    }
+
+    pte_t* pt = get_table(space, pd, pd_index(virt), 1);
+    if (!pt) {
+        return -ENOMEM;
+    }
+
+    u64 index = pt_index(virt);
+
+    // don't silently overwrite a physical page that's already mapped
+    if (pt[index] & PAGE_PRESENT) {
+        return -EEXIST;
+    }
+
+    pt[index] = phys | flags | PAGE_PRESENT;
 
     asm volatile("invlpg (%0)" :: "r"(virt) : "memory");
+
+    return 0;
 }
 
 void vmm_unmap(vmm_space_t* space, vaddr_t virt) {
     pte_t* pml4 = space->pml4;
 
     pte_t* pdpt = get_table_noalloc(pml4, pml4_index(virt));
-    if (!pdpt) return;
+    if (!pdpt) { return; }
 
     pte_t* pd = get_table_noalloc(pdpt, pdpt_index(virt));
-    if (!pd) return;
+    if (!pd) { return; }
 
     pte_t* pt = get_table_noalloc(pd, pd_index(virt));
-    if (!pt) return;
+    if (!pt) { return; }
 
     pt[pt_index(virt)] = 0;
 

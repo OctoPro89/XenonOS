@@ -3,7 +3,14 @@
 #include <xlibc/stdio.h>
 
 int main(void) {
-    DIR* dir = opendir("/");
+    char cwd[256];
+
+    if (getcwd(cwd, sizeof(cwd)) == NULL) {
+        printf("ls: cannot get current directory\n");
+        return 1;
+    }
+
+    DIR* dir = opendir(cwd);
     if (!dir) {
         printf("ls: cannot open directory\n");
         return 1;

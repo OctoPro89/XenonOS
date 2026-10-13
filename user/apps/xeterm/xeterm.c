@@ -8,9 +8,6 @@
 #include <xlibc/stdio.h>
 
 int main(void) {
-    static const char prompt[] = "xenonos@xe:/$ ";
-    char line[256];
-
     // create window
     window_config_t wconfig = {
         .title = "xeterm",
@@ -30,49 +27,92 @@ int main(void) {
 
     window_setup_terminal_io();
 
+    char cwd[256];
+    char prompt[256];
+    char line[256];
+    
     for (;;) {
-        write(STDOUT_FILENO, prompt, sizeof(prompt) - 1);
+        if (getcwd(cwd, sizeof(cwd))) {
+            snprintf(prompt, sizeof(prompt), "xenonos@xe:%s$ ", cwd);
+        }
+        else {
+            snprintf(prompt, sizeof(prompt), "xenonos@xe:$ ", cwd);
+        }
 
-        ssize_t size = read(0, line, sizeof(line) - 1);
+        write(STDOUT_FILENO, prompt, strlen(prompt));
+
+        ssize_t size = read(STDIN_FILENO, line, sizeof(line) - 1);
 
         if (size <= 0) {
             continue;
         }
 
-        line[size] = 0;
-
-        if (line[size - 1] == '\n') {
-            line[size - 1] = 0;
-        }
+        line[size] = '\0';
 
         if (line[0] == 0) {
             continue;
         }
 
-        if (strncmp(line, "exit", 4) == 0) {
-            if (window_destroy() < 0) {
-                return -1;
-            }
+        if (size > 0 && line[size - 1] == '\n') {
+            line[--size] = '\0';
+        }
+
+        if (size > 0 && line[size - 1] == '\r') {
+            line[--size] = '\0';
+        }
+
+        if (line[0] == '\0') {
+            continue;
+        }
+
+        if (strcmp(line, "exit") == 0) {
+            window_destroy();
             return 0;
         }
 
-        char path[256];
+        if (strcmp(line, "pwd") == 0) {
+            if (getcwd(cwd, sizeof(cwd))) {
+                printf("%s\n", cwd);
+            } else {
+                printf("pwd: getcwd failed\n");
+            }
+            continue;
+        }
 
-        snprintf(path, sizeof(path), "bin/%s", line);
-        // printf("Spawning: %s\n", path);
+        if (strncmp(line, "cd", 2) == 0 &&
+            (line[2] == '\0' || line[2] == ' ' || line[2] == '\t')) {
+            char* target = line + 2;
+
+            while (*target == ' ' || *target == '\t') {
+                ++target;
+            }
+
+            if (*target == '\0') {
+                target = "/";
+            }
+
+            if (chdir(target) < 0) {
+                // printf("cd: cannot change directory to %s (errno %d)\n", target, errno);
+                printf("cd: cannot change directory to %s\n", target);
+            }
+            continue;
+        }
+
+        char path[256];
+        snprintf(path, sizeof(path), "/bin/%s", line);
 
         pid_t pid = spawn(path);
 
         if ((i64)pid < 0) {
+            // printf("spawn failed (errno %d)\n", errno);
             printf("spawn failed: %lld\n", (long long)(i64)pid);
-
             continue;
         }
 
         int status = wait(pid);
-
         printf("\nprocess %llu exited with return code %d\n", (unsigned long long)pid, status);
     }
+
 
     if (!window_destroy()) {
         return -1;

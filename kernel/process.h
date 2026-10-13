@@ -6,6 +6,8 @@
 #include <arch/x86_64/sync/sync.h>
 #include <tty/terminal.h>
 
+#define PROCESS_CWD_MAX 256
+
 typedef struct process process_t;
 
 typedef u64 pid_t;
@@ -38,12 +40,18 @@ struct process {
 
     task_t* main_task;
     window_t* window; // for now processes only have one window
+    char cwd[PROCESS_CWD_MAX]; // current working directory
 
     process_t* parent;
     process_t* next;
 };
 
 process_t* process_create();
+
+/**
+ * @brief Cleans up a process but NOT its `main_task`. Does not require zombie
+ * @note Should be used for cleaning up processes that failed to start or internally
+ */
 void process_destroy(process_t* process);
 int process_start(process_t* process);
 void process_exit(process_t* process, int exit_code);
@@ -52,6 +60,11 @@ int process_wait(process_t* process);
 process_t* process_current();
 
 process_t* process_find(u64 pid);
+
+/**
+ * @brief Cleans up a process and internally calls process_destry
+ * @note Should only be used on successfully exited processes
+ */
 void process_reap(process_t* process);
 
 int process_setup_stdio(process_t* process, terminal_t* terminal);

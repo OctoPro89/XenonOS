@@ -127,6 +127,16 @@ size_t strlen(const char* s) {
     return s - start;
 }
 
+size_t strnlen(const char *s, size_t maxlen) {
+    size_t len = 0;
+
+    while (len < maxlen && s[len] != '\0') {
+        len++;
+    }
+
+    return len;
+}
+
 char* strcpy(char* dest, const char* src) {
     char* d = dest;
     while ((*d++ = *src++));

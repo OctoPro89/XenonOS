@@ -1,5 +1,6 @@
 #pragma once
 #include <xlibc/xstdint.h>
+#include <xlibc/xstddef.h>
 
 typedef struct vfs_file VFS_FILE;
 typedef struct vfs_dir VFS_DIR;
@@ -67,3 +68,5 @@ VFS_DIR* vfs_opendir(const char* path);
  */
 int vfs_readdir(VFS_DIR* dir, VFS_DIRENT* out);
 void vfs_closedir(VFS_DIR* dir);
+
+int vfs_resolve_path(const char* cwd, const char* path, char* out, size_t out_size);

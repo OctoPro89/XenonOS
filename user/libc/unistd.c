@@ -59,11 +59,52 @@ void* sbrk(ssize_t increment) {
     );
 
     if (ret < 0) {
-        // errno = (int)-ret;
+        // errno = (int)ret;
         return (void*)-1;
     }
 
     return (void*)ret;
+}
+
+int chdir(const char* path) {
+    long ret;
+
+    asm volatile (
+        "syscall"
+        : "=a"(ret)
+        : "a"(SYS_CHDIR),
+          "D"(path)
+        : "rcx", "r11", "r10", "memory"
+    );
+
+    // POSIX compatiblity
+    if (ret < 0) {
+        // errno = (int)ret;
+        return -1;
+    }
+
+    return 0;
+}
+
+char* getcwd(char* buf, size_t size) {
+    long ret;
+
+    asm volatile (
+        "syscall"
+        : "=a"(ret)
+        : "a"(SYS_GETCWD),
+          "D"(buf),
+          "S"(size)
+        : "rcx", "r11", "r10", "memory"
+    );
+
+    // POSIX compatiblity
+    if (ret < 0) {
+        // errno = (int)ret;
+        return (char*)-1;
+    }
+
+    return buf;
 }
 
 pid_t spawn(const char *path) {

@@ -22,6 +22,8 @@
 #define SYS_OPENDIR                     9
 #define SYS_READDIR                     10
 #define SYS_SBRK                        11
+#define SYS_CHDIR                       12
+#define SYS_GETCWD                      13
 // NOTE: userspace should just use SYS_CLOSE on directories it'll work fine
 
 // NOTE: Must match stack pushes in arch/x86_64/syscall.asm
@@ -56,6 +58,8 @@ ssize_t sys_window_setup_terminal_io();
 ssize_t sys_opendir(const char* user_path);
 ssize_t sys_readdir(fd_t fd, sys_dirent_t* user_entry);
 ssize_t sys_sbrk(ssize_t increment);
+ssize_t sys_chdir(const char* user_path);
+ssize_t sys_getcwd(char* user_buffer, size_t size);
 
 u64 syscall_dispatch(struct syscall_regs* r);
 void syscall_handler(struct syscall_regs* r);

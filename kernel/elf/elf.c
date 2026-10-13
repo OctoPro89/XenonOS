@@ -79,7 +79,11 @@ static int elf_load_segment(FILE* file, process_t* process, const elf64_program_
         }
 
         // TODO: NX bit
-        vmm_map(process->space, page_va, phys, flags);
+        int rc = vmm_map(process->space, page_va, phys, flags);
+        if (rc < 0) {
+            pmm_free_page(phys);
+            return rc;
+        }
     }
 
     return 0;
@@ -172,7 +176,11 @@ int process_load_elf(process_t* process, const char* path) {
             return -ENOMEM;
         }
 
-        vmm_map(process->space, USER_STACK_TOP - ((u64)(i + 1) * PAGE_SIZE), phys, PAGE_PRESENT | PAGE_USER | PAGE_WRITABLE);
+        int rc = vmm_map(process->space, USER_STACK_TOP - ((u64)(i + 1) * PAGE_SIZE), phys, PAGE_PRESENT | PAGE_USER | PAGE_WRITABLE);
+        if (rc < 0) {
+            pmm_free_page(phys);
+            return rc;
+        }
     }
 
     process->user_stack_top = USER_STACK_TOP;

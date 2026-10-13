@@ -230,18 +230,27 @@ u64 sys_spawn(const char* user_path) {
         return (u64)(i64)-EFAULT;
     }
 
-    char path[256];
+char path[USER_PATH_MAX];
 
-    // TODO: check <0
-    if (copy_from_user(path, user_path, sizeof(path)) < 0) {
-        return -EFAULT;
+    int result = copy_user_path(path, user_path);
+    if (result < 0) {
+        return (u64)(i64)result;
     }
-
-    path[sizeof(path) - 1] = 0;
 
     process_t* parent = process_current();
     if (!parent) {
         return (u64)(i64)-ESRCH;
+    }
+
+    char resolved_path[USER_PATH_MAX];
+    result = vfs_resolve_path(
+        parent->cwd,
+        path,
+        resolved_path,
+        sizeof(resolved_path)
+    );
+    if (result < 0) {
+        return (u64)(i64)result;
     }
 
     process_t* process = process_create();
@@ -250,16 +259,17 @@ u64 sys_spawn(const char* user_path) {
     }
 
     process->parent = parent;
+    strncpy(process->cwd, parent->cwd, sizeof(process->cwd) - 1);
+    process->cwd[sizeof(process->cwd) - 1] = '\0';
     
     // inherit stdin, stdout, stderr, and any other open descriptors for the child
-    int result = fd_table_clone(&process->fd_table, &parent->fd_table); 
+    result = fd_table_clone(&process->fd_table, &parent->fd_table);
     if (result < 0) {
         process_destroy(process);
         return (u64)(i64)result;
     }
 
-    result = process_load_elf(process, path);
-
+    result = process_load_elf(process, resolved_path);
     if (result < 0) {
         process_destroy(process);
         return (u64)(i64)result;
@@ -271,7 +281,7 @@ u64 sys_spawn(const char* user_path) {
         return (u64)(i64)result;
     }
 
-    return process->pid;
+    return (u64)process->pid;
 }
 
 u64 sys_wait(u64 pid) {
@@ -395,13 +405,20 @@ ssize_t sys_window_setup_terminal_io() {
 
 ssize_t sys_opendir(const char* user_path) {
     char path[USER_PATH_MAX];
+    char resolved[USER_PATH_MAX];
 
     int result = copy_user_path(path, user_path);
     if (result < 0) {
         return result;
     }
 
-    VFS_DIR* dir = vfs_opendir(path);
+    process_t* process = process_current();
+    if (!process) {
+        return -ESRCH;
+    }
+
+    result = vfs_resolve_path(process->cwd, path, resolved, USER_PATH_MAX);
+    VFS_DIR* dir = vfs_opendir(resolved);
     if (!dir) {
         // TODO: future VFS error interface can distinguish ENOENT, ENOTDIR, and I/O errors instead of returning NULL
         return -ENOENT;
@@ -541,12 +558,12 @@ ssize_t sys_sbrk(ssize_t increment) {
 
         memset((void*)phys_to_hhdm(phys), 0, PAGE_SIZE);
 
-        /* TODO: int result = */ vmm_map(process->space, page_va, phys, PAGE_PRESENT | PAGE_USER | PAGE_WRITABLE);
+        int result = vmm_map(process->space, page_va, phys, PAGE_PRESENT | PAGE_USER | PAGE_WRITABLE);
 
-        // if (result < 0) {
-            // pmm_free_page(phys);
-            // break;
-        // }
+        if (result < 0) {
+            pmm_free_page(phys);
+            break;
+        }
     }
 
     if (page_va < map_end) {
@@ -566,6 +583,76 @@ ssize_t sys_sbrk(ssize_t increment) {
     process->heap_break = new_break;
 
     return (ssize_t)old_break;
+}
+
+ssize_t sys_getcwd(char *user_buffer, size_t size) {
+    if (!user_buffer) {
+        return -EFAULT;
+    }
+
+    if (size == 0) {
+        return -EINVAL;
+    }
+
+    process_t *process = process_current();
+    if (!process) {
+        return -ESRCH;
+    }
+
+    // ensure the kernel's cwd is terminated
+    size_t len = strnlen(process->cwd, sizeof(process->cwd));
+
+    if (len == sizeof(process->cwd)) {
+        return -EINVAL;
+    }
+
+    size_t required = len + 1;
+
+    if (size < required) {
+        return -ERANGE;
+    }
+
+    if (copy_to_user(user_buffer, process->cwd, required) < 0) {
+        return -EFAULT;
+    }
+
+    return (ssize_t)required;
+}
+
+ssize_t sys_chdir(const char *user_path) {
+    char path[USER_PATH_MAX];
+    char resolved[USER_PATH_MAX];
+
+    int result = copy_user_path(path, user_path);
+    if (result < 0) {
+        return result;
+    }
+
+    process_t* process = process_current();
+    if (!process) {
+        return -ESRCH;
+    }
+
+    result = vfs_resolve_path(process->cwd, path, resolved, sizeof(resolved));
+
+    if (result < 0) {
+        return result;
+    }
+
+    VFS_DIR* dir = vfs_opendir(resolved);
+    if (!dir) {
+        return -ENOENT;
+    }
+
+    vfs_closedir(dir);
+
+    size_t len = strlen(resolved);
+    if (len >= sizeof(process->cwd)) {
+        return -ENAMETOOLONG;
+    }
+
+    memcpy(process->cwd, resolved, len + 1);
+    return 0;
 }
 
 u64 syscall_dispatch(struct syscall_regs* r) {
@@ -605,6 +692,12 @@ u64 syscall_dispatch(struct syscall_regs* r) {
         }
         case SYS_SBRK: {
             return (u64)sys_sbrk((ssize_t)r->rdi);
+        }
+        case SYS_CHDIR: {
+            return (u64)sys_chdir((const char*)r->rdi);
+        }
+        case SYS_GETCWD: {
+            return (u64)sys_getcwd((char*)r->rdi, (size_t)r->rsi);
         }
         default: {
             return (u64)-ENOSYS;

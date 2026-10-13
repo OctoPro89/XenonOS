@@ -169,7 +169,6 @@ void process_reap(process_t* process) {
     process_destroy(process);
 }
 
-
 int process_setup_stdio(process_t* process, terminal_t* terminal) {
     if (!process || !terminal) {
         return -EINVAL;

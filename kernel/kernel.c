@@ -247,6 +247,9 @@ void launch_shell_task_entry(void* arg) {
         return;
     }
 
+    // set working directory, defaults to root
+    strncpy(process->cwd, "/", PROCESS_CWD_MAX);
+
     result = process_start(process);
     if (result < 0) {
         printf("failed to start shell: %d\n", result);

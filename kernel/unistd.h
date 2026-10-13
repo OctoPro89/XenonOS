@@ -13,6 +13,11 @@ ssize_t read(int fd, void* buf, size_t count);
 ssize_t write(int fd, const void* buf, size_t count);
 ssize_t close(int fd);
 
+
+int chdir(const char* path);
+char* getcwd(char* buf, size_t size);
+
+// NOT POSIX STANDARDS!
 void* sbrk(ssize_t increment);
 
 // TODO: move to real header
