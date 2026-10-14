@@ -44,6 +44,9 @@ LIBC_C_OBJS := $(patsubst user/libc/%.c, build/user/libc/%_c.o, $(LIBC_C_SRCS))
 LIBWINDOW_C_SRCS := $(shell find user/libwindow -name '*.c')
 LIBWINDOW_C_OBJS := $(patsubst user/libwindow/%.c, build/user/libwindow/%_c.o, $(LIBWINDOW_C_SRCS))
 
+DOOM_C_SRCS := $(shell find user/apps/doom/ -name '*.c')
+DOOM_C_OBJS := $(patsubst user/apps/doom/%.c, build/user/apps/doomobjs/%.o, $(DOOM_C_SRCS))
+
 KERNEL_OBJS := $(KERNEL_C_OBJS) $(KERNEL_ASM_OBJS)
 
 # --- Bootloader ---
@@ -128,7 +131,22 @@ build/user/apps/ls: \
 		build/user/libc/libc.a \
 		-o $@
 
-userapps: build/user/apps/sh build/user/apps/ls
+# doom
+build/user/apps/doomobjs/%.o: user/apps/doom/%.c
+	mkdir -p $(dir $@)
+	clang $(USERCFLAGS) -I"kernel/" -I"user/" -I"kernel/xlibc/" $< -o $@
+
+build/user/apps/doom: \
+    build/user/start.o \
+    $(DOOM_C_OBJS) \
+    build/user/libc/libc.a
+	ld.lld -T user/user.ld \
+	    build/user/start.o \
+	    $(DOOM_C_OBJS) \
+	    build/user/libc/libc.a \
+	    -o $@
+
+userapps: build/user/apps/sh build/user/apps/ls build/user/apps/doom
 
 # --- Image ---
 image: build/BOOTX64.EFI build/kernel.elf
@@ -160,6 +178,7 @@ run: image userapps
 	sudo cp testlongfilename.txt /mnt/
 	sudo cp build/user/apps/sh /mnt/bin/
 	sudo cp build/user/apps/ls /mnt/bin/
+	sudo cp build/user/apps/doom /mnt/bin/
 	sudo cp hello /mnt/bin/
 	sudo umount /mnt
 
@@ -187,6 +206,7 @@ run: image userapps
 	sudo cp testlongfilename.txt /mnt/
 	sudo cp build/user/apps/sh /mnt/bin/
 	sudo cp build/user/apps/ls /mnt/bin/
+	sudo cp build/user/apps/doom /mnt/bin/
 	sudo cp hello /mnt/bin/
 	sudo umount /mnt
 

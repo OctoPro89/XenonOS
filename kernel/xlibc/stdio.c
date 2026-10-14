@@ -141,6 +141,11 @@ void puts(const char* str)
     }
 }
 
+void putchar(int c)
+{
+    putc(c);
+}
+
 const char g_HexChars[] = "0123456789abcdef";
 
 #define PRINTF_STATE_NORMAL         0

@@ -14,6 +14,7 @@
 #include <memory/user.h>
 #include <memory/heap.h>
 #include <memory/paging.h>
+#include <time/time.h>
 
 // TODO: not sure if chunking is the best
 
@@ -382,6 +383,62 @@ ssize_t sys_window_destroy() {
     return 0;
 }
 
+ssize_t sys_window_damage(const window_rect_t* rect) {
+    process_t* crnt = process_current();
+
+    if (!crnt) {
+        return -ESRCH;
+    }
+
+    if (!crnt->window) {
+        return -EFAULT;
+    }
+
+    window_rect_t krect;
+    copy_from_user(&krect, rect, sizeof(window_rect_t));
+
+    window_server_damage(crnt->window, krect.x, krect.y, krect.width, krect.height);
+
+    return 0;
+}
+
+ssize_t sys_window_memcpy_frame(const void* user_buffer, size_t size) {
+    process_t* crnt = process_current();
+
+    if (!crnt) {
+        return -ESRCH;
+    }
+
+    if (!crnt->window) {
+        return -EFAULT;
+    }
+
+    if (!user_buffer || size != (crnt->window->surface->width * crnt->window->surface->height * sizeof(u32))) {
+        return -EINVAL;
+    }
+
+    return copy_from_user(crnt->window->surface->pixels, user_buffer, size);
+}
+
+ssize_t sys_window_pop_event(window_event_t* evt) {
+    process_t* crnt = process_current();
+
+    if (!crnt) {
+        return -ESRCH;
+    }
+
+    if (!crnt->window || !crnt->window->events) {
+        return -EFAULT;
+    }
+
+    window_event_t kevt;
+    if (ring_buffer_pop(crnt->window->events, &kevt)) {
+        return copy_to_user(evt, &kevt, sizeof(window_event_t));
+    }
+
+    return -EFAULT; // idk what to return on failure
+}
+
 ssize_t sys_window_setup_terminal_io() {
     // TODO: remove
     // TODO: may need a lock on this not sure...
@@ -655,6 +712,10 @@ ssize_t sys_chdir(const char *user_path) {
     return 0;
 }
 
+u64 sys_get_time_ms() {
+    return ktimer_get_system_time_in_milliseconds();
+}
+
 u64 syscall_dispatch(struct syscall_regs* r) {
     switch (r->rax) {
         case SYS_READ: {
@@ -681,6 +742,15 @@ u64 syscall_dispatch(struct syscall_regs* r) {
         case SYS_WINDOW_DESTROY: {
             return (u64)sys_window_destroy();
         }
+        case SYS_WINDOW_DAMAGE: {
+            return (u64)sys_window_damage((const window_rect_t*)r->rdi);
+        }
+        case SYS_WINDOW_MEMCPY_FRAME: {
+            return (u64)sys_window_memcpy_frame((const void*)r->rdi, (size_t)r->rsi);
+        }
+        case SYS_WINDOW_POP_EVENT: {
+            return (u64)sys_window_pop_event((window_event_t*)r->rdi);
+        }
         case SYS_WINDOW_SETUP_TERMINAL_IO: {
             return (u64)sys_window_setup_terminal_io();
         }
@@ -698,6 +768,9 @@ u64 syscall_dispatch(struct syscall_regs* r) {
         }
         case SYS_GETCWD: {
             return (u64)sys_getcwd((char*)r->rdi, (size_t)r->rsi);
+        }
+        case SYS_GET_TIME_MS: {
+            return sys_get_time_ms();
         }
         default: {
             return (u64)-ENOSYS;

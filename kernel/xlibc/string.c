@@ -1,4 +1,5 @@
-#include "string.h"
+#include <xlibc/string.h>
+#include <memory/heap.h>
 
 void* memset(void* dest, int c, size_t n) {
     u8* d = (u8*)dest;
@@ -170,4 +171,11 @@ int strncmp(const char* a, const char* b, size_t n) {
     }
     if (n == 0) return 0;
     return (unsigned char)*a - (unsigned char)*b;
+}
+
+char* strdup(const char* s) {
+    size_t l = strlen(s);
+    char* d = kmalloc(l + 1);
+    if (!d) { return NULL; }
+    return memcpy(d, s, l + 1);
 }

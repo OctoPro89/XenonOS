@@ -6,6 +6,7 @@
 #include <xlibc/xstddef.h>
 #include <io/fd.h>
 #include <libwindow/window_client.h>
+#include <windowing/window/events.h>
 #include <filesystem/sys_dirent.h>
 
 // TODO: maybe align to linux
@@ -18,12 +19,16 @@
 #define SYS_WAIT                        5
 #define SYS_WINDOW_CREATE               6
 #define SYS_WINDOW_DESTROY              7
-#define SYS_WINDOW_SETUP_TERMINAL_IO    8
-#define SYS_OPENDIR                     9
-#define SYS_READDIR                     10
-#define SYS_SBRK                        11
-#define SYS_CHDIR                       12
-#define SYS_GETCWD                      13
+#define SYS_WINDOW_DAMAGE               8
+#define SYS_WINDOW_MEMCPY_FRAME         9
+#define SYS_WINDOW_POP_EVENT            10
+#define SYS_WINDOW_SETUP_TERMINAL_IO    11
+#define SYS_OPENDIR                     12
+#define SYS_READDIR                     13
+#define SYS_SBRK                        14
+#define SYS_CHDIR                       15
+#define SYS_GETCWD                      16
+#define SYS_GET_TIME_MS                 17
 // NOTE: userspace should just use SYS_CLOSE on directories it'll work fine
 
 // NOTE: Must match stack pushes in arch/x86_64/syscall.asm
@@ -53,13 +58,16 @@ u64 sys_spawn(const char* user_path);
 u64 sys_wait(u64 pid);
 ssize_t sys_window_create(const window_config_t* user_config);
 ssize_t sys_window_destroy();
-ssize_t sys_window_damage(); // TODO:
+ssize_t sys_window_damage(const window_rect_t* rect);
+ssize_t sys_window_memcpy_frame(const void* user_buffer, size_t size);
+ssize_t sys_window_pop_event(window_event_t* evt);
 ssize_t sys_window_setup_terminal_io();
 ssize_t sys_opendir(const char* user_path);
 ssize_t sys_readdir(fd_t fd, sys_dirent_t* user_entry);
 ssize_t sys_sbrk(ssize_t increment);
 ssize_t sys_chdir(const char* user_path);
 ssize_t sys_getcwd(char* user_buffer, size_t size);
+u64 sys_get_time_ms();
 
 u64 syscall_dispatch(struct syscall_regs* r);
 void syscall_handler(struct syscall_regs* r);
