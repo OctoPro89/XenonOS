@@ -26,6 +26,11 @@ sudo cp build/kernel.elf /mnt/usb/
 # Copy extra files
 sudo cp testlongfilename.txt /mnt/usb/
 sudo cp build/user/apps/sh /mnt/usb/bin/
+sudo cp build/user/apps/doom /mnt/usb/bin/
+sudo cp build/user/apps/ls /mnt/usb/bin/
+sudo cp build/user/apps/lscpu /mnt/usb/bin/
+sudo cp build/user/apps/heaptest /mnt/usb/bin/
+sudo cp build/user/apps/wintest /mnt/usb/bin/
 sudo cp hello /mnt/usb/bin/
 
 # Unmount

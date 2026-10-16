@@ -129,8 +129,8 @@ void DG_Init() {
         .rect = {
             .x = 200,
             .y = 200,
-            .width = 300 /* DOOMGENERIC_RESX */,
-            .height = 300 /* DOOMGENERIC_RESY */
+            .width = DOOMGENERIC_RESX + 2,
+            .height = DOOMGENERIC_RESY + 31
         },
         .type = WINDOW_TYPE_NORMAL,
         .flags = 0
@@ -239,9 +239,9 @@ void DG_DrawFrame() {
         }
     }
 
-    // window_memcpy_frame(DG_ScreenBuffer, DOOMGENERIC_RESX * DOOMGENERIC_RESY * sizeof(u32)); // TODO: better solution
-    // static const window_rect_t rect = { 0, 0, DOOMGENERIC_RESX, DOOMGENERIC_RESY };
-    // window_damage(&rect);
+    window_memcpy_frame(DG_ScreenBuffer, DOOMGENERIC_RESX * DOOMGENERIC_RESY * sizeof(u32)); // TODO: better solution
+    static const window_rect_t rect = { 0, 0, DOOMGENERIC_RESX, DOOMGENERIC_RESY };
+    window_damage(&rect);
 }
 
 // TODO: real clock monotic sleep
@@ -304,8 +304,7 @@ int main(void) {
     doomgeneric_Create(1, (char**)&arg);
 
     while (!quit) {
-        DG_SleepMs(2);
-        // doomgeneric_Tick();
+        doomgeneric_Tick();
     }
 
     window_destroy();

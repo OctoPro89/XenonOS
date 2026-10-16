@@ -13,5 +13,6 @@
 #define __packed__ __attribute__((packed))
 
 #define USER_CODE_START  0x0000000000400000ULL
-#define USER_STACK_TOP   0x0000000000800000ULL
-#define USER_STACK_SIZE  (4 * PAGE_SIZE) // TODO: may want to make this 8 * PAGE_SIZe
+// #define USER_STACK_TOP   0x0000000000800000ULL
+#define USER_STACK_TOP   0x00000000F0000000ULL
+#define USER_STACK_SIZE  (4 * PAGE_SIZE) // TODO: may want to make this 8 * PAGE_SIZE

@@ -734,6 +734,111 @@ ssize_t sys_sbrk(ssize_t increment) {
     return (ssize_t)old_break;
 }
 
+// DEBUG SBRK
+/*
+ssize_t sys_sbrk(ssize_t increment) {
+    process_t* process = process_current();
+
+    if (!process) {
+        return -ESRCH;
+    }
+
+    printf("sbrk ENTER: old=%lx increment=%lx limit=%lx\n", (unsigned long)process->heap_break, (unsigned long)increment, (unsigned long)process->heap_limit);
+
+    // TODO:
+    if (increment < 0) {
+        return -EINVAL;
+    }
+
+    u64 old_break = process->heap_break;
+
+    if (increment == 0) {
+        return (ssize_t)old_break;
+    }
+
+    u64 new_break;
+
+    if (__builtin_add_overflow(old_break, (u64)increment, &new_break)) {
+        printf("__builtin_add_overflow(old_break, (u64)increment, &new_break) | new_break: %x", new_break);
+        return -ENOMEM;
+    }
+
+    if (new_break > process->heap_limit) {
+        printf("new_break > process->heap_limit | new_break; %x", new_break);
+        return -ENOMEM;
+    }
+
+    u64 map_start;
+    u64 map_end;
+
+    if (__builtin_add_overflow(old_break, (u64)(PAGE_SIZE - 1), &map_start)) {
+        printf("__builtin_add_overflow(old_break, (u64)(PAGE_SIZE - 1), &map_start)");
+        return -ENOMEM;
+    }
+
+    map_start &= ~(PAGE_SIZE - 1);
+
+    if (__builtin_add_overflow(new_break, (u64)(PAGE_SIZE - 1), &map_end)) {
+        printf("__builtin_add_overflow(new_break, (u64)(PAGE_SIZE - 1), &map_end)");
+        return -ENOMEM;
+    }
+
+    map_end &= ~(PAGE_SIZE - 1);
+
+    printf("sbrk: old=%p increment=%lld new=%p limit=%p\n", (void*)old_break, (long long)increment, (void*)new_break, (void*)process->heap_limit);
+
+    printf("sbrk: map_start=%p map_end=%p pages=%llu\n", (void*)map_start, (void*)map_end, (unsigned long long)((map_end - map_start) / PAGE_SIZE));
+
+    u64 page_va;
+
+    for (page_va = map_start; page_va < map_end; page_va += PAGE_SIZE) {
+
+        if (vmm_virt_to_phys(process->space, page_va) != 0) {
+            printf("invalid vmm_virt_to_phys!\n");
+            break;
+        }
+
+        paddr_t phys = pmm_alloc_page();
+        if (!phys) {
+            printf("sbrk: pmm_alloc_page failed at VA %p\n", (void*)page_va);
+            break;
+        }
+
+        memset((void*)phys_to_hhdm(phys), 0, PAGE_SIZE);
+
+        int result = vmm_map(process->space, page_va, phys, PAGE_PRESENT | PAGE_USER | PAGE_WRITABLE);
+
+        if (result < 0) {
+            printf("sbrk: vmm_map failed: %d at VA %p\n", result, (void*)page_va);
+            pmm_free_page(phys);
+            break;
+        }
+    }
+
+    if (page_va < map_end) {
+        // roll back pages mapped by this request, heap_break remains unchanged
+        for (u64 rollback = map_start; rollback < page_va; rollback += PAGE_SIZE) {
+            paddr_t phys = vmm_virt_to_phys(process->space, rollback);
+
+            if (phys) {
+                vmm_unmap(process->space, rollback);
+                pmm_free_page(phys & ~(PAGE_SIZE - 1));
+            }
+        }
+
+        printf("page_va < map_end\n");
+
+        return -ENOMEM;
+    }
+
+    process->heap_break = new_break;
+
+    printf("success\n");
+
+    return (ssize_t)old_break;
+}
+*/
+
 ssize_t sys_getcwd(char *user_buffer, size_t size) {
     if (!user_buffer) {
         return -EFAULT;

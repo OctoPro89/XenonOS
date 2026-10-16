@@ -170,7 +170,7 @@ int process_load_elf(process_t* process, const char* path) {
     process->entry = header.e_entry;
 
     // stack
-    for (int i = 0; i < 16; ++i) {
+    for (int i = 0; i < 8; ++i) {
         paddr_t phys = pmm_alloc_page();
         if (!phys) {
             return -ENOMEM;
@@ -185,7 +185,7 @@ int process_load_elf(process_t* process, const char* path) {
 
     process->user_stack_top = USER_STACK_TOP;
 
-    vaddr_t stack_bottom = USER_STACK_TOP - (16 * PAGE_SIZE);
+    vaddr_t stack_bottom = USER_STACK_TOP - (8 * PAGE_SIZE);
 
     // leave at least one unmapped page below the stack
     vaddr_t heap_limit = stack_bottom - PAGE_SIZE;

@@ -318,7 +318,7 @@ void compositor_render() {
     // copy metadata under the window-server lock, the surface lifetime msut remain valid until this frame finishes, still a prototype
     snapshot_count = window_server_snapshot(snapshots, COMPOSITOR_MAX_WINDOWS);
 
-    render_desktop_background();
+    // render_desktop_background();
 
     u64 flags = 0;
     for (u32 i = 0; i < snapshot_count; ++i) {
