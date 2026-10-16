@@ -30,20 +30,25 @@ static int align_size(size_t size, size_t* result) {
     return 1;
 }
 
+#include <stdio.h>
+
 static block_t* request_block(size_t size) {
     if (size > (size_t)-1 - HEADER_SIZE) {
+        printf("1\n");
         return NULL;
     }
 
     size_t total = size + HEADER_SIZE;
 
     if (total > (size_t)-1 - (PAGE_SIZE - 1)) {
+        printf("2\n");
         return NULL;
     }
 
     size_t chunk = (total + PAGE_SIZE - 1) & ~(size_t)(PAGE_SIZE - 1);
 
     if (chunk > (size_t)LONG_MAX) {
+        printf("3\n");
         return NULL;
     }
 
@@ -51,6 +56,7 @@ static block_t* request_block(size_t size) {
 
     // raw syscall errors are negative
     if (ret < 0) {
+        printf("4\n");
         return NULL;
     }
 

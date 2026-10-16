@@ -8,6 +8,7 @@
 #include <libwindow/window_client.h>
 #include <windowing/window/events.h>
 #include <filesystem/sys_dirent.h>
+#include <arch/x86_64/uapi_cpuid.h>
 
 // TODO: maybe align to linux
 // VERY IMPORTANT: IF THESE ARE CHANGED THEY MUST BE UPDATED IN unistd and libwindow
@@ -23,12 +24,17 @@
 #define SYS_WINDOW_MEMCPY_FRAME         9
 #define SYS_WINDOW_POP_EVENT            10
 #define SYS_WINDOW_SETUP_TERMINAL_IO    11
-#define SYS_OPENDIR                     12
-#define SYS_READDIR                     13
-#define SYS_SBRK                        14
-#define SYS_CHDIR                       15
-#define SYS_GETCWD                      16
-#define SYS_GET_TIME_MS                 17
+#define SYS_WINDOW_SUBSCRIBE_KEYBOARD   12
+#define SYS_OPENDIR                     13
+#define SYS_READDIR                     14
+#define SYS_SBRK                        15
+#define SYS_CHDIR                       16
+#define SYS_GETCWD                      17
+#define SYS_GET_TIME_MS                 18
+#define SYS_GET_CPU_INFO                19
+#define SYS_OPEN                        20
+#define SYS_SEEK                        21
+#define SYS_SLEEP_NS                    22
 // NOTE: userspace should just use SYS_CLOSE on directories it'll work fine
 
 // NOTE: Must match stack pushes in arch/x86_64/syscall.asm
@@ -68,6 +74,10 @@ ssize_t sys_sbrk(ssize_t increment);
 ssize_t sys_chdir(const char* user_path);
 ssize_t sys_getcwd(char* user_buffer, size_t size);
 u64 sys_get_time_ms();
+ssize_t sys_get_cpu_info(cpu_info_t* info);
+ssize_t sys_open(const char* user_path, int flags);
+ssize_t sys_seek(fd_t fd, ssize_t offset, int whence);
+void sys_sleep_ns(u32 ns);
 
 u64 syscall_dispatch(struct syscall_regs* r);
 void syscall_handler(struct syscall_regs* r);

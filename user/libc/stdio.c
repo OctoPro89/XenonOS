@@ -1,9 +1,124 @@
 #include "stdio.h"
-#include <xlibc/string.h>
-#include <memory/heap.h>
+#include <string.h>
+#include <stdlib.h>
 #include <unistd.h>
+#include <fcntl.h>
+#include <io/fd.h>
 
-// TODO: file ops
+FILE* fopen(const char* path, const char* mode) {
+    if (!path || !mode) {
+        return NULL;
+    }
+
+    if (strcmp(mode, "r") != 0 &&
+        strcmp(mode, "rb") != 0) {
+        return NULL;
+    }
+
+    ssize_t fd = open(path, O_RDONLY);
+
+    if (fd < 0) {
+        return NULL;
+    }
+
+    FILE* f = malloc(sizeof(FILE));
+
+    if (!f) {
+        close((fd_t)fd);
+        return NULL;
+    }
+
+    f->fd = (int)fd;
+    f->error = 0;
+    f->eof = 0;
+
+    return f;
+}
+
+u32 fread(void* ptr, u32 size, u32 count, FILE* stream) {
+    if (!stream || size == 0 || count == 0) {
+        return 0;
+    }
+
+    if (!ptr) {
+        stream->error = 1;
+        return 0;
+    }
+
+    if (count > UINT32_MAX / size) {
+        stream->error = 1;
+        return 0;
+    }
+
+    u32 total = size * count;
+    u32 bytes_read = 0;
+
+    while (bytes_read < total) {
+        ssize_t result = read((fd_t)stream->fd, (u8*)ptr + bytes_read, total - bytes_read);
+
+        if (result < 0) {
+            stream->error = 1;
+            break;
+        }
+
+        if (result == 0) {
+            stream->eof = 1;
+            break;
+        }
+
+        bytes_read += (u32)result;
+    }
+
+    return bytes_read / size;
+}
+
+int fclose(FILE* stream) {
+    if (!stream) {
+        return -1;
+    }
+
+    int result = close((fd_t)stream->fd);
+
+    free(stream);
+
+    return result < 0 ? -1 : 0;
+}
+
+long ftell(FILE* stream) {
+    if (!stream) {
+        return -1;
+    }
+
+    ssize_t result = lseek((fd_t)stream->fd, 0, SEEK_CUR);
+
+    if (result < 0) {
+        stream->error = 1;
+        return -1;
+    }
+
+    return (long)result;
+}
+
+int fseek(FILE* stream, long offset, int whence) {
+    if (!stream) {
+        return -1;
+    }
+
+    if (whence != SEEK_SET && whence != SEEK_CUR && whence != SEEK_END) {
+        return -1;
+    }
+
+    ssize_t result = lseek((fd_t)stream->fd, (ssize_t)offset, whence);
+
+    if (result < 0) {
+        stream->error = 1;
+        return -1;
+    }
+
+    stream->eof = 0;
+
+    return 0;
+}
 
 void putc(char c)
 {

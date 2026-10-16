@@ -7,18 +7,18 @@ cpuid_read_vendor_id:
     xor eax, eax        ; EAX = 0 (CPUID_VENDOR_ID leaf)
     cpuid               ; Returns vendor string in EBX, EDX, ECX
     
-    ; The vendor string is 12 bytes long, returned in order: EBX, EDX, ECX
-    mov [rcx], ebx      ; vendor[0-3]
-    mov [rcx + 4], edx  ; vendor[4-7]
-    mov [rcx + 8], ecx  ; vendor[8-11]
-    mov byte [rcx + 12], 0 ; Null terminator
+    ; System V: The first argument (char* vendor) is in RDI
+    mov [rdi], ebx      ; vendor[0-3]
+    mov [rdi + 4], edx  ; vendor[4-7]
+    mov [rdi + 8], ecx  ; vendor[8-11]
+    mov byte [rdi + 12], 0 ; Null terminator
     
     pop rbx             ; Restore RBX
     ret
 
 global cpuid_read_cpu_family
 cpuid_read_cpu_family:
-    push rbx                ; Save RBX (callee-saved in x64 ABI)
+    push rbx                ; Save RBX (callee-saved)
 
     mov eax, 1              ; CPUID leaf 1: Processor Info and Feature Bits
     cpuid                   ; Result in EAX, EBX, ECX, EDX
@@ -33,13 +33,32 @@ cpuid_read_cpu_family:
     shr edx, 20
     and edx, 0FFh           ; EDX = extended_family
 
-    ; Logic: family = (base_family == 0xF) ? (base_family + extended_family) : base_family
     cmp ecx, 0Fh
-    jne .use_base           ; If base_family != 0xF, skip addition
+    jne .use_base           
     add ecx, edx            ; family = base_family + extended_family
 
 .use_base:
-    mov eax, ecx            ; Move final family value to return register
+    mov eax, ecx            ; Move final family value to return register (EAX)
 
     pop rbx                 ; Restore RBX
+    ret
+
+global cpuid_raw
+; void cpuid_raw(uint32_t leaf, uint32_t subleaf, uint32_t* regs);
+; Inputs: RDI = leaf, RSI = subleaf, RDX = regs pointer
+cpuid_raw:
+    push rbx
+
+    mov r8, rdx             ; Preserve output pointer
+    mov eax, edi            ; EAX = leaf
+    mov ecx, esi            ; ECX = subleaf
+
+    cpuid
+
+    mov [r8],      eax      ; regs[0]
+    mov [r8 + 4],  ebx      ; regs[1]
+    mov [r8 + 8],  ecx      ; regs[2]
+    mov [r8 + 12], edx      ; regs[3]
+
+    pop rbx
     ret

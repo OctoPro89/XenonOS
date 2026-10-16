@@ -3,6 +3,7 @@
 #include <xlibc/stdio.h>
 #include <arch/x86_64/sync/sync.h>
 #include <task.h>
+#include <windowing/window/internal.h>
 
 static ring_buffer_t* g_kbd_rb;
 static ring_buffer_t* g_mouse_rb;
@@ -41,6 +42,7 @@ b8 input_push_keyboard_event(const input_keyboard_event_t* evt) {
 
     if (pushed) {
         wait_queue_wake_one_locked(&g_kbd_waiters);
+        window_server_notify_keyboard_subscribers(evt);
     }
 
     spin_unlock_irqrestore(&g_kbd_wait_lock, flags);

@@ -47,6 +47,22 @@ ssize_t close(int fd) {
     return (ssize_t)ret;
 }
 
+ssize_t lseek(int fd, ssize_t offset, int whence) {
+    long ret;
+
+    asm volatile (
+        "syscall"
+        : "=a"(ret)
+        : "a"(SYS_SEEK),
+          "D"(fd),
+          "S"(offset),
+          "d"(whence)
+        : "rcx", "r11", "r10", "memory"
+    );
+
+    return (ssize_t)ret;
+}
+
 void* sbrk(ssize_t increment) {
     long ret;
 

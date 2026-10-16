@@ -21,9 +21,10 @@ vmm_space_t kernel_space;
 
 static pte_t* get_table(vmm_space_t* space, pte_t* table, uint16_t index, int create) {
     if (!(table[index] & PAGE_PRESENT)) {
-        if (!create) return NULL;
+        if (!create) { return NULL; }
 
         paddr_t phys = pmm_alloc_page();
+        if (!phys) { return NULL; }
         pte_t* virt = (pte_t*)phys_to_hhdm(phys);
 
         for (int i = 0; i < 512; i++) { virt[i] = 0; }
@@ -70,6 +71,7 @@ static void destroy_table(pte_t* table, int level) {
 
 vmm_space_t* vmm_create_space() {
     paddr_t phys = pmm_alloc_page();
+    if (!phys) { return NULL; }
     pte_t* new_pml4 = (pte_t*)phys_to_hhdm(phys);
 
     memset((void*)new_pml4, 0, PAGE_SIZE);
@@ -80,6 +82,12 @@ vmm_space_t* vmm_create_space() {
     }
 
     vmm_space_t* space = kmalloc(sizeof(vmm_space_t));
+    if (!space) {
+        pmm_free_page(phys);
+        return NULL;
+    }
+
+    memset(space, 0, sizeof(vmm_space_t));
     space->pml4 = new_pml4;
 
     return space;

@@ -324,9 +324,10 @@ void compositor_render() {
     for (u32 i = 0; i < snapshot_count; ++i) {
         // TODO: maybe better solution idk
         spin_lock_irqsave(&surfaces_lock, &flags);
-        if (invalid_surface == __atomic_load_n(&surface_invalid, __ATOMIC_SEQ_CST) == snapshots[i].surface->handle) {
+        invalid_surface = __atomic_load_n(&surface_invalid, __ATOMIC_SEQ_CST); // TODO: test this behavior
+        if (invalid_surface == snapshots[i].surface->handle) {
             spin_unlock_irqrestore(&surfaces_lock, flags);
-        continue; // this surface has been marked invalid so skip it
+            continue; // this surface has been marked invalid so skip it
         }
         spin_unlock_irqrestore(&surfaces_lock, flags);
 
@@ -344,6 +345,7 @@ void compositor_render() {
         surface_pixels_ptr = surfaces[invalid_surface].pixels;
         // mark invalid without freeing in lock (expensive)
         surfaces[invalid_surface].pixels = NULL;
+        invalid_surface = WINDOW_SURFACE_INVALID_HANDLE;
         spin_unlock_irqrestore(&surfaces_lock, flags);
         if (surface_pixels_ptr) {
             kfree(surface_pixels_ptr); // IMPORTANT NOTE: DO NOT CALL IN LOCK, not cheap call

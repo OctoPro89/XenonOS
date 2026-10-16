@@ -38,6 +38,10 @@ static __hint_inline__ b8 valid_window(const window_t* w) {
     return w && w->alive;
 }
 
+/**
+ * @brief Push an event to a window
+ * @note Caller must hold window_server_lock
+ */
 static __hint_inline__ void queue_event(window_t* w, const window_event_t* event) {
     if (!valid_window(w) || !event) { return; }
 
@@ -59,15 +63,15 @@ void window_server_init() {
 window_t* window_server_create_window(const window_config_t* config) {
     if (!config) { return NULL; }
 
+    u64 flags = 0;
+    // TODO: I believe this needs a lock
+    spin_lock_irqsave(&window_server_lock, &flags);
     if (active_count >= WINDOW_MAX_COUNT) {
+        spin_unlock_irqrestore(&window_server_lock, flags);
         return NULL;
     }
 
     struct window* w = NULL;
-
-    // TODO: I believe this needs a lock
-    u64 flags = 0;
-    spin_lock_irqsave(&window_server_lock, &flags);
 
     for (u32 i = 0; i < WINDOW_MAX_COUNT; ++i) {
         if (!window_slots[i].alive) {
@@ -152,7 +156,6 @@ void window_server_set_title(window_t* window, const char* title) {
     u64 flags = 0;
     spin_lock_irqsave(&window_server_lock, &flags);
     copy_title(window->title, title);
-    spin_unlock_irqrestore(&window_server_lock, flags);
     /*
     window_event_t event;
     event.buttons = 0;
@@ -160,6 +163,8 @@ void window_server_set_title(window_t* window, const char* title) {
     event.type = WINDOW_EVENT_REDRAW; // TODO: Maybe this should cause a redraw idk
     queue_event(window, &event);
     */
+
+    spin_unlock_irqrestore(&window_server_lock, flags);
 
     notify_compositor();
 }
@@ -407,6 +412,7 @@ u32 window_server_snapshot(window_snapshot_t* out, u32 capacity) {
         dst->flags = w->flags;
         dst->focused = w->focused;
         dst->surface = w->surface;
+        // TODO: maybe e_flags? I don't see right now why the compositor would need it though
 
         copy_title(dst->title, w->title);
     }
@@ -414,4 +420,32 @@ u32 window_server_snapshot(window_snapshot_t* out, u32 capacity) {
     spin_unlock_irqrestore(&window_server_lock, flags);
 
     return count;
+}
+
+void window_server_notify_keyboard_subscribers(input_keyboard_event_t* evt) {
+    if (!evt) { return; }
+    u64 flags = 0;
+    spin_lock_irqsave(&window_server_lock, &flags);
+    
+    for (u32 i = 0; i < active_count; ++i) {
+        if (window_slots[i].e_flags & WINDOW_EVENT_FLAGS_KEYBOARD) {
+            if (valid_window(&window_slots[i])) {
+                window_event_t wevt = {
+                    .buttons = 0,
+                    .keycode = evt->usage,
+                    .type = (evt->action == INPUT_KBD_ACTION_DOWN) ? WINDOW_EVENT_KEY_DOWN : WINDOW_EVENT_KEY_UP
+                };
+                queue_event(&window_slots[i], &wevt);
+            }
+        }
+    }
+
+    spin_unlock_irqrestore(&window_server_lock, flags);
+}
+
+void window_server_subscribe_to_keyboard(window_t* window) {
+    u64 flags = 0;
+    spin_lock_irqsave(&window_server_lock, &flags);
+    window->e_flags |= WINDOW_EVENT_FLAGS_KEYBOARD;
+    spin_unlock_irqrestore(&window_server_lock, flags);
 }

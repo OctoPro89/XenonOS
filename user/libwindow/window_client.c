@@ -48,7 +48,7 @@ ssize_t window_memcpy_frame(const void* user_buffer, size_t size) {
     asm volatile (
         "syscall"
         : "=a"(ret)
-        : "a"(SYS_GETCWD),
+        : "a"(SYS_WINDOW_MEMCPY_FRAME),
           "D"(user_buffer),
           "S"(size)
         : "rcx", "r11", "r10", "memory"
@@ -78,6 +78,19 @@ ssize_t window_setup_terminal_io() {
         "syscall"
         : "=a"(ret)
         : "a"(SYS_WINDOW_SETUP_TERMINAL_IO)
+        : "rcx", "r11", "r10", "memory"
+    );
+
+    return (ssize_t)ret;
+}
+
+ssize_t window_subscribe_keyboard_events() {
+        long ret;
+
+    asm volatile (
+        "syscall"
+        : "=a"(ret)
+        : "a"(SYS_WINDOW_SUBSCRIBE_KEYBOARD)
         : "rcx", "r11", "r10", "memory"
     );
 

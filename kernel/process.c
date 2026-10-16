@@ -44,6 +44,9 @@ process_t* process_create() {
 
     memset(process, 0, sizeof(process_t));
 
+    wait_queue_init(&process->waiters);
+    spin_lock_init(&process->lock);
+
     process->pid = __atomic_fetch_add(&next_pid, 1, __ATOMIC_RELAXED);
 
     process->space = vmm_create_space();

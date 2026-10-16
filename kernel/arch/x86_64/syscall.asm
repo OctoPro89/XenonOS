@@ -74,6 +74,8 @@ syscall_entry:
     push rbx
     push rax
 
+    sti
+
     mov rdi, rsp
     call syscall_handler
 

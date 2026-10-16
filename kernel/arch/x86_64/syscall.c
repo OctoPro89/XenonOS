@@ -1,5 +1,7 @@
 #include "syscall.h"
 #include <arch/x86_64/io.h>
+#include <arch/x86_64/cpuid.h>
+#include <arch/x86_64/uapi_cpuid.h>
 #include <io/fd_table.h>
 #include <io/fd.h>
 #include <errno.h>
@@ -9,12 +11,19 @@
 #include <windowing/window/internal.h>
 #include <windowing/compositor/compositor.h>
 #include <xlibc/string.h>
+#include <xlibc/stdio.h>
+#include <fcntl.h>
 #include <tty/terminal.h>
 #include <filesystem/vfs/vfs.h>
 #include <memory/user.h>
 #include <memory/heap.h>
 #include <memory/paging.h>
 #include <time/time.h>
+
+#define REG_EAX 0
+#define REG_EBX 1
+#define REG_ECX 2
+#define REG_EDX 3
 
 // TODO: not sure if chunking is the best
 
@@ -88,6 +97,73 @@ static int copy_user_path(char out[USER_PATH_MAX], const char* user_path) {
     out[USER_PATH_MAX - 1] = '\0';
     return -ENAMETOOLONG;
 }
+
+static ssize_t regular_read(file_t* file, void* buffer, size_t size) {
+    VFS_FILE* vf = (VFS_FILE*)file->private;
+
+    if (!vf) { return -EBADF; }
+
+    return (ssize_t)vfs_read(vf, buffer, size);
+}
+
+static ssize_t regular_seek(file_t* file, ssize_t offset, int whence) {
+    VFS_FILE* vf = (VFS_FILE*)file->private;
+
+    if (!vf) { return -EBADF; }
+
+    ssize_t base;
+
+    switch (whence) {
+        case SEEK_SET:
+            base = 0;
+            break;
+
+        case SEEK_CUR:
+            base = (ssize_t)vfs_tell(vf);
+            break;
+
+        case SEEK_END:
+            base = (ssize_t)vfs_get_size(vf);
+            break;
+
+        default:
+            return -EINVAL;
+    }
+
+    ssize_t target;
+
+    if (__builtin_add_overflow(base, offset, &target)) {
+        return -EINVAL;
+    }
+
+    if (target < 0) return -EINVAL;
+
+    int result = vfs_seek(vf, (u32)target);
+
+    if (result < 0) return result;
+
+    return target;
+}
+
+static int regular_close(file_t* file) {
+    if (!file) return -EINVAL;
+
+    VFS_FILE* vf = (VFS_FILE*)file->private;
+    file->private = NULL;
+
+    if (vf) {
+        vfs_close(vf);
+    }
+
+    return 0;
+}
+
+static const file_ops_t regular_file_ops = {
+    .read  = regular_read,
+    .write = NULL,
+    .seek  = regular_seek,
+    .close = regular_close,
+};
 
 ssize_t sys_read(fd_t fd, void* user_buffer, size_t size) {
     u8 buffer[SYSCALL_IO_BUFFER_SIZE];
@@ -231,7 +307,7 @@ u64 sys_spawn(const char* user_path) {
         return (u64)(i64)-EFAULT;
     }
 
-char path[USER_PATH_MAX];
+    char path[USER_PATH_MAX];
 
     int result = copy_user_path(path, user_path);
     if (result < 0) {
@@ -458,6 +534,22 @@ ssize_t sys_window_setup_terminal_io() {
     terminal_attach_window(terminal, crnt->window);
     terminal_start_input_task(terminal); // todo: stop task
     return process_setup_stdio(crnt, terminal);
+}
+
+ssize_t sys_window_subscribe_keyboard() {
+    process_t* crnt = process_current();
+
+    if (!crnt) {
+        return -ESRCH;
+    }
+
+    if (!crnt->window) {
+        return -EFAULT;
+    }
+    
+    window_server_subscribe_to_keyboard(crnt->window);
+
+    return 0;
 }
 
 ssize_t sys_opendir(const char* user_path) {
@@ -716,6 +808,119 @@ u64 sys_get_time_ms() {
     return ktimer_get_system_time_in_milliseconds();
 }
 
+ssize_t sys_get_cpu_info(cpu_info_t* info) {
+    if (!info) { return -EINVAL; }
+
+    cpu_info_t k_info;
+    memset(&k_info, 0, sizeof(cpu_info_t));
+    u32 regs[4];
+    memset(&regs, 0, 4 * sizeof(u32));
+
+    cpuid_raw(CPUID_VENDOR_ID, 0, regs);
+    memcpy(k_info.vendor, &regs[REG_EBX], 4);
+    memcpy(k_info.vendor + 4, &regs[REG_EDX], 4);
+    memcpy(k_info.vendor + 8, &regs[REG_ECX], 4);
+    k_info.vendor[12] = '\0';
+
+    cpuid_raw(CPUID_FEATURES, 0, regs);
+    u32 eax = regs[REG_EAX];
+    k_info.ecx_features = regs[REG_ECX];
+    k_info.edx_features = regs[REG_EDX];
+
+    k_info.stepping = eax & 0x0F;
+    u32 base_model = (eax >> 4) & 0x0F;
+    u32 base_family = (eax >> 8) & 0x0F;
+    u32 ext_model = (eax >> 16) & 0x0F;
+    u32 ext_family = (eax >> 20) & 0xFF;
+
+    k_info.family = (base_family == 0x0F) ? (base_family + ext_family) : base_family;
+    k_info.model = (base_family == 0x06 || base_family == 0x0F) ? (base_model + (ext_model << 4)) : base_model;
+
+    cpuid_raw(0x80000000, 0, regs);
+    if (regs[REG_EAX] >= CPUID_BRAND_STRING_3) {
+        char* ptr = k_info.brand;
+        for (u32 leaf = CPUID_BRAND_STRING_1; leaf <= CPUID_BRAND_STRING_3; leaf++) {
+            cpuid_raw(leaf, 0, regs);
+            memcpy(ptr, regs, 16);
+            ptr += 16;
+        }
+        *ptr = '\0';
+    } else {
+        memcpy(k_info.brand, "Unknown Processor", 18);
+    }
+
+    cpuid_raw(0x00000007, 0, regs);
+    k_info.ecx_leaf7 = regs[REG_ECX];
+
+    return copy_to_user(info, &k_info, sizeof(cpu_info_t));
+}
+
+ssize_t sys_open(const char* user_path, int flags) {
+    if (flags != O_RDONLY) {
+        return -EINVAL;
+    }
+
+    char path[USER_PATH_MAX];
+    char resolved[USER_PATH_MAX];
+
+    int result = copy_user_path(path, user_path);
+    if (result < 0) {
+        return result;
+    }
+
+    process_t* process = process_current();
+    if (!process) {
+        return -ESRCH;
+    }
+
+    result = vfs_resolve_path(process->cwd, path, resolved, sizeof(resolved));
+
+    if (result < 0) return result;
+
+    VFS_FILE* vf = vfs_open(resolved);
+    if (!vf) {
+        return -ENOENT;
+    }
+
+    file_t* file = kmalloc(sizeof(file_t));
+    if (!file) {
+        vfs_close(vf);
+        return -ENOMEM;
+    }
+
+    file_init(file, &regular_file_ops, vf);
+
+    fd_t fd = fd_alloc(file);
+
+    // drop initial reference
+    file_put(file);
+
+    if (fd == FD_INVALID) {
+        return -EMFILE;
+    }
+
+    return (ssize_t)fd;
+}
+
+ssize_t sys_seek(fd_t fd, ssize_t offset, int whence) {
+    file_t* file = fd_get(fd);
+    if (!file) return -EBADF;
+
+    if (!file->ops || !file->ops->seek) {
+        file_put(file);
+        return -EINVAL;
+    }
+
+    ssize_t result = file->ops->seek(file, offset, whence);
+
+    file_put(file);
+    return result;
+}
+
+void sys_sleep_ns(u32 ns) {
+    task_sleep_ns(ns);
+}
+
 u64 syscall_dispatch(struct syscall_regs* r) {
     switch (r->rax) {
         case SYS_READ: {
@@ -754,6 +959,9 @@ u64 syscall_dispatch(struct syscall_regs* r) {
         case SYS_WINDOW_SETUP_TERMINAL_IO: {
             return (u64)sys_window_setup_terminal_io();
         }
+        case SYS_WINDOW_SUBSCRIBE_KEYBOARD: {
+            return sys_window_subscribe_keyboard();
+        }
         case SYS_OPENDIR: {
             return (u64)sys_opendir((const char*)r->rdi);
         }
@@ -771,6 +979,19 @@ u64 syscall_dispatch(struct syscall_regs* r) {
         }
         case SYS_GET_TIME_MS: {
             return sys_get_time_ms();
+        }
+        case SYS_GET_CPU_INFO: {
+            return (u64)sys_get_cpu_info((cpu_info_t*)r->rdi);
+        }
+        case SYS_OPEN: {
+            return (u64)sys_open((const char*)r->rdi, (int)r->rsi);
+        }
+        case SYS_SEEK: {
+            return (u64)sys_seek((fd_t)r->rdi, (ssize_t)r->rsi, (int)r->rdx);
+        }
+        case SYS_SLEEP_NS: {
+            sys_sleep_ns((u32)r->rdi);
+            return 0;
         }
         default: {
             return (u64)-ENOSYS;

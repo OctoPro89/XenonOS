@@ -45,5 +45,6 @@
 #define CPUID_ECX_FMA         0x00001000
 
 // char* vendor - must be at least 13 bytes, returns null terminated
-__PRIVILEGED_CODE extern ASMCALL void cpuid_read_vendor_id(char* vendor);
-__PRIVILEGED_CODE extern ASMCALL u32 cpuid_read_cpu_family();
+extern ASMCALL void cpuid_read_vendor_id(char* vendor);
+extern ASMCALL u32 cpuid_read_cpu_family();
+extern ASMCALL void cpuid_raw(u32 leaf, u32 subleaf, u32* regs); 

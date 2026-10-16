@@ -219,5 +219,7 @@ int ahci_block_read(void* drv, uint64_t lba, uint32_t count, void* buffer)
     // copy back into virtual buffer
     memcpy(buffer, (const void*)dma.virt, count * 512);
 
+    // TODO: dma never frees!
+
     return 1;
 }

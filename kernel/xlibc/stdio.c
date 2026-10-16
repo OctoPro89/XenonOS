@@ -23,6 +23,10 @@ u32 fread(void* ptr, u32 size, u32 count, FILE* stream) {
     if (!stream) { return 0; }
     if (size == 0 || count == 0) { return 0; } // divide by zero
 
+    if (count > UINT32_MAX / size) {
+        return 0;
+    }
+
     u32 total = size * count;
 
     u32 bytes = vfs_read((VFS_FILE*)stream->vfs_file, ptr, total);
@@ -46,10 +50,11 @@ int fgetc(FILE* f) {
     return c;
 }
 
-u32 ftell(FILE* f) {
+// TODO: check that this is correct
+long ftell(FILE* f) {
     if (!f) { return 0; }
     VFS_FILE* vf = f->vfs_file;
-    return vfs_tell(vf);
+    return (long)vfs_tell(vf);
 }
 
 int fseek(FILE* stream, long offset, int whence) {

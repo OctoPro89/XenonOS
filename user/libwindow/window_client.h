@@ -11,3 +11,4 @@ ssize_t window_damage(const window_rect_t* rect);
 ssize_t window_memcpy_frame(const void* user_buffer, size_t size);
 ssize_t window_get_event(window_event_t* evt);
 ssize_t window_setup_terminal_io();
+ssize_t window_subscribe_keyboard_events();

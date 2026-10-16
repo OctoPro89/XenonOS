@@ -129,8 +129,8 @@ void DG_Init() {
         .rect = {
             .x = 200,
             .y = 200,
-            .width = DOOMGENERIC_RESX,
-            .height = DOOMGENERIC_RESY
+            .width = 300 /* DOOMGENERIC_RESX */,
+            .height = 300 /* DOOMGENERIC_RESY */
         },
         .type = WINDOW_TYPE_NORMAL,
         .flags = 0
@@ -138,16 +138,27 @@ void DG_Init() {
 
     if (window_create(&wconfig) < 0) {
         printf("Failed to create window!\n");
-        while (1) ;
+        // while (1) ;
+    }
+
+    if (window_subscribe_keyboard_events() < 0) {
+        printf("Failed to subscribe to keyboard events!\n");
+        // while (1) ;
     }
 
 	memset(s_KeyQueue, 0, KEYQUEUE_SIZE * sizeof(unsigned short));
 }
 
+int quit = 0;
+
 void DG_DrawFrame() {
     window_event_t evt;
     while (window_get_event(&evt) >= 0) {
         switch (evt.type) {
+            case WINDOW_EVENT_CLOSE_REQUEST: {
+                // TODO: release resources
+                quit = 1;
+            }
             case WINDOW_EVENT_KEY_DOWN: {
                 switch (evt.keycode) {
                     case HID_KEY_LEFT_SHIFT:
@@ -224,16 +235,28 @@ void DG_DrawFrame() {
                     }
                 }
             }
+            default: break;
         }
     }
 
-    window_memcpy_frame(DG_ScreenBuffer, DOOMGENERIC_RESX * DOOMGENERIC_RESY * sizeof(u32)); // TODO: better solution
-    static const window_rect_t rect = { 0, 0, DOOMGENERIC_RESX, DOOMGENERIC_RESY };
-    window_damage(&rect);
+    // window_memcpy_frame(DG_ScreenBuffer, DOOMGENERIC_RESX * DOOMGENERIC_RESY * sizeof(u32)); // TODO: better solution
+    // static const window_rect_t rect = { 0, 0, DOOMGENERIC_RESX, DOOMGENERIC_RESY };
+    // window_damage(&rect);
 }
 
+// TODO: real clock monotic sleep
+#include <arch/x86_64/syscall.h>
+
 void DG_SleepMs(uint32_t ms) {
-	msleep(ms);
+    uint32_t ns = ms * 1000000;
+    
+    asm volatile (
+        "syscall"
+        :
+        : "a"(SYS_SLEEP_NS),
+          "D"(ns)
+        : "rcx", "r11", "r10", "memory"
+    );
 }
 
 #include <arch/x86_64/syscall.h>
@@ -271,12 +294,20 @@ void DG_SetWindowTitle(const char* title) {
     // TODO:
 }
 
-int main(int argc, char **argv) {
-    doomgeneric_Create(argc, argv);
+int main(void) {
+    printf("Loaded DOOM elf!\n");
+    DG_Init();
 
-    for (int i = 0; ; i++) {
-        doomgeneric_Tick();
+    // TODO: args
+    char arg[64];
+    strncpy(arg, "doom", 64);
+    doomgeneric_Create(1, (char**)&arg);
+
+    while (!quit) {
+        DG_SleepMs(2);
+        // doomgeneric_Tick();
     }
 
+    window_destroy();
     return 0;
 }

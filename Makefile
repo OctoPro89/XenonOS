@@ -14,6 +14,7 @@ KERNCFLAGS = -I$(EFI_INCLUDE) -I$(EFI_INCLUDE)/$(EFI_ARCH) \
          -fshort-wchar \
          -mno-red-zone \
          -c -g -O0 -D XENONOS_DEBUG=1 \
+		 -D XENON_KERNEL
 		 -Werror=return-type \
 		 -Werror=incompatible-pointer-types \
 		 -Wall
@@ -131,6 +132,52 @@ build/user/apps/ls: \
 		build/user/libc/libc.a \
 		-o $@
 
+# lscpu
+build/user/apps/lscpu.o: user/apps/lscpu/lscpu.c
+	mkdir -p $(dir $@)
+	clang $(USERCFLAGS) $< -o $@ -I"kernel/" -I"user/"
+
+build/user/apps/lscpu: \
+	build/user/start.o \
+	build/user/apps/lscpu.o \
+	build/user/libc/libc.a
+	ld.lld -T user/user.ld \
+		build/user/apps/lscpu.o \
+		build/user/start.o \
+		build/user/libc/libc.a \
+		-o $@
+
+# wintest
+build/user/apps/wintest.o: user/apps/wintest/wintest.c
+	mkdir -p $(dir $@)
+	clang $(USERCFLAGS) $< -o $@ -I"kernel/" -I"user/"
+
+build/user/apps/wintest: \
+	build/user/start.o \
+	build/user/apps/wintest.o \
+	build/user/libc/libc.a
+	ld.lld -T user/user.ld \
+		build/user/apps/wintest.o \
+		build/user/start.o \
+		build/user/libc/libc.a \
+		build/user/libwindow/libwindow.a \
+		-o $@
+
+# heaptest
+build/user/apps/heaptest.o: user/apps/heaptest/heaptest.c
+	mkdir -p $(dir $@)
+	clang $(USERCFLAGS) $< -o $@ -I"kernel/" -I"user/"
+
+build/user/apps/heaptest: \
+	build/user/start.o \
+	build/user/apps/heaptest.o \
+	build/user/libc/libc.a
+	ld.lld -T user/user.ld \
+		build/user/apps/heaptest.o \
+		build/user/start.o \
+		build/user/libc/libc.a \
+		-o $@
+
 # doom
 build/user/apps/doomobjs/%.o: user/apps/doom/%.c
 	mkdir -p $(dir $@)
@@ -139,14 +186,16 @@ build/user/apps/doomobjs/%.o: user/apps/doom/%.c
 build/user/apps/doom: \
     build/user/start.o \
     $(DOOM_C_OBJS) \
-    build/user/libc/libc.a
+    build/user/libc/libc.a \
+	build/user/libwindow/libwindow.a
 	ld.lld -T user/user.ld \
 	    build/user/start.o \
 	    $(DOOM_C_OBJS) \
 	    build/user/libc/libc.a \
+		build/user/libwindow/libwindow.a \
 	    -o $@
 
-userapps: build/user/apps/sh build/user/apps/ls build/user/apps/doom
+userapps: build/user/apps/sh build/user/apps/ls build/user/apps/lscpu build/user/apps/doom build/user/apps/wintest build/user/apps/heaptest
 
 # --- Image ---
 image: build/BOOTX64.EFI build/kernel.elf
@@ -178,6 +227,9 @@ run: image userapps
 	sudo cp testlongfilename.txt /mnt/
 	sudo cp build/user/apps/sh /mnt/bin/
 	sudo cp build/user/apps/ls /mnt/bin/
+	sudo cp build/user/apps/lscpu /mnt/bin/
+	sudo cp build/user/apps/wintest /mnt/bin/
+	sudo cp build/user/apps/heaptest /mnt/bin/
 	sudo cp build/user/apps/doom /mnt/bin/
 	sudo cp hello /mnt/bin/
 	sudo umount /mnt
@@ -206,6 +258,9 @@ run: image userapps
 	sudo cp testlongfilename.txt /mnt/
 	sudo cp build/user/apps/sh /mnt/bin/
 	sudo cp build/user/apps/ls /mnt/bin/
+	sudo cp build/user/apps/lscpu /mnt/bin/
+	sudo cp build/user/apps/heaptest /mnt/bin/
+	sudo cp build/user/apps/wintest /mnt/bin/
 	sudo cp build/user/apps/doom /mnt/bin/
 	sudo cp hello /mnt/bin/
 	sudo umount /mnt
@@ -226,7 +281,8 @@ run: image userapps
     -serial stdio \
  	-S -gdb tcp::1234 \
 	-no-reboot \
- 	-no-shutdown
+ 	-no-shutdown \
+	-m 1024M
 # 	-trace usb_xhci_* -D xhci.log
 #   	-d int
 
