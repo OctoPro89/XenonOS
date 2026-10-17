@@ -257,7 +257,6 @@ void launch_shell_task_entry(void* arg) {
         return;
     }
 
-    // TODO:
     int exit_code = process_wait(process);
     printf("shell exited with code %d\n", exit_code);
     process_reap(process);

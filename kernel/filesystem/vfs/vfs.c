@@ -139,8 +139,11 @@ void vfs_closedir(VFS_DIR* dir) {
     dir->fs->closedir(dir);
 }
 
+#include <xlibc/stdio.h>
+
 int vfs_resolve_path(const char* cwd, const char* path, char* out, size_t out_size) {
     if (!cwd || !path || !out || out_size < 2) {
+        printf("%x | %x | %x | %llu", cwd, path, out, (u64)out_size);
         return -EINVAL;
     }
 
@@ -155,6 +158,7 @@ int vfs_resolve_path(const char* cwd, const char* path, char* out, size_t out_si
 
     // cwd must be absolute
     if (cwd[0] != '/') {
+        printf("not absolute!\n");
         return -EINVAL;
     }
 

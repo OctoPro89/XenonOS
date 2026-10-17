@@ -10,5 +10,6 @@ make everything check vmm_map
 elf loader could probably be improved
 remove all "PATH_MAX"s and just make one
 processes crash without os going down in flames
+active window keyboard input etc
 
 maybe timer doesn't work quite right on some real hardware systems

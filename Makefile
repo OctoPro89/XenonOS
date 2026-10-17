@@ -10,10 +10,10 @@ BOOTCFLAGS = -I$(EFI_INCLUDE) -I$(EFI_INCLUDE)/$(EFI_ARCH) \
 
 KERNCFLAGS = -I$(EFI_INCLUDE) -I$(EFI_INCLUDE)/$(EFI_ARCH) \
          -ffreestanding \
-         -fno-stack-protector \
+         -fno-stack-protector -fstrict-aliasing -fno-omit-frame-pointer \
          -fshort-wchar \
          -mno-red-zone \
-         -c -g -O0 -D XENONOS_DEBUG=1 \
+         -c -g -O3 -D XENONOS_DEBUG=1 \
 		 -D XENON_KERNEL
 		 -Werror=return-type \
 		 -Werror=incompatible-pointer-types \
@@ -22,10 +22,10 @@ KERNCFLAGS = -I$(EFI_INCLUDE) -I$(EFI_INCLUDE)/$(EFI_ARCH) \
 USERCFLAGS = -ffreestanding \
          -fno-stack-protector \
          -fshort-wchar \
-         -mno-red-zone \
+         -mno-red-zone -fstrict-aliasing -fno-omit-frame-pointer \
 		 -I"kernel/xlibc" \
 		 -I"user/" -I"kernel/" \
-         -c -g -O0 -D XENONOS_DEBUG=1 \
+         -c -g -O3 -D XENONOS_DEBUG=1 \
 		 -Werror=return-type \
 		 -Werror=incompatible-pointer-types \
 		 -Wall
@@ -178,6 +178,21 @@ build/user/apps/heaptest: \
 		build/user/libc/libc.a \
 		-o $@
 
+# fstest
+build/user/apps/fstest.o: user/apps/fstest/fstest.c
+	mkdir -p $(dir $@)
+	clang $(USERCFLAGS) $< -o $@ -I"kernel/" -I"user/"
+
+build/user/apps/fstest: \
+	build/user/start.o \
+	build/user/apps/fstest.o \
+	build/user/libc/libc.a
+	ld.lld -T user/user.ld \
+		build/user/apps/fstest.o \
+		build/user/start.o \
+		build/user/libc/libc.a \
+		-o $@
+
 # doom
 build/user/apps/doomobjs/%.o: user/apps/doom/%.c
 	mkdir -p $(dir $@)
@@ -195,7 +210,7 @@ build/user/apps/doom: \
 		build/user/libwindow/libwindow.a \
 	    -o $@
 
-userapps: build/user/apps/sh build/user/apps/ls build/user/apps/lscpu build/user/apps/doom build/user/apps/wintest build/user/apps/heaptest
+userapps: build/user/apps/sh build/user/apps/ls build/user/apps/lscpu build/user/apps/doom build/user/apps/wintest build/user/apps/heaptest build/user/apps/fstest
 
 # --- Image ---
 image: build/BOOTX64.EFI build/kernel.elf
@@ -230,6 +245,7 @@ run: image userapps
 	sudo cp build/user/apps/lscpu /mnt/bin/
 	sudo cp build/user/apps/wintest /mnt/bin/
 	sudo cp build/user/apps/heaptest /mnt/bin/
+	sudo cp build/user/apps/fstest /mnt/bin/
 	sudo cp build/user/apps/doom /mnt/bin/
 	sudo cp hello /mnt/bin/
 	sudo umount /mnt
@@ -261,6 +277,7 @@ run: image userapps
 	sudo cp build/user/apps/lscpu /mnt/bin/
 	sudo cp build/user/apps/heaptest /mnt/bin/
 	sudo cp build/user/apps/wintest /mnt/bin/
+	sudo cp build/user/apps/fstest /mnt/bin/
 	sudo cp build/user/apps/doom /mnt/bin/
 	sudo cp hello /mnt/bin/
 	sudo umount /mnt

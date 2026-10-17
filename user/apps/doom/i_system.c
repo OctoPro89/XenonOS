@@ -356,6 +356,8 @@ static int ZenityErrorBox(char *message)
 
 static boolean already_quitting = false;
 
+extern void DG_SleepMs(uint32_t ms);
+
 void I_Error (char *error, ...)
 {
     char msgbuf[512];
@@ -388,6 +390,8 @@ void I_Error (char *error, ...)
     memset(msgbuf, 0, sizeof(msgbuf));
     M_vsnprintf(msgbuf, sizeof(msgbuf), error, argptr);
     va_end(argptr);
+
+    DG_SleepMs(5000);
 
     // Shutdown. Here might be other errors.
 

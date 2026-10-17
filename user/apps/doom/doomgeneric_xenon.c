@@ -14,6 +14,8 @@ static unsigned short s_KeyQueue[KEYQUEUE_SIZE];
 static unsigned int s_KeyQueueWriteIndex = 0;
 static unsigned int s_KeyQueueReadIndex = 0;
 
+#define HID_KEY_ENTER 0x28
+#define HID_KEY_ESCAPE 0x29
 #define HID_KEY_BACKSPACE 0x2A
 #define HID_KEY_LEFT_SHIFT 0xE1
 #define HID_KEY_RIGHT_SHIFT 0xE5
@@ -136,14 +138,16 @@ void DG_Init() {
         .flags = 0
     };
 
-    if (window_create(&wconfig) < 0) {
-        printf("Failed to create window!\n");
-        // while (1) ;
+    ssize_t rc = window_create(&wconfig);
+    if (rc < 0) {
+        printf("Failed to create window! (rc: %d)\n", (int)rc);
+        while (1) ;
     }
 
-    if (window_subscribe_keyboard_events() < 0) {
-        printf("Failed to subscribe to keyboard events!\n");
-        // while (1) ;
+    rc = window_subscribe_keyboard_events();
+    if (rc < 0) {
+        printf("Failed to subscribe to keyboard events! (rc: %d)\n", (int)rc);
+        while (1) ;
     }
 
 	memset(s_KeyQueue, 0, KEYQUEUE_SIZE * sizeof(unsigned short));
@@ -158,9 +162,18 @@ void DG_DrawFrame() {
             case WINDOW_EVENT_CLOSE_REQUEST: {
                 // TODO: release resources
                 quit = 1;
+                break;
             }
             case WINDOW_EVENT_KEY_DOWN: {
                 switch (evt.keycode) {
+                    case HID_KEY_ENTER: {
+                        addKeyToQueue(1, KEY_ENTER);
+                        break;
+                    }
+                    case HID_KEY_ESCAPE: {
+                        addKeyToQueue(1, KEY_ESCAPE);
+                        break;
+                    }
                     case HID_KEY_LEFT_SHIFT:
                     case HID_KEY_RIGHT_SHIFT: {
                         addKeyToQueue(1, KEY_RSHIFT);
@@ -196,9 +209,18 @@ void DG_DrawFrame() {
                         break;
                     }
                 }
+                break;
             }
             case WINDOW_EVENT_KEY_UP: {
                 switch (evt.keycode) {
+                    case HID_KEY_ENTER: {
+                        addKeyToQueue(0, KEY_ENTER);
+                        break;
+                    }
+                    case HID_KEY_ESCAPE: {
+                        addKeyToQueue(0, KEY_ESCAPE);
+                        break;
+                    }
                     case HID_KEY_LEFT_SHIFT:
                     case HID_KEY_RIGHT_SHIFT: {
                         addKeyToQueue(0, KEY_RSHIFT);
@@ -233,7 +255,9 @@ void DG_DrawFrame() {
                         addKeyToQueue(0, tolower(keycode_to_ascii(evt.keycode, false)));
                         break;
                     }
+                    break;
                 }
+                break;
             }
             default: break;
         }
@@ -296,7 +320,6 @@ void DG_SetWindowTitle(const char* title) {
 
 int main(void) {
     printf("Loaded DOOM elf!\n");
-    DG_Init();
 
     // TODO: args
     char arg[64];

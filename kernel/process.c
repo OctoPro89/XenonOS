@@ -231,7 +231,13 @@ extern void ASMCALL enter_user_mode(u64 entry, u64 stack) __attribute__((noretur
 void user_process_task_entry(void* arg) {
     process_t* process = arg;
     vmm_switch(process->space);
-    enter_user_mode(process->entry, process->user_stack_top & ~0xFULL);
+
+    // TODO: / IMPORTANT NOTE: this HAS TO HAPPEN with compiled code because of alignment. ELF entry expects 16 byte alignment but since
+    // the "call" instruction isn't being used the alignments can disagree. Using -O1 -O2 -O3 can all expose this. Please keep this in mind
+    // for the future
+    u64 user_rsp = (process->user_stack_top & ~0xFULL) - 8;
+
+    enter_user_mode(process->entry, user_rsp);
 
     __builtin_unreachable();
 }

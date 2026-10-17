@@ -215,8 +215,9 @@ void usb_core_device_finalized_disconnected_device(xhci_driver_t* driver, xhci_d
         return;
     }
 
+    finalization_ticket_t ticket;
+    memset(&ticket, 0, sizeof(finalization_ticket_t));
     dev->hcd_teardown_complete = true;
-    // TODO: THREADING HERE
 }
 
 void usb_core_register_driver(const char* name, usb_core_interface_match_t match, usb_core_interface_driver_factory_func factory) {

@@ -34,4 +34,6 @@ void vmm_map_mmio(vmm_space_t* space, vaddr_t virt, paddr_t phys, size_t size);
 
 paddr_t vmm_virt_to_phys(vmm_space_t* space, vaddr_t virt);
 
+int vmm_update_page_flags(vmm_space_t* space, vaddr_t virt, u64 set_flags, u64 clear_flags);
+
 b8 vmm_user_range_valid(vmm_space_t* space, vaddr_t addr, size_t size, b8 write);

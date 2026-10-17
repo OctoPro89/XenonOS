@@ -59,6 +59,11 @@ typedef struct {
     u32 bytes_per_sector;
 
     u32 root_cluster;
+    
+    // caching
+    u32 fat_cache_lba;
+    u8 fat_cache[512];
+    b8 fat_cache_valid;
 } FAT32_FS;
 
 typedef struct __packed__ {
@@ -94,7 +99,15 @@ typedef struct {
     u32 first_cluster;
     u32 size;
     u32 pos;
+
+    u32 current_cluster;
+    u32 current_cluster_index;
+    b8 cluster_cursor_valid;
+
     u8* cluster_buffer;
+
+    u32 loaded_cluster;
+    b8 cluster_buffer_valid;
 } FAT32_FILE;
 
 typedef struct {
@@ -115,7 +128,7 @@ typedef struct {
 int fat32_init(FAT32_FS* fs, block_device* dev, u32 part_lba);
 u32 fat32_cluster_to_lba(FAT32_FS* fs, u32 cluster);
 u32 fat32_read_fat_entry(FAT32_FS* fs, u32 cluster);
-void fat32_read_cluster(FAT32_FS* fs, u32 cluster, void* buffer);
+b8 fat32_read_cluster(FAT32_FS* fs, u32 cluster, void* buffer);
 u32 fat32_entry_cluster(FAT32_DIRECTORY_ENTRY* ent);
 void fat32_format_8_3(u8* name, char* out);
 int fat32_name_match_8_3(const char* input, u8* name);
@@ -129,5 +142,10 @@ int fat32_seek(FAT32_FILE* f, u32 offset);
 u32 fat32_tell(FAT32_FILE* f);
 
 FAT32_DIR* fat32_opendir(FAT32_FS* fs, const char* path);
+
+/**
+ * @brief Reads a directory
+ * @returns 1 for an entry, 0 for end-of-directory, and -1 for an error
+ */
 int fat32_readdir(FAT32_DIR* dir, VFS_DIRENT* out);
 void fat32_closedir(FAT32_DIR* dir);

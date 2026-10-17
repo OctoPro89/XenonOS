@@ -5,6 +5,69 @@
 #include <memory/heap.h>
 #include <kernel.h>
 
+
+#include <time/time.h>
+static u64 debug_data_cluster_reads = 0;
+static u64 debug_fat_cache_hits = 0;
+static u64 debug_fat_sector_reads = 0;
+static u64 debug_cluster_read_ns = 0;
+
+static b8 fat32_read_fat_entry_checked(FAT32_FS* fs, u32 cluster, u32* out_cluster) {
+    u32 fat_offset = cluster * 4;
+    u32 fat_sector = fs->fat_start_lba + (fat_offset / 512);
+    u32 ent_offset = fat_offset % 512;
+
+    if (fs->fat_cache_valid &&
+        fs->fat_cache_lba == fat_sector) {
+        debug_fat_cache_hits++;
+    }
+
+    if (!fs->fat_cache_valid || fs->fat_cache_lba != fat_sector) {
+        if (!fs->dev->read(fs->dev->driver_data, fat_sector, 1, fs->fat_cache)) {
+            fs->fat_cache_valid = false;
+            return false;
+        }
+
+        ++debug_fat_sector_reads;
+        fs->fat_cache_lba = fat_sector;
+        fs->fat_cache_valid = true;
+    }
+
+    u32 value;
+    memcpy(&value, &fs->fat_cache[ent_offset], sizeof(value));
+
+    *out_cluster = value & 0x0FFFFFFF;
+    return true;
+}
+
+static b8 fat32_get_cluster_at(FAT32_FILE *f, u32 target_index, u32 *out_cluster) {
+    if (!f->cluster_cursor_valid || target_index < f->current_cluster_index) {
+        f->current_cluster = f->first_cluster;
+        f->current_cluster_index = 0;
+        f->cluster_cursor_valid = true;
+    }
+
+    while (f->current_cluster_index < target_index) {
+        u32 next_cluster;
+
+        if (!fat32_read_fat_entry_checked(f->fs, f->current_cluster, &next_cluster)) {
+            f->cluster_cursor_valid = false;
+            return false;
+        }
+
+        if (next_cluster < 2 || next_cluster >= 0x0FFFFFF0) {
+            f->cluster_cursor_valid = false;
+            return false;
+        }
+
+        f->current_cluster = next_cluster;
+        f->current_cluster_index++;
+    }
+
+    *out_cluster = f->current_cluster;
+    return true;
+}
+
 static int fat32_is_data_cluster(u32 cluster) {
     // exclude free, reserved, bad, and end-of-chain marker values
     return cluster >= 2 && cluster < 0x0FFFFFF0;
@@ -30,22 +93,27 @@ static __hint_inline__ void fat32_reset_lfn(FAT32_DIR* dir) {
     memset(dir->lfn_parts, 0, sizeof(dir->lfn_parts));
 }
 
-static void fat32_advance_directory_cluster(FAT32_DIR* dir) {
+static b8 fat32_advance_directory_cluster(FAT32_DIR* dir) {
     u32 next = fat32_read_fat_entry(dir->fs, dir->cluster);
 
     if (fat32_is_eoc(next)) {
         dir->end = 1;
-        return;
+        return true; // TODO: really not sure what to return???
     }
 
     if (!fat32_is_data_cluster(next)) {
         dir->end = -1;
-        return;
+        return false; // TODO: really not sure what to return???
     }
 
     dir->cluster = next;
     dir->offset = 0;
-    fat32_read_cluster(dir->fs, dir->cluster, dir->buffer);
+    if (!fat32_read_cluster(dir->fs, dir->cluster, dir->buffer)) {
+        dir->end = -1;
+        return false;
+    }
+
+    return true;
 }
 
 static int fat32_stricmp(const char* a, const char* b) {
@@ -77,6 +145,10 @@ int fat32_init(FAT32_FS* fs, block_device* dev, u32 part_lba) {
     }
 
     fs->dev = dev;
+
+    fs->fat_cache_valid = false;
+    fs->fat_cache_lba = 0;
+
     fs->start_lba = part_lba;
 
     fs->bytes_per_sector = bpb->bytes_per_sector;
@@ -98,22 +170,40 @@ u32 fat32_cluster_to_lba(FAT32_FS* fs, u32 cluster) {
 }
 
 u32 fat32_read_fat_entry(FAT32_FS* fs, u32 cluster) {
-    u32 fat_offset = cluster * 4;
+    u32 next_cluster;
 
-    u32 fat_sector = fs->fat_start_lba + (fat_offset / 512);
-    u32 ent_offset = fat_offset % 512;
+    if (!fat32_read_fat_entry_checked(fs, cluster, &next_cluster)) {
+        return 0; // invalid cluster, must reject
+    }
 
-    u8 sector[512];
-    fs->dev->read(fs->dev->driver_data, fat_sector, 1, sector);
-
-    u32 value = *(u32*)(sector + ent_offset);
-
-    return value & 0x0FFFFFFF;
+    return next_cluster;
 }
 
-void fat32_read_cluster(FAT32_FS* fs, u32 cluster, void* buffer) {
+/*
+b8 fat32_read_cluster(FAT32_FS* fs, u32 cluster, void* buffer) {
     u32 lba = fat32_cluster_to_lba(fs, cluster);
-    fs->dev->read(fs->dev->driver_data, lba, fs->sectors_per_cluster, buffer);
+    debug_data_cluster_reads++;
+    return (b8)fs->dev->read(fs->dev->driver_data, lba, fs->sectors_per_cluster, buffer);
+}
+    */
+b8 fat32_read_cluster(FAT32_FS* fs, u32 cluster, void* buffer) {
+    u32 lba = fat32_cluster_to_lba(fs, cluster);
+
+    u64 start = ktimer_get_system_time_in_nanoseconds();
+
+    b8 ok = (b8)fs->dev->read(
+        fs->dev->driver_data,
+        lba,
+        fs->sectors_per_cluster,
+        buffer
+    );
+
+    u64 end = ktimer_get_system_time_in_nanoseconds();
+
+    debug_cluster_read_ns += end - start;
+    debug_data_cluster_reads++;
+
+    return ok;
 }
 
 u32 fat32_entry_cluster(FAT32_DIRECTORY_ENTRY* ent) {
@@ -200,15 +290,31 @@ FAT32_FILE* fat32_open(FAT32_FS* fs, const char* path) {
     }
 
     FAT32_FILE* f = kmalloc(sizeof(FAT32_FILE));
+    if (!f) { return NULL; }
     f->fs = fs;
     f->first_cluster = fat32_entry_cluster(&ent);
     f->size = ent.size;
     f->pos = 0;
-    u32 cluster_size = f->fs->sectors_per_cluster * 512;
+    u32 cluster_size = f->fs->sectors_per_cluster * f->fs->bytes_per_sector;
+    if (cluster_size == 0) {
+        kfree(f);
+        return NULL;
+    }
+
     f->cluster_buffer = kmalloc(cluster_size);
+    if (!f->cluster_buffer) {
+        kfree(f);
+        return NULL;
+    }
+
+    f->current_cluster = f->first_cluster;
+    f->current_cluster_index = 0;
+    f->cluster_cursor_valid = true;
 
     return f;
 }
+
+#include <xlibc/stdio.h>
 
 void fat32_close(FAT32_FILE* f) {
     if (!f) return;
@@ -217,52 +323,80 @@ void fat32_close(FAT32_FILE* f) {
         kfree(f->cluster_buffer);
     }
 
+    // printf(
+    //     "Totals: FAT sectors=%llu, data clusters=%llu, "
+    //     "FAT cache hits=%llu, device read time=%llu ms\n",
+    //     debug_fat_sector_reads,
+    //     debug_data_cluster_reads,
+    //     debug_fat_cache_hits,
+    //     debug_cluster_read_ns / 1000000
+    // );
+
     kfree(f);
 }
 
 u32 fat32_read(FAT32_FILE* f, void* buffer, u32 size) {
-    u8* out = buffer;
-    u32 total_read = 0;
+    if (!f || !buffer || size == 0) {
+        return 0;
+    }
 
-    u32 cluster_size = f->fs->sectors_per_cluster * 512;
+    if (f->pos >= f->size) {
+        return 0;
+    }
 
-    // clamp to file size
-    if (f->pos >= f->size) return 0;
-    if (f->pos + size > f->size) {
+    // clamp read
+    if (size > f->size - f->pos) {
         size = f->size - f->pos;
     }
 
-    // --- find starting cluster ---
-    u32 cluster = f->first_cluster;
-    u32 cluster_index = f->pos / cluster_size;
+    u8* out = buffer;
+    u32 total_read = 0;
 
-    for (u32 i = 0; i < cluster_index; i++) {
-        cluster = fat32_read_fat_entry(f->fs, cluster);
-        if (cluster >= 0x0FFFFFF8) return 0;
+    u32 cluster_size = f->fs->sectors_per_cluster * f->fs->bytes_per_sector;
+
+    if (cluster_size == 0 || !f->cluster_buffer) {
+        return 0;
     }
 
-    u32 cluster_offset = f->pos % cluster_size;
+    while (total_read < size) {
+        // find the cluster containing the current file position
+        u32 cluster_index = f->pos / cluster_size;
+        u32 cluster;
 
-    // use pre-allocated buffer for speed, could malloc a temp here
-    uint8_t* temp = f->cluster_buffer;
-
-    while (cluster < 0x0FFFFFF8 && total_read < size) {
-        fat32_read_cluster(f->fs, cluster, temp);
-
-        u32 to_copy = cluster_size - cluster_offset;
-
-        if (to_copy > (size - total_read)) {
-            to_copy = size - total_read;
+        if (!fat32_get_cluster_at(f, cluster_index, &cluster)) {
+            break;
         }
 
-        memcpy(out + total_read, temp + cluster_offset, to_copy);
+        // reject invalid clusters before reading from the device
+        if (!fat32_is_data_cluster(cluster)) {
+            f->cluster_cursor_valid = false;
+            break;
+        }
 
-        total_read += to_copy;
-        f->pos += to_copy;
+        // read this cluster into the reusable buffer
+        // only read from the device if this cluster isn't already cached
+        if (!f->cluster_buffer_valid || f->loaded_cluster != cluster) {
+            if (!fat32_read_cluster(f->fs, cluster, f->cluster_buffer)) {
+                f->cluster_buffer_valid = false;
+                break;
+            }
 
-        cluster_offset = 0; // only first cluster has offset
+            f->loaded_cluster = cluster;
+            f->cluster_buffer_valid = true;
+        }
 
-        cluster = fat32_read_fat_entry(f->fs, cluster);
+        u32 cluster_offset = f->pos % cluster_size;
+        u32 bytes_available = cluster_size - cluster_offset;
+        u32 bytes_to_copy = size - total_read;
+
+        if (bytes_to_copy > bytes_available) {
+            bytes_to_copy = bytes_available;
+        }
+
+        memcpy(out + total_read, f->cluster_buffer + cluster_offset, bytes_to_copy);
+
+        f->pos += bytes_to_copy;
+        total_read += bytes_to_copy;
     }
 
     return total_read;
@@ -278,7 +412,10 @@ int fat32_find_in_dir(FAT32_FS* fs, u32 start_cluster, const char* name, FAT32_D
     int lfn_count = 0;
 
     while (cluster < 0x0FFFFFF8) {
-        fat32_read_cluster(fs, cluster, buf);
+        if (!fat32_read_cluster(fs, cluster, buf)) {
+            kfree(buf);
+            return 0;
+        }
 
         for (u32 i = 0; i < cluster_size; i += 32) {
             FAT32_DIRECTORY_ENTRY* ent = (void*)(buf + i);
@@ -477,7 +614,11 @@ FAT32_DIR* fat32_opendir(FAT32_FS* fs, const char* path) {
         return NULL;
     }
 
-    fat32_read_cluster(fs, dir->cluster, dir->buffer);
+    if (!fat32_read_cluster(fs, dir->cluster, dir->buffer)) {
+        kfree(dir);
+        return NULL;
+    }
+    
     fat32_reset_lfn(dir);
 
     return dir;
@@ -491,7 +632,9 @@ int fat32_readdir(FAT32_DIR* dir, VFS_DIRENT* out)
     for (;;) {
         // move to the next cluster when this one is exhausted
         if (dir->offset >= dir->cluster_size) {
-            fat32_advance_directory_cluster(dir);
+            if (!fat32_advance_directory_cluster(dir)) {
+                return -1;
+            }
 
             if (dir->end == 1) {
                 return 0;

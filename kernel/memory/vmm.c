@@ -279,6 +279,36 @@ paddr_t vmm_virt_to_phys(vmm_space_t* space, vaddr_t virt) {
     return (pt[pt_index(virt)] & ~0xFFFULL) | (virt & 0xFFF);
 }
 
+int vmm_update_page_flags(vmm_space_t* space, vaddr_t virt, u64 set_flags, u64 clear_flags) {
+    if (!space || !space->pml4 || (virt & (PAGE_SIZE - 1)) != 0) {
+        return -EINVAL;
+    }
+
+    pte_t* pml4 = space->pml4;
+
+    pte_t* pdpt = get_table_noalloc(pml4, pml4_index(virt));
+    if (!pdpt) { return -ENOENT; }
+
+    pte_t* pd = get_table_noalloc(pdpt, pdpt_index(virt));
+    if (!pd) { return -ENOENT; }
+
+    pte_t* pt = get_table_noalloc(pd, pd_index(virt));
+    if (!pt) { return -ENOENT; }
+
+    pte_t* entry = &pt[pt_index(virt)];
+
+    if (!(*entry & PAGE_PRESENT)) {
+        return -ENOENT;
+    }
+
+    *entry &= ~clear_flags;
+    *entry |= set_flags;
+
+    asm volatile("invlpg (%0)" :: "r"(virt) : "memory");
+
+    return 0;
+}
+
 b8 vmm_user_range_valid(vmm_space_t* space, vaddr_t addr, size_t size, b8 write) {
     if (!space || !space->user_mode) {
         return false;

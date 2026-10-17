@@ -1037,12 +1037,15 @@ static b8 xhci_driver_submit_normal_transfer(xhci_driver_t* driver, xhci_device_
 }
 
 static void xhci_driver_finish_request(xhci_driver_t* driver, usb_transfer_request_t* request, usb_transfer_status_t status, u32 actual_length) {
+    u64 flags = 0;
+    spin_lock_irqsave(&request->lock, &flags);
     request->status = status;
     request->actual_length = actual_length;
     request->pending = false;
     request->next = NULL;
     request->hcd_private = NULL;
-    // TODO: threading
+    spin_unlock_irqrestore(&request->lock, flags);
+    wait_queue_wake_all(&request->complete_wq);
 }
 
 static xhci_command_completion_trb_t* xhci_driver_stop_endpoint(xhci_driver_t* driver, xhci_device_t* device, u8 dci) {

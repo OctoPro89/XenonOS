@@ -38,6 +38,9 @@
 
 #include "r_data.h"
 
+
+extern void DG_SleepMs(uint32_t ms);
+
 //
 // Graphics.
 // DOOM graphics for walls and sprites
@@ -572,7 +575,7 @@ void R_InitTextures (void)
 	    Z_Malloc (sizeof(texture_t)
 		      + sizeof(texpatch_t)*(SHORT(mtexture->patchcount)-1),
 		      PU_STATIC, 0);
-	
+
 	texture->width = SHORT(mtexture->width);
 	texture->height = SHORT(mtexture->height);
 	texture->patchcount = SHORT(mtexture->patchcount);
@@ -608,21 +611,37 @@ void R_InitTextures (void)
     Z_Free(patchlookup);
 
     W_ReleaseLumpName(DEH_String("TEXTURE1"));
-    if (maptex2)
+
+    printf("W_ReleaseLumpName(DEH_String('TEXTURE1'));\n");
+
+    if (maptex2) {
         W_ReleaseLumpName(DEH_String("TEXTURE2"));
+        printf("W_ReleaseLumpName(DEH_String('TEXTURE2'));\n");
+    }
+
+    printf("Released lumps!\n");
     
     // Precalculate whatever possible.	
 
-    for (i=0 ; i<numtextures ; i++)
+    printf("R_InitTextures(): Generating %d lookups\n", numtextures);
+    for (i=0 ; i<numtextures ; i++) {
+        printf("Generating lookup for %d\n", i);
 	R_GenerateLookup (i);
-    
+    }
+
+    printf("about to finish R_InitTextures!\n");
+
     // Create translation table for global animation.
     texturetranslation = Z_Malloc ((numtextures+1)*sizeof(*texturetranslation), PU_STATIC, 0);
     
     for (i=0 ; i<numtextures ; i++)
 	texturetranslation[i] = i;
 
+    printf("GenerateTextureHashTable!\n");
+
     GenerateTextureHashTable();
+
+    printf("Finished R_InitTextures!\n");
 }
 
 
@@ -659,22 +678,28 @@ void R_InitSpriteLumps (void)
 	
     firstspritelump = W_GetNumForName (DEH_String("S_START")) + 1;
     lastspritelump = W_GetNumForName (DEH_String("S_END")) - 1;
+
+    printf("hi\n");
     
     numspritelumps = lastspritelump - firstspritelump + 1;
     spritewidth = Z_Malloc (numspritelumps*sizeof(*spritewidth), PU_STATIC, 0);
     spriteoffset = Z_Malloc (numspritelumps*sizeof(*spriteoffset), PU_STATIC, 0);
     spritetopoffset = Z_Malloc (numspritelumps*sizeof(*spritetopoffset), PU_STATIC, 0);
 	
+    printf("hi2\n");
+
     for (i=0 ; i< numspritelumps ; i++)
     {
 	if (!(i&63))
-	    printf (".");
+	    printf ("i<numspritelumps\n");
 
 	patch = W_CacheLumpNum (firstspritelump+i, PU_CACHE);
 	spritewidth[i] = SHORT(patch->width)<<FRACBITS;
 	spriteoffset[i] = SHORT(patch->leftoffset)<<FRACBITS;
 	spritetopoffset[i] = SHORT(patch->topoffset)<<FRACBITS;
     }
+
+    printf("hi3\n");
 }
 
 
@@ -692,8 +717,6 @@ void R_InitColormaps (void)
     colormaps = W_CacheLumpNum(lump, PU_STATIC);
 }
 
-
-
 //
 // R_InitData
 // Locates all the lumps
@@ -703,11 +726,14 @@ void R_InitColormaps (void)
 void R_InitData (void)
 {
     R_InitTextures ();
-    printf (".");
+    printf ("R_InitTextures\n");
+    DG_SleepMs(1000);
     R_InitFlats ();
-    printf (".");
+    printf ("R_InitFlats\n");
+    DG_SleepMs(1000);
     R_InitSpriteLumps ();
-    printf (".");
+    printf ("R_InitSpriteLumps\n");
+    DG_SleepMs(1000);
     R_InitColormaps ();
 }
 
