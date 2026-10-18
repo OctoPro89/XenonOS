@@ -763,16 +763,12 @@ void R_ExecuteSetViewSize (void)
 // R_Init
 //
 
-extern void DG_SleepMs(uint32_t ms);
-
 void R_Init (void)
 {
     R_InitData ();
     printf ("R_InitData\n");
-    DG_SleepMs(1000);
     R_InitPointToAngle ();
     printf ("R_InitPointToAngles\n");
-    DG_SleepMs(1000);
     R_InitTables ();
     // viewwidth / viewheight / detailLevel are set by the defaults
     printf ("R_InitTables\n");

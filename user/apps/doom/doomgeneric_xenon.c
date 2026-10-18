@@ -266,6 +266,25 @@ void DG_DrawFrame() {
     window_memcpy_frame(DG_ScreenBuffer, DOOMGENERIC_RESX * DOOMGENERIC_RESY * sizeof(u32)); // TODO: better solution
     static const window_rect_t rect = { 0, 0, DOOMGENERIC_RESX, DOOMGENERIC_RESY };
     window_damage(&rect);
+
+    static uint32_t last_time = 0;
+    static uint32_t frames = 0;
+
+    uint32_t now = DG_GetTicksMs();
+
+    if (last_time == 0)
+        last_time = now;
+
+    frames++;
+
+    uint32_t elapsed = now - last_time;
+
+    if (elapsed >= 1000) {
+        printf("FPS: %u\n", (frames * 1000) / elapsed);
+
+        frames = 0;
+        last_time = now;
+    }
 }
 
 // TODO: real clock monotic sleep

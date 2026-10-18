@@ -1175,8 +1175,6 @@ static void LoadIwadDeh(void)
 }
 #endif
 
-extern void DG_SleepMs(uint32_t ms);
-
 //
 // D_DoomMain
 //
@@ -1784,7 +1782,6 @@ void D_DoomMain (void)
     R_Init ();
 
     DEH_printf("\nP_Init: Init Playloop state.\n");
-    DG_SleepMs(5000); // make sure we see the message
     P_Init ();
 
     DEH_printf("S_Init: Setting up sound.\n");

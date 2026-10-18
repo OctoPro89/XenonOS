@@ -42,7 +42,7 @@ void ktimer_calibrate_cpu_timer(u64 milliseconds) {
     lapic_unmask_timer_irq();
 
     // calculate the number of elapsed apic ticks, assuming apic timer counts down from the initial counts
-    apic_ticks_calibrated_frequency = (((uint64_t)(0xffffffff - apic_end)) / 1000) * milliseconds;
+    apic_ticks_calibrated_frequency = (u64)(long double)((((uint64_t)(0xffffffff - apic_end)) / 1000) * 0.1);/* milliseconds */;
     tsc_ticks_calibrated_frequency = rdtsc_end - rdtsc_start;
     configured_apic_interval_ms = milliseconds;
 }
@@ -69,7 +69,7 @@ u64 ktimer_get_system_time_in_seconds() {
 }
 
 void ktimer_sched_irq_global_tick() {
-    global_system_time_ns += configured_apic_interval_ms * 1000000ULL;
+    global_system_time_ns += /*configured_apic_interval_ms*/(u64)(long double)(0.1 * 1000000);//ULL);
 
     static u64 last_hpet_ticks = 0;
     u64 current_hpet_ticks = ktimer_get_high_precision_system_time();

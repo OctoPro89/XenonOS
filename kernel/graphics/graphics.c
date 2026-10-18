@@ -5,6 +5,7 @@
 #include <arch/x86_64/io.h>
 #include <graphics/font8x8.h>
 #include <graphics/memops.h>
+#include <xlibc/string.h>
 
 #define FRAMEBUFFER_VIRT_BASE 0xFFFFD00000000000ULL
 
@@ -147,6 +148,54 @@ void graphics_draw_string(const char* str, uint32_t x, uint32_t y, uint32_t colo
 void graphics_put_pixel(uint32_t x, uint32_t y, uint32_t color) {
     put_pixel(x, y, color);
     mark_dirty(x, y, 1, 1);
+}
+
+void graphics_draw_image_data(uint32_t x, uint32_t y, const uint32_t* data, uint32_t width, uint32_t height, b8 zero_is_transparent) {
+    if (!data || width == 0 || height == 0)
+        return;
+
+    if (x >= current_width || y >= current_height)
+        return;
+
+    uint32_t copy_width = width;
+    uint32_t copy_height = height;
+
+    if (copy_width > current_width - x)
+        copy_width = current_width - x;
+
+    if (copy_height > current_height - y)
+        copy_height = current_height - y;
+
+    if (copy_width == 0 || copy_height == 0)
+        return;
+
+    if (!zero_is_transparent) {
+        for (uint32_t row = 0; row < copy_height; ++row) {
+            uint32_t* dst =
+                backbuffer + (y + row) * pixels_per_line + x;
+
+            const uint32_t* src = data + row * width;
+
+            memcpy(dst, src, copy_width * sizeof(uint32_t));
+        }
+
+        mark_dirty(x, y, copy_width, copy_height);
+        return;
+    }
+
+    for (uint32_t row = 0; row < copy_height; ++row) {
+        uint32_t* dst =
+            backbuffer + (y + row) * pixels_per_line + x;
+
+        const uint32_t* src = data + row * width;
+
+        for (uint32_t col = 0; col < copy_width; ++col) {
+            if (src[col] != 0)
+                dst[col] = src[col];
+        }
+    }
+
+    mark_dirty(x, y, copy_width, copy_height);
 }
 
 void graphics_draw_hex(uint64_t val, uint32_t x, uint32_t y, uint32_t color) {

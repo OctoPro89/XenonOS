@@ -21,20 +21,10 @@ void xenon_surface_str(xenon_surface_t* surface, u32 x, u32 y, const char* str, 
 }
 
 void xenon_surface_image_data(xenon_surface_t* surface, u32 x, u32 y, const u32* data, u32 width, u32 height, b8 zero_is_transparent) {
-    for (u32 row = 0; row < height; ++row) {
-        for (u32 col = 0; col < width; ++col) {
-            u32 index1D = (row * width) + col;
-            u32 pixel_color = data[index1D];
+    (void)surface;
 
-            if (zero_is_transparent && pixel_color == 0) {
-                continue; 
-            }
-
-            graphics_put_pixel(x + col, y + row, pixel_color);
-        }
-    }
+    graphics_draw_image_data(x, y, data, width, height, zero_is_transparent);
 }
-
 
 void xenon_surface_present(xenon_surface_t* surface) {
     graphics_swap_buffers();

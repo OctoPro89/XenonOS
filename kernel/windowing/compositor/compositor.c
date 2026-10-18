@@ -307,7 +307,8 @@ b8 compositor_init(xenon_surface_t* surface) {
 void compositor_invalidate() { frame_invalidated = true; }
 
 void compositor_render() {
-    if (!target || !frame_invalidated) { return; }
+    // TODO: add back
+    // if (!target || !frame_invalidated) { return; }
 
     // TODO: this can cause buggyness, should probably use an atomic or some shit
     frame_invalidated = false;

@@ -39,8 +39,6 @@
 #include "r_data.h"
 
 
-extern void DG_SleepMs(uint32_t ms);
-
 //
 // Graphics.
 // DOOM graphics for walls and sprites
@@ -727,13 +725,10 @@ void R_InitData (void)
 {
     R_InitTextures ();
     printf ("R_InitTextures\n");
-    DG_SleepMs(1000);
     R_InitFlats ();
     printf ("R_InitFlats\n");
-    DG_SleepMs(1000);
     R_InitSpriteLumps ();
     printf ("R_InitSpriteLumps\n");
-    DG_SleepMs(1000);
     R_InitColormaps ();
 }
 

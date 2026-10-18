@@ -5,12 +5,13 @@
 #include <memory/heap.h>
 #include <kernel.h>
 
-
+/*
 #include <time/time.h>
 static u64 debug_data_cluster_reads = 0;
 static u64 debug_fat_cache_hits = 0;
 static u64 debug_fat_sector_reads = 0;
 static u64 debug_cluster_read_ns = 0;
+*/
 
 static b8 fat32_read_fat_entry_checked(FAT32_FS* fs, u32 cluster, u32* out_cluster) {
     u32 fat_offset = cluster * 4;
@@ -19,7 +20,7 @@ static b8 fat32_read_fat_entry_checked(FAT32_FS* fs, u32 cluster, u32* out_clust
 
     if (fs->fat_cache_valid &&
         fs->fat_cache_lba == fat_sector) {
-        debug_fat_cache_hits++;
+        // debug_fat_cache_hits++;
     }
 
     if (!fs->fat_cache_valid || fs->fat_cache_lba != fat_sector) {
@@ -28,7 +29,7 @@ static b8 fat32_read_fat_entry_checked(FAT32_FS* fs, u32 cluster, u32* out_clust
             return false;
         }
 
-        ++debug_fat_sector_reads;
+        // ++debug_fat_sector_reads;
         fs->fat_cache_lba = fat_sector;
         fs->fat_cache_valid = true;
     }
@@ -189,7 +190,7 @@ b8 fat32_read_cluster(FAT32_FS* fs, u32 cluster, void* buffer) {
 b8 fat32_read_cluster(FAT32_FS* fs, u32 cluster, void* buffer) {
     u32 lba = fat32_cluster_to_lba(fs, cluster);
 
-    u64 start = ktimer_get_system_time_in_nanoseconds();
+    // u64 start = ktimer_get_system_time_in_nanoseconds();
 
     b8 ok = (b8)fs->dev->read(
         fs->dev->driver_data,
@@ -198,10 +199,10 @@ b8 fat32_read_cluster(FAT32_FS* fs, u32 cluster, void* buffer) {
         buffer
     );
 
-    u64 end = ktimer_get_system_time_in_nanoseconds();
+    // u64 end = ktimer_get_system_time_in_nanoseconds();
 
-    debug_cluster_read_ns += end - start;
-    debug_data_cluster_reads++;
+    // debug_cluster_read_ns += end - start;
+    // debug_data_cluster_reads++;
 
     return ok;
 }

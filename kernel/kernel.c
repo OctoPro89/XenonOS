@@ -124,9 +124,13 @@ void fat32_list_root(FAT32_FS* fs) {
     kfree(buf);
 }
 
+extern u64 hardware_frequency;
+
 void timer_handler(struct regs* r, void* _) {
     ktimer_sched_irq_global_tick();
-    scheduler_wake_sleepers(ktimer_get_system_time_in_nanoseconds());
+    u64 ticks = ktimer_get_high_precision_system_time();
+    u64 ns = (ticks / hardware_frequency) * 1000000000ULL + ((ticks % hardware_frequency) * 1000000000ULL) / hardware_frequency;
+    scheduler_wake_sleepers(/* ktimer_get_system_time_in_nanoseconds() */ns);
 } 
 
 static b8 boot_usb_ready = false;

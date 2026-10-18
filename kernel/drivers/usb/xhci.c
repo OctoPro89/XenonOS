@@ -589,6 +589,7 @@ static b8 xhci_driver_send_control_transfer(xhci_driver_t* driver, xhci_device_t
     xhci_driver_process_events(driver);
     xhci_event_ring_finish_procecssing(&driver->event_ring);
 
+    // TODO: don't busy wait
     while (!device->ctrl_completed && ktimer_get_system_time_in_nanoseconds() < deadline) {
         xhci_driver_process_events(driver);
         xhci_event_ring_finish_procecssing(&driver->event_ring);

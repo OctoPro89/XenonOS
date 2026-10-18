@@ -420,6 +420,8 @@ void task_exit() {
     __builtin_unreachable();
 }
 
+extern u64 hardware_frequency;
+
 void task_sleep_ns(u64 ns) {
     if (ns == 0) {
         task_yield();
@@ -432,7 +434,9 @@ void task_sleep_ns(u64 ns) {
     u64 flags = irq_save();
     xassert(irq_was_enabled(flags), "task_sleep_ns with interrupts disabled");
 
-    u64 now = ktimer_get_system_time_in_nanoseconds();
+    // u64 now = ktimer_get_system_time_in_nanoseconds();
+    u64 ticks = ktimer_get_high_precision_system_time();
+    u64 now = (ticks / hardware_frequency) * 1000000000ULL + ((ticks % hardware_frequency) * 1000000000ULL) / hardware_frequency;
 
     task->wake_deadline_ns = now + ns;
     task->state = TASK_SLEEPING;

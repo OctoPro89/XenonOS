@@ -11,6 +11,7 @@ void graphics_draw_rect(uint32_t x, uint32_t y, uint32_t w, uint32_t h, uint32_t
 void graphics_draw_char(char c, uint32_t x, uint32_t y, uint32_t color);
 void graphics_draw_string(const char* str, uint32_t x, uint32_t y, uint32_t color);
 void graphics_put_pixel(uint32_t x, uint32_t y, uint32_t color);
+void graphics_draw_image_data(uint32_t x, uint32_t y, const uint32_t* data, uint32_t width, uint32_t height, b8 zero_is_transparent);
 
 u32 graphics_get_framebuffer_width();
 u32 graphics_get_framebuffer_height();
