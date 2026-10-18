@@ -7,10 +7,29 @@ extern __force_inline__ ASMCALL u64 __rdtsc__();
 void ktimer_init();
 void ktimer_calibrate_cpu_timer(u64 milliseconds);
 void ktimer_start_cpu_periodic_timer(u8 irq_vector);
+
+// cached time functions (not as precise, faster)
 u64 ktimer_get_high_precision_system_time();
 u64 ktimer_get_system_time_in_nanoseconds();
 u64 ktimer_get_system_time_in_milliseconds();
 u64 ktimer_get_system_time_in_seconds();
+
+/**
+ * @brief Gets absolute time regardless of how often
+ * ktimer_sched_irq_global_tick() runs.
+ * 
+ * @returns nanoseconds
+ */
+u64 ktimer_get_unscheduled_ns();
+
+/**
+ * @brief Gets absolute time regardless of how often
+ * ktimer_sched_irq_global_tick() runs.
+ * 
+ * @returns milliseconds
+ */
+u64 ktimer_get_unscheduled_ms();
+
 void ktimer_sched_irq_global_tick();
 
 void sleep(u32 seconds);

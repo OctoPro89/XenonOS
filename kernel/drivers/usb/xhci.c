@@ -15,8 +15,6 @@
 #include <arch/x86_64/sync/critical_section.h>
 #include <arch/x86_64/sync/sync.h>
 
-// TODO: clear async endpoint state
-
 static const char* usb_speed_strings[7] = {
     "Invalid",
     "Full Speed (12 Mbits/s - USB 2.0)",
@@ -71,6 +69,9 @@ static void xhci_driver_complete_interrupt_in_stream(xhci_driver_t* driver, xhci
 static b8 xhci_driver_queue_interrupt_in_stream_payload(xhci_driver_t* driver, xhci_interrupt_in_stream_state_t* stream, const u8* data, u32 length, u16 mfindex, u64 queued_t_us, u32* seq_out);
 static void xhci_driver_complete_async_request(xhci_driver_t* driver, xhci_device_t* device, xhci_endpoint_t* ep, xhci_endpoint_async_state_t* state, const xhci_transfer_completion_trb_t* event);
 static void xhci_driver_kick_async_request_queue(xhci_driver_t* driver, xhci_device_t* device, xhci_endpoint_t* ep, xhci_endpoint_async_state_t* state, b8 defer_doorbell);
+static void xhci_driver_mark_async_endpoints_for_device_disconnecting(xhci_device_t* device);
+static void xhci_driver_clear_async_endpoints_for_device(xhci_driver_t* driver, xhci_device_t* device, usb_transfer_status_t status);
+static void xhci_driver_clear_async_endpoint_state(xhci_driver_t* driver, xhci_device_t* device, xhci_endpoint_t* ep, usb_transfer_status_t status);
 
 static __hint_inline__ u32 xhci_driver_read_mfindex(const xhci_driver_t* driver) {
     if (!driver->runtime_regs) {
@@ -78,6 +79,14 @@ static __hint_inline__ u32 xhci_driver_read_mfindex(const xhci_driver_t* driver)
     }
 
     return driver->runtime_regs->mf_index & 0x3FFF;
+}
+
+/**
+ * @note A stall, babble, or USB transaction error moves the endpoint to the Halted state (xHCI 4.10.2)
+ * and every later transfer on it waits until software resets the endpoint
+ */
+static __hint_inline__ b8 xhci_driver_completion_halts_endpoint(u32 completion_code) {
+    return completion_code == XHCI_TRB_COMPLETION_CODE_STALL_ERROR || completion_code == XHCI_TRB_COMPLETION_CODE_BABBLE_DETECTED_ERROR || completion_code == XHCI_TRB_COMPLETION_CODE_USB_TRANSACTION_ERROR;
 }
 
 // TODO: check allocations, xhci free memory
@@ -88,16 +97,26 @@ static xhci_command_completion_trb_t* xhci_driver_send_command_trb(xhci_driver_t
     xhci_command_ring_enqueue(&driver->command_ring, cmd_trb);
     xhci_doorbell_manager_ring_command_doorbell(&driver->doorbell_manager);
 
+    // fast path: check if completion already arrived
     xhci_driver_process_events(driver);
     xhci_event_ring_finish_procecssing(&driver->event_ring);
 
-    // wait for the IRQ and let host controller process the command
-    // TODO: this is shitty
-    u64 deadline = ktimer_get_system_time_in_nanoseconds() + (timeout_ms * 1000000ULL);
-    while (!driver->command_irq_completed && ktimer_get_system_time_in_nanoseconds() < deadline) {
-        xhci_driver_process_events(driver);
-        xhci_event_ring_finish_procecssing(&driver->event_ring);
-        msleep(1);
+    if (!driver->command_irq_completed) {
+        const u64 CMD_TIMEOUT_MS = 5000;
+        u64 deadline = ktimer_get_unscheduled_ns() + CMD_TIMEOUT_MS * 1000000ULL;
+
+        while (!driver->command_irq_completed && ktimer_get_unscheduled_ns() < deadline) {
+            // sleep until IRQ handler wakes us up
+            task_block_on(&driver->event_wait_queue);
+            xhci_driver_process_events(driver);
+            xhci_event_ring_finish_procecssing(&driver->event_ring);
+        }
+    }
+
+    if (!driver->command_irq_completed) {
+        printf("[XHCI DRIVER]: Command timed out (type=%u, USBSTS=0x%x)\n", (cmd_trb->control >> XHCI_TRB_TYPE_SHIFT) & 0x3F, driver->op_regs->usbsts);
+        xassert(false, "Command TRB failed!");
+        return NULL;
     }
 
     // ***important assumption*** //
@@ -108,6 +127,7 @@ static xhci_command_completion_trb_t* xhci_driver_send_command_trb(xhci_driver_t
     driver->command_irq_completed = 0;
 
     if (!completion_trb) {
+        printf("[XHCI DRIVER]: Failed to find completion TRB for command!\n");
         xassert(false, "Failed to find completion TRB for command!");
         return NULL;
     }
@@ -167,16 +187,29 @@ static void xhci_driver_teardown_device(xhci_driver_t* driver, u8 port_index) {
 
     u8 slot_id = device->slot;
 
+    // TODO: hub teardown
+
+    xhci_driver_mark_async_endpoints_for_device_disconnecting(device);
+
+    // notify USB core before legacy waiters are woken so class drivers
+    // disconnect state before they can retry transfers
+    usb_core_device_disconnected(driver, device);
+
+    xhci_driver_clear_async_endpoints_for_device(driver, device, USB_TRANSFER_STATUS_DEVICE_GONE);
+
     // wake up any endpoint waiters so they don't hang (e.g., on disconnect)
     for (u8 i = 2; i <= XHCI_DEVICE_MAX_ENDPOINTS; ++i) {
         xhci_endpoint_t* ep = device->endpoints[i];
         if (!ep) { continue; }
+
+        u64 flags = 0;
+        spin_lock_irqsave(&ep->completion_lock, &flags);
+        ep->result.completion_code = XHCI_TRB_COMPLETION_CODE_STOPPED;
+        ep->result.transfer_length = 0;
         ep->completed = true;
+        spin_unlock_irqrestore(&ep->completion_lock, flags);
+        wait_queue_wake_all(&ep->completion_wq);
     }
-
-    // TODO:
-
-    usb_core_device_disconnected(driver, device);
 
     (void)xhci_driver_disable_slot(driver, slot_id); // tolerate failure (device may be gone)
 
@@ -187,7 +220,7 @@ static void xhci_driver_teardown_device(xhci_driver_t* driver, u8 port_index) {
     driver->dcbaa[slot_id] = 0;
     driver->port_devices[port_index] = NULL;
     driver->slot_devices[slot_id] = NULL;
-    kfree(device);
+    usb_core_finalize_disconnected_device(driver, device);
 }
 
 static void xhci_driver_process_events(xhci_driver_t* driver) {
@@ -274,7 +307,7 @@ static void xhci_driver_process_events(xhci_driver_t* driver) {
                     break;
                 }
             }
-            default: { break; } // TODO
+            default: { break; } // unhandled event
         }
     }
 
@@ -305,7 +338,7 @@ static void xhci_driver_process_pending_port_changes(xhci_driver_t* driver) {
 
 static void xhci_driver_irq_handler(struct regs* r, void* user_data) {
     xhci_driver_t* driver = (xhci_driver_t*)user_data;
-    // xhci_driver_process_events(driver); // TODO: this is EXPENSIVE to do in an IRQ handler, add to queue or something, dirty way for now
+    // xhci_driver_process_events(driver); // NOTE: this is EXPENSIVE to do in an IRQ handler, add to queue or something, dirty way for now
     wait_queue_wake_one(&driver->event_wait_queue); // hardware says something happened, wake xHCI worker so it can process the event ring
     xhci_driver_acknowledge_irq(driver, 0);
 }
@@ -589,8 +622,9 @@ static b8 xhci_driver_send_control_transfer(xhci_driver_t* driver, xhci_device_t
     xhci_driver_process_events(driver);
     xhci_event_ring_finish_procecssing(&driver->event_ring);
 
-    // TODO: don't busy wait
     while (!device->ctrl_completed && ktimer_get_system_time_in_nanoseconds() < deadline) {
+        // sleep until IRQ handler wakes us up
+        task_block_on(&driver->event_wait_queue);
         xhci_driver_process_events(driver);
         xhci_event_ring_finish_procecssing(&driver->event_ring);
     }
@@ -602,7 +636,9 @@ static b8 xhci_driver_send_control_transfer(xhci_driver_t* driver, xhci_device_t
     }
 
     if (device->ctrl_result.completion_code != XHCI_TRB_COMPLETION_CODE_SUCCESS) {
-        // TODO: recover stalled endpoint
+        if (xhci_driver_completion_halts_endpoint(device->ctrl_result.completion_code)) {
+            (void)xhci_driver_recover_stalled_control_endpoint(driver, device);
+        }
         mutex_unlock(&device->ctrl_transfer_mutex);
         printf("[XHCI DRIVER]: Control transfer failed: %s", xhci_trb_completion_code_to_string(device->ctrl_result.completion_code));
         return false;
@@ -849,8 +885,11 @@ static void xhci_driver_configure_device(xhci_driver_t* driver, xhci_device_t* d
 }
 
 static void xhci_driver_setup_device(xhci_driver_t* driver, u8 port) {
-    // TODO: check if port already has a device
-
+    // idempotent: skip if the port already has a device
+    if (driver->port_devices[port]) {
+        return;
+    }
+    
     b8 reset_successful = xhci_driver_reset_port(driver, port);
     if (!reset_successful) {
         printf("[XHCI DRIVER]: Failed to reset port %u after connection detection\n", port);
@@ -1461,6 +1500,77 @@ static void xhci_driver_kick_async_request_queue(xhci_driver_t* driver, xhci_dev
         xhci_driver_finish_request(driver, next, USB_TRANSFER_STATUS_IO_ERROR, 0);
     }
 }
+
+static void xhci_driver_mark_async_endpoints_for_device_disconnecting(xhci_device_t* device) {
+    if (!device) {
+        return;
+    }
+
+    for (u8 i = 2; i <= XHCI_DEVICE_MAX_ENDPOINTS; ++i) {
+        xhci_endpoint_t* ep = device->endpoints[i];
+        if (!ep || !ep->async_state) { continue; }
+
+        u64 flags = 0;
+        spin_lock_irqsave(&ep->completion_lock, &flags);
+        ep->async_state->disconnecting = true;
+        spin_unlock_irqrestore(&ep->completion_lock, flags);
+    }
+}
+
+static void xhci_driver_clear_async_endpoints_for_device(xhci_driver_t* driver, xhci_device_t* device, usb_transfer_status_t status) {
+    if (!driver || !device) {
+        return;
+    }
+
+    for (u8 i = 2; i < XHCI_DEVICE_MAX_ENDPOINTS; ++i) {
+        xhci_driver_clear_async_endpoint_state(driver, device, device->endpoints[i], status);
+    }
+}
+
+static void xhci_driver_clear_async_endpoint_state(xhci_driver_t* driver, xhci_device_t* device, xhci_endpoint_t* ep, usb_transfer_status_t status) {
+    if (!driver || !device || !ep || !ep->async_state) {
+        return;
+    }
+
+    xhci_endpoint_async_state_t* state = ep->async_state;
+    usb_transfer_request_t* active = NULL;
+    usb_transfer_request_t* pending = NULL;
+    b8 wake_stream = false;
+
+    u64 flags = 0;
+    spin_lock_irqsave(&ep->completion_lock, &flags);
+    state->disconnecting = true;
+    state->async_enabled = false;
+    active = state->active_request;
+    pending = state->pending_head;
+    state->active_request = NULL;
+    state->pending_head = NULL;
+    state->pending_tail = NULL;
+    state->active_request_cancelled = false;
+    if (state->interrupt_in_stream.active || state->interrupt_in_stream.closing || state->interrupt_in_stream.payloads || state->interrupt_in_stream.payload_storage) {
+        state->interrupt_in_stream.active = false;
+        state->interrupt_in_stream.closing = false;
+        state->interrupt_in_stream.head = 0;
+        state->interrupt_in_stream.count = 0;
+        wake_stream = true;
+    }
+    spin_unlock_irqrestore(&ep->completion_lock, flags);
+
+    if (active) {
+        xhci_driver_finish_request(driver, active, status, 0);
+    }
+
+    while (pending) {
+        usb_transfer_request_t* next = pending->next;
+        xhci_driver_finish_request(driver, pending, status, 0);
+        pending = next;
+    }
+
+    if (wake_stream) {
+        wait_queue_wake_all(&state->interrupt_in_stream.available_wq);
+    }
+}
+
 b8 xhci_driver_init_driver(xhci_driver_t* driver) {
     pci_bar_t* bar = &driver->pci_device->bar[0];
     driver->xhc_base = xhci_map_mmio(bar->base, bar->size);
@@ -2186,6 +2296,8 @@ void xhci_driver_release_disconnected_device(xhci_driver_t* driver, xhci_device_
     kfree(device);
 }
 
+// NOTE: don't use this, run XHCI driver on it's own thread
+/*
 void xhci_driver_run(xhci_driver_t* driver) {
     driver->pending_doorbell_count = 0;
     xhci_driver_process_events(driver);
@@ -2197,6 +2309,7 @@ void xhci_driver_run(xhci_driver_t* driver) {
 
     // TODO: hub crap
 }
+*/
 
 void xhci_driver_task_entry(void* arg) {
     xhci_driver_t* driver = (xhci_driver_t*)arg;
@@ -2220,5 +2333,8 @@ void xhci_driver_task_entry(void* arg) {
         for (u8 i = 0; i < driver->pending_doorbell_count; ++i) {
             xhci_doorbell_manager_ring_doorbell(&driver->doorbell_manager, driver->pending_doorbells[i].slot_id, driver->pending_doorbells[i].target);
         }
+
+        xhci_driver_process_pending_port_changes(driver);
+        // TODO: hubs
     }
 }

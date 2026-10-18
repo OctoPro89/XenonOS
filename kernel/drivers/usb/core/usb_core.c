@@ -203,7 +203,7 @@ void usb_core_device_disconnected(xhci_driver_t* driver, xhci_device_t* xdev) {
     }
 }
 
-void usb_core_device_finalized_disconnected_device(xhci_driver_t* driver, xhci_device_t* xdev) {
+void usb_core_finalize_disconnected_device(xhci_driver_t* driver, xhci_device_t* xdev) {
     if (!xdev) { return; }
 
     usb_device_t* dev = xdev->core_device;
@@ -229,3 +229,5 @@ void usb_core_register_driver(const char* name, usb_core_interface_match_t match
     g_registered_drivers[g_registered_driver_count] = entry;
     ++g_registered_driver_count;
 }
+
+void usb_core_init() {}

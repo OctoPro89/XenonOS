@@ -19,6 +19,7 @@ typedef struct {
 } xhci_command_ring_t;
 
 xhci_command_ring_t xhci_command_ring_init(size_t max_trbs);
+void xhci_command_ring_destroy(xhci_command_ring_t* ring);
 void xhci_command_ring_enqueue(xhci_command_ring_t* cmdring, xhci_trb_t* trb);
 
 typedef struct __packed__  {
@@ -39,6 +40,7 @@ typedef struct {
 } xhci_event_ring_t;
 
 xhci_event_ring_t xhci_event_ring_init(size_t max_trbs, volatile xhci_interrupter_registers_t* interrupter);
+void xhci_event_ring_destroy(xhci_event_ring_t* ring);
 
 static __hint_inline__ b8 xhci_event_ring_has_unprocessed_events(xhci_event_ring_t* er) {
     return er->trbs[er->dequeue_ptr].cycle_bit == er->rcs_bit;
@@ -62,6 +64,7 @@ typedef struct {
 } xhci_transfer_ring_t;
 
 xhci_transfer_ring_t xhci_transfer_ring_init(size_t max_trbs, u8 doorbell_id);
+void xhci_transfer_ring_destroy(xhci_transfer_ring_t* ring);
 
 paddr_t xhci_transfer_ring_get_enqueue_phys(xhci_transfer_ring_t* tr);
 b8 xhci_transfer_ring_can_enqueue(xhci_transfer_ring_t* tr, size_t n);

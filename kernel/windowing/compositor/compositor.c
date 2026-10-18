@@ -33,7 +33,7 @@
 #define COMPOSITOR_MAX_WINDOWS WINDOW_MAX_COUNT
 
 static xenon_surface_t* target;
-static b8 frame_invalidated = true;
+static u32 frame_invalidated = 1;
 
 static i32 cursor_x, cursor_y;
 static u32 previous_buttons;
@@ -298,20 +298,17 @@ b8 compositor_init(xenon_surface_t* surface) {
 
     window_server_set_invalidate_callback(compositor_invalidate);
     clamp_cursor();
-    frame_invalidated = true;
+    __atomic_store_n(&frame_invalidated, 1, __ATOMIC_RELEASE);
 
     return true;
 }
 
-// IMPORTANT NOTE: called from window server
-void compositor_invalidate() { frame_invalidated = true; }
+// IMPORTANT NOTE: called from window server, must use atomics
+void compositor_invalidate() { __atomic_store_n(&frame_invalidated, 1, __ATOMIC_RELEASE); }
 
 void compositor_render() {
-    // TODO: add back
-    // if (!target || !frame_invalidated) { return; }
-
-    // TODO: this can cause buggyness, should probably use an atomic or some shit
-    frame_invalidated = false;
+    // also sets frame_invalidated to false
+    if (!target || !__atomic_exchange_n(&frame_invalidated, 0, __ATOMIC_ACQUIRE)) { return; }
 
     // TODO: remove this sucks
     window_surface_handle_t invalid_surface = WINDOW_SURFACE_INVALID_HANDLE;

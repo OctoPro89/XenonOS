@@ -24,6 +24,13 @@ xhci_command_ring_t xhci_command_ring_init(size_t max_trbs) {
     return cmdring;
 }
 
+void xhci_command_ring_destroy(xhci_command_ring_t* ring) {
+    if (ring->trbs) {
+        xhci_free_memory(ring->trbs);
+        ring->trbs = NULL;
+    }
+}
+
 void xhci_command_ring_enqueue(xhci_command_ring_t* cmdring, xhci_trb_t* trb) {
     // adjust the TRB's cycle bit to the current RCS
     trb->cycle_bit = cmdring->rcs_bit;
@@ -109,6 +116,18 @@ xhci_event_ring_t xhci_event_ring_init(size_t max_trbs, volatile xhci_interrupte
     return er;
 }
 
+void xhci_event_ring_destroy(xhci_event_ring_t* ring) {
+    if (ring->trbs) {
+        xhci_free_memory(ring->trbs);
+        ring->trbs = NULL;
+    }
+
+    if (ring->segment_table) {
+        xhci_free_memory(ring->segment_table);
+        ring->segment_table = NULL;
+    }
+}
+
 void xhci_event_ring_dequeue_events(xhci_event_ring_t* er, xhci_trb_t** trbs, u64* out_dequeued) {
     // process each event trb
     u64 i = 0;
@@ -164,6 +183,13 @@ xhci_transfer_ring_t xhci_transfer_ring_init(size_t max_trbs, u8 doorbell_id) {
     tr.trbs[tr.max_trb_count - 1].control = (XHCI_TRB_TYPE_LINK << XHCI_TRB_TYPE_SHIFT) | XHCI_LINK_TRB_TC_BIT | tr.rcs_bit;
 
     return tr;
+}
+
+void xhci_transfer_ring_destroy(xhci_transfer_ring_t* ring) {
+    if (ring->trbs) {
+        xhci_free_memory(ring->trbs);
+        ring->trbs = NULL;
+    }
 }
 
 paddr_t xhci_transfer_ring_get_enqueue_phys(xhci_transfer_ring_t* tr) {

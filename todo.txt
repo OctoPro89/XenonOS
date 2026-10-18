@@ -1,6 +1,5 @@
 make derefing NULL page fault
 named tasks
-mass storage driver
 printf needs to work atomically
 atomic types
 fat32 driver read cluster and read fat entry ignore block device read return vals. LFNs are converted from UTF-16 to char which can cause problems if non-ASCII
@@ -11,5 +10,3 @@ elf loader could probably be improved
 remove all "PATH_MAX"s and just make one
 processes crash without os going down in flames
 active window keyboard input etc
-
-maybe timer doesn't work quite right on some real hardware systems

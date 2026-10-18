@@ -338,8 +338,6 @@ void DG_SetWindowTitle(const char* title) {
 }
 
 int main(void) {
-    printf("Loaded DOOM elf!\n");
-
     // TODO: args
     char arg[64];
     strncpy(arg, "doom", 64);

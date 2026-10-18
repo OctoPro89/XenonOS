@@ -135,7 +135,6 @@ static void exception_panic(struct regs* r) {
     printf("R13: "); printf("%x", r->r13); printf("\r\n");
     printf("R14: "); printf("%x", r->r14); printf("\r\n");
     printf("R15: "); printf("%x", r->r15); printf("\r\n");
-    
 
     while(1); // halt
 }

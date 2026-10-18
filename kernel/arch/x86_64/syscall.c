@@ -909,11 +909,8 @@ ssize_t sys_chdir(const char *user_path) {
     return 0;
 }
 
-extern u64 hardware_frequency;
 u64 sys_get_time_ms() {
-    u64 ticks = ktimer_get_high_precision_system_time();
-    u64 ms = (ticks / hardware_frequency) * 1000ULL + ((ticks % hardware_frequency) * 1000ULL) / hardware_frequency;
-    return ms;
+    return ktimer_get_unscheduled_ms();
     // return ktimer_get_system_time_in_milliseconds();
 }
 

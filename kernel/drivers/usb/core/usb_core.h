@@ -4,9 +4,10 @@
 #include <drivers/usb/xhci.h>
 
 // TODO: comments
+void usb_core_init();
 void usb_core_device_configured(xhci_driver_t* driver, xhci_device_t* xdev, const usb_device_descriptor_t* desc);
 void usb_core_device_disconnected(xhci_driver_t* driver, xhci_device_t* xdev);
-void usb_core_device_finalized_disconnected_device(xhci_driver_t* driver, xhci_device_t* xdev);
+void usb_core_finalize_disconnected_device(xhci_driver_t* driver, xhci_device_t* xdev);
 
 /**
  * @brief Registers a driver into the USB Core

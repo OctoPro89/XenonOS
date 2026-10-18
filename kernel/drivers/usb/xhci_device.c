@@ -51,7 +51,36 @@ xhci_device_t xhci_device_init(u8 port, u8 slot, u8 speed, b8 use_64byte_ctx) {
 }
 
 void xhci_device_destroy(xhci_device_t* device) {
-    // TODO:
+    // destroy non-control endpoints
+    for (u8 i = 0; i <= XHCI_DEVICE_MAX_ENDPOINTS; ++i) {
+        if (device->endpoints[i]) {
+            xhci_endpoint_destroy(device->endpoints[i]);
+            kfree(device->endpoints[i]);
+            device->endpoints[i] = NULL;
+        }
+    }
+
+    if (device->ctrl_ring) {
+        xhci_transfer_ring_destroy(device->ctrl_ring);
+        kfree(device->ctrl_ring);
+        device->ctrl_ring = NULL;
+    }
+
+    if (device->ctrl_transfer_buffer.virt) {
+        xhci_free_memory((void*)device->ctrl_transfer_buffer.virt); // TODO:
+        device->ctrl_transfer_buffer.virt = 0;
+        device->ctrl_transfer_buffer.phys = 0;
+    }
+
+    if (device->input_ctx.virt) {
+        xhci_free_memory((void*)device->input_ctx.virt); // TODO:
+        device->input_ctx.virt = 0;
+        device->input_ctx.phys = 0;
+    }
+
+    device->output_ctx.virt = 0;
+    device->output_ctx.phys = 0;
+    device->core_device = NULL;
 }
 
 xhci_input_control_context32_t* xhci_device_get_input_ctrl_ctx(xhci_device_t* device) {

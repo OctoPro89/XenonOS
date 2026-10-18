@@ -29,6 +29,8 @@ void ktimer_calibrate_cpu_timer(u64 milliseconds) {
     u64 hpet_start = hpet_read_counter(&hpet_global);
     u64 rdtsc_start = __rdtsc__();
 
+    apic_timer_start(&apic_timer_global);
+
     // Wait 1 second
     while (hpet_read_counter(&hpet_global) - hpet_start < hardware_frequency) {
         asm volatile ("nop");
@@ -39,10 +41,11 @@ void ktimer_calibrate_cpu_timer(u64 milliseconds) {
     uint64_t rdtsc_end = __rdtsc__();
 
     // re-enable timer interrupts
-    lapic_unmask_timer_irq();
+    // lapic_unmask_timer_irq();
 
     // calculate the number of elapsed apic ticks, assuming apic timer counts down from the initial counts
-    apic_ticks_calibrated_frequency = (u64)(long double)((((uint64_t)(0xffffffff - apic_end)) / 1000) * 0.1);/* milliseconds */;
+    // apic_ticks_calibrated_frequency = (u64)(long double)((((uint64_t)(0xffffffff - apic_end)) / 1000) * 0.1);/* milliseconds */;
+    apic_ticks_calibrated_frequency = (((uint64_t)(0xffffffff - apic_end)) / 1000) * milliseconds;
     tsc_ticks_calibrated_frequency = rdtsc_end - rdtsc_start;
     configured_apic_interval_ms = milliseconds;
 }
@@ -68,8 +71,20 @@ u64 ktimer_get_system_time_in_seconds() {
     return global_system_time_ns / 1000000000ULL;
 }
 
+u64 ktimer_get_unscheduled_ns() {
+    u64 ticks = ktimer_get_high_precision_system_time();
+    u64 ns = (ticks / hardware_frequency) * 1000000000ULL + ((ticks % hardware_frequency) * 1000000000ULL) / hardware_frequency;
+    return ns;
+}
+
+u64 ktimer_get_unscheduled_ms() {
+    u64 ticks = ktimer_get_high_precision_system_time();
+    u64 ms = (ticks / hardware_frequency) * 1000ULL + ((ticks % hardware_frequency) * 1000ULL) / hardware_frequency;
+    return ms;
+}
+
 void ktimer_sched_irq_global_tick() {
-    global_system_time_ns += /*configured_apic_interval_ms*/(u64)(long double)(0.1 * 1000000);//ULL);
+    global_system_time_ns += configured_apic_interval_ms * 1000000ULL;
 
     static u64 last_hpet_ticks = 0;
     u64 current_hpet_ticks = ktimer_get_high_precision_system_time();

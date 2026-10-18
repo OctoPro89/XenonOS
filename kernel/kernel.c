@@ -108,7 +108,7 @@ void fat32_list_root(FAT32_FS* fs) {
             FAT32_DIRECTORY_ENTRY* ent = (FAT32_DIRECTORY_ENTRY*)(buf + i);
 
             if (ent->name[0] == 0x00) return;
-        if (ent->name[0] == 0xE5) continue;
+            if (ent->name[0] == 0xE5) continue;
             if (ent->attr == 0x0F) continue; // skip LFN5
 
             char name[12];
@@ -128,9 +128,7 @@ extern u64 hardware_frequency;
 
 void timer_handler(struct regs* r, void* _) {
     ktimer_sched_irq_global_tick();
-    u64 ticks = ktimer_get_high_precision_system_time();
-    u64 ns = (ticks / hardware_frequency) * 1000000000ULL + ((ticks % hardware_frequency) * 1000000000ULL) / hardware_frequency;
-    scheduler_wake_sleepers(/* ktimer_get_system_time_in_nanoseconds() */ns);
+    scheduler_wake_sleepers(/* ktimer_get_system_time_in_nanoseconds() */ktimer_get_unscheduled_ns());
 } 
 
 static b8 boot_usb_ready = false;
@@ -163,7 +161,9 @@ void usb_drive_init(msc_driver_t* drv) {
     msc_driver_set_initialize_notify_callback(NULL); // don't get another callback
 }
 
-void kernel_assign_usb_drivers() {
+void kernel_setup_usb_drivers() {
+    usb_core_init();
+
     usb_core_register_driver("USB-HID DRIVER", USB_MAKE_MATCH(USB_CLASS_HID, USB_MATCH_ANY, USB_MATCH_ANY), hid_driver_factory);
     // registers USB Mass Storage interface using SCSI tranparent commands over Bulk-Only-Transport only
     usb_core_register_driver("USB-MSC DRIVER", USB_MAKE_MATCH(USB_CLASS_MASS_STORAGE, MSC_SUBCLASS_SCSI, MSC_PROTOCOL_BULK_ONLY), msc_driver_factory);
@@ -270,7 +270,7 @@ static void kernel_main(void* arg) {
     if (!input_init()) {
         xassert(false, "");
     }
-    kernel_assign_usb_drivers();
+    kernel_setup_usb_drivers();
 
     printf("XenonOS v0.1\n");
 
@@ -451,6 +451,7 @@ void ASMCALL kernel_main_trampoline(BootInfo* bootInfo) {
     task_t* main_thread = task_create(NULL, kernel_main, NULL);
 
     ktimer_start_cpu_periodic_timer(timer_irq_vector); // get timer interrupts
+    lapic_unmask_timer_irq(); // unmask from calibration
     scheduler_start();
     
     while(1);
