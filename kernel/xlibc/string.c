@@ -1,5 +1,7 @@
 #include <xlibc/string.h>
+#include <xlibc/xstddef.h>
 #include <memory/heap.h>
+#include <limits.h>
 
 void* memset(void* dest, int c, size_t n) {
     u8* d = (u8*)dest;
@@ -178,4 +180,111 @@ char* strdup(const char* s) {
     char* d = kmalloc(l + 1);
     if (!d) { return NULL; }
     return memcpy(d, s, l + 1);
+}
+
+static int strtol_is_space(char c) {
+    return c == ' '  || c == '\t' || c == '\n' || c == '\r' || c == '\f' || c == '\v';
+}
+
+static int strtol_digit(char c) {
+    if (c >= '0' && c <= '9') {
+        return c - '0';
+    }
+
+    if (c >= 'a' && c <= 'z') {
+        return c - 'a' + 10;
+    }
+
+    if (c >= 'A' && c <= 'Z') {
+        return c - 'A' + 10;
+    }
+
+    return -1;
+}
+
+// TODO: errno
+long strtol(const char* nptr, char** endptr, int base) {
+    const char* s = nptr;
+
+    while (strtol_is_space(*s)) {
+        s++;
+    }
+
+    int negative = 0;
+
+    if (*s == '+' || *s == '-') {
+        negative = (*s == '-');
+        s++;
+    }
+
+    // invalid bases, return zero and leave endptr at nptr
+    if (base != 0 && (base < 2 || base > 36)) {
+        if (endptr) {
+            *endptr = (char*)nptr;
+        }
+        return 0;
+    }
+
+    if (base == 0) {
+        if (s[0] == '0' && (s[1] == 'x' || s[1] == 'X') && strtol_digit(s[2]) >= 0 && strtol_digit(s[2]) < 16) {
+            base = 16;
+            s += 2;
+        } else if (s[0] == '0') {
+            base = 8;
+        } else {
+            base = 10;
+        }
+    } else if (base == 16 && s[0] == '0' && (s[1] == 'x' || s[1] == 'X') && strtol_digit(s[2]) >= 0 && strtol_digit(s[2]) < 16) {
+        s += 2;
+    }
+
+    const char* digits_start = s;
+
+    // unsigned magnitude permits LONG_MIN to be parsed safely
+    unsigned long limit = negative ? (unsigned long)LONG_MAX + 1UL : (unsigned long)LONG_MAX;
+
+    unsigned long value = 0;
+    int overflow = 0;
+
+    for (;;) {
+        int digit = strtol_digit(*s);
+
+        if (digit < 0 || digit >= base) {
+            break;
+        }
+
+        if (value > (limit - (unsigned long)digit) / (unsigned long)base) {
+            overflow = 1;
+            value = limit;
+        } else if (!overflow) {
+            value = value * (unsigned long)base + (unsigned long)digit;
+        }
+
+        s++;
+    }
+
+    if (s == digits_start) {
+        if (endptr) {
+            *endptr = (char*)nptr;
+        }
+        return 0;
+    }
+
+    if (endptr) {
+        *endptr = (char*)s;
+    }
+
+    if (overflow) {
+        return negative ? LONG_MIN : LONG_MAX;
+    }
+
+    if (negative) {
+        if (value == (unsigned long)LONG_MAX + 1UL) {
+            return LONG_MIN;
+        }
+
+        return -(long)value;
+    }
+
+    return (long)value;
 }

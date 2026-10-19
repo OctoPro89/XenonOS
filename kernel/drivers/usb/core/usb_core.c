@@ -230,4 +230,4 @@ void usb_core_register_driver(const char* name, usb_core_interface_match_t match
     ++g_registered_driver_count;
 }
 
-void usb_core_init() {}
+void usb_core_init() { }

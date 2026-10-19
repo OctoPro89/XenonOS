@@ -4,6 +4,13 @@
 #include <xlibc/string.h>
 #include <xlibc/xassert.h>
 
+/*
+    *** IMPORTANT NOTE ***
+    The current block header is likely 24 bytes on x86_64 so the returned
+    pointers are probably only 8 byte aligned instead of 16 bytes. This may
+    cause problems with SIMD
+*/
+
 #define HEAP_START 0xFFFFA00000000000ULL
 #define HEAP_END   0xFFFFA00010000000ULL
 
@@ -112,4 +119,60 @@ void kfree(void* ptr)
     }
 
     ptr = NULL;
+}
+
+void* krealloc(void* ptr, size_t size)
+{
+    if (!ptr) {
+        return kmalloc(size);
+    }
+
+    if (!size) {
+        kfree(ptr);
+        return NULL;
+    }
+
+    // match kmalloc's 16-byte allocation-size rounding
+    if (size > SIZE_MAX - 15) {
+        return NULL;
+    }
+
+    size = (size + 15) & ~(size_t)15;
+
+    heap_block* block = (heap_block*)((uint8_t*)ptr - sizeof(heap_block));
+
+    // shrink in place, or retain the existing block if the unused tail would be too small to split
+    if (block->size >= size) {
+        split(block, size);
+        return ptr;
+    }
+
+    // try to grow into the immediately following free block
+    heap_block* next = block->next;
+
+    if (next && next->free && next->size <= SIZE_MAX - sizeof(heap_block) - block->size && block->size + sizeof(heap_block) + next->size >= size) {
+        block->size += sizeof(heap_block) + next->size;
+        block->next = next->next;
+
+        split(block, size);
+        return ptr;
+    }
+
+    // fallback allocate, copy, and free
+    void* new_ptr = kmalloc(size);
+
+    if (!new_ptr) {
+        return NULL;
+    }
+
+    size_t copy_size = block->size;
+
+    if (copy_size > size) {
+        copy_size = size;
+    }
+
+    memcpy(new_ptr, ptr, copy_size);
+    kfree(ptr);
+
+    return new_ptr;
 }

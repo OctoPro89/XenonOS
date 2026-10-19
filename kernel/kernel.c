@@ -406,6 +406,11 @@ static void kernel_main(void* arg) {
         for (;;);
     }
 
+    if (!compositor_set_wallpaper("haimiya.png")) {
+        // TODO:
+        printf("Failed to load wallpaper image!\n");
+    }
+
     // task_t* system_console_task = task_create(NULL, system_console_task_entry, NULL);
 
     printf("Launching usermode shell\n");

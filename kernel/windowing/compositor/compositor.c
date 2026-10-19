@@ -1,4 +1,5 @@
 #include <windowing/compositor/compositor.h>
+#include <windowing/compositor/compositor_image.h>
 #include <windowing/window/window.h>
 #include <windowing/window/internal.h>
 #include <de/mouse_cursor.h>
@@ -7,6 +8,7 @@
 #include <xlibc/string.h>
 #include <memory/heap.h>
 #include <graphics/graphics.h>
+
 #include <arch/x86_64/sync/sync.h>
 #include <kernel.h>
 
@@ -25,12 +27,22 @@
 
 #define CURSOR_W MOUSE_CURSOR_FRAME_WIDTH
 #define CURSOR_H MOUSE_CURSOR_FRAME_HEIGHT
-#define TASKBAR_H 40
 #define TITLEBAR_H 30
 #define WINDOW_RADIUS 10
 #define MOUSE_BUTTON_LEFT (1u << 0)
 
+#define TASKBAR_HEIGHT       52
+#define TASKBAR_BOTTOM       12
+#define TASKBAR_MAX_WIDTH    460
+#define TASKBAR_MIN_WIDTH    180
+#define TASKBAR_RADIUS       15
+#define TASKBAR_BORDER       0xFF465164
+#define TASKBAR_BACKGROUND   0xFF202938
+#define TASKBAR_SEPARATOR    0xFF465164
+
 #define COMPOSITOR_MAX_WINDOWS WINDOW_MAX_COUNT
+
+static compositor_image_t desktop_wallpaper;
 
 static xenon_surface_t* target;
 static u32 frame_invalidated = 1;
@@ -92,6 +104,49 @@ static void round_rect(xenon_surface_t* s, i32 x, i32 y, i32 w, i32 h, i32 radiu
         }
     }
 }
+
+static void render_taskbar(xenon_surface_t* s) {
+    if (!s || s->width < 1 || s->height < TASKBAR_HEIGHT + TASKBAR_BOTTOM) {
+        return;
+    }
+
+    i32 width = TASKBAR_MAX_WIDTH;
+    i32 max_width = (i32)s->width - 24;
+
+    if (width > max_width) {
+        width = max_width;
+    }
+
+    if (width < TASKBAR_MIN_WIDTH) {
+        width = max_width;
+    }
+
+    if (width <= 0) {
+        return;
+    }
+
+    const i32 height = TASKBAR_HEIGHT;
+    const i32 x = ((i32)s->width - width) / 2;
+    const i32 y = (i32)s->height - height - TASKBAR_BOTTOM;
+
+    // outer border and dock body
+    round_rect(s, x, y, width, height, TASKBAR_RADIUS, TASKBAR_BORDER);
+
+    round_rect(s, x + 1, y + 1, width - 2, height - 2, TASKBAR_RADIUS - 1, TASKBAR_BACKGROUND);
+
+    // temporary placeholder until app icons are implemented
+    const i32 center_y = y + (height - 8) / 2;
+
+    xenon_surface_str(s, x + 18, center_y, "Xenon", TEXT_WHITE);
+
+    // subtle divider between the desktop identity and future dock items
+    const i32 separator_x = x + 100;
+
+    xenon_surface_rect(s, (u32)separator_x, (u32)(y + 12), 1, (u32)(height - 24), TASKBAR_SEPARATOR);
+
+    xenon_surface_str(s, separator_x + 14, center_y, "Desktop", TEXT_MUTED);
+}
+
 
 // converts the supported client formats into opaque 0xXXRRGGBB pixels
 static __hint_inline__ u32 convert_pixel(u32 pixel, window_pixel_format_t format) {
@@ -273,16 +328,16 @@ static void render_window( xenon_surface_t* s, const window_snapshot_t* win) {
 }
 
 static void render_desktop_background() {
-    xenon_surface_rect(target, 0, 0, target->width, target->height, DESKTOP_BG);
-    xenon_surface_str(target, 20, 20, "Xenon Desktop", TEXT_WHITE);
-    xenon_surface_str(target, 20, 40, "Development build", TEXT_MUTED);
-
-    if (target->height >= TASKBAR_H) {
-        xenon_surface_rect(target, 0, target->height - TASKBAR_H, target->width, TASKBAR_H, DESKTOP_PANEL);
-        xenon_surface_rect(target, 10, target->height - 31, 22, 22, ACCENT_BLUE);
-        xenon_surface_str(target, 42, target->height - 27, "Xenon", TEXT_WHITE);
-        xenon_surface_str(target, 115, target->height - 27, "xeterm", TEXT_MUTED);
+    if (desktop_wallpaper.pixels) {
+        compositor_image_draw(target, &desktop_wallpaper, 0, 0, 0);
     }
+    else {
+        xenon_surface_rect(target, 0, 0, target->width, target->height, DESKTOP_BG);
+        xenon_surface_str(target, 20, 20, "Xenon Desktop", TEXT_WHITE);
+        xenon_surface_str(target, 20, 40, "Development build", TEXT_MUTED);
+    }
+
+    render_taskbar(target);
 }
 
 b8 compositor_init(xenon_surface_t* surface) {
@@ -533,4 +588,39 @@ static void compositor_mark_surface_invalid(window_surface_handle_t handle) {
     // TODO: probably handle shouldn't be an index into live shit
     // TODO: terrible assumption but don't assume that two windows don't close on the same frame
     __atomic_store_n(&surface_invalid, (u32)handle, __ATOMIC_SEQ_CST);
+}
+
+
+b8 compositor_set_wallpaper(const char* path) {
+    if (!target || !path) {
+        return false;
+    }
+
+    compositor_image_t source = { 0 };
+    compositor_image_t scaled = { 0 };
+
+    if (!compositor_image_load_file(path, &source)) {
+        return false;
+    }
+
+    if (!compositor_image_scale_nearest(&source, target->width, target->height, &scaled)) {
+        compositor_image_destroy(&source);
+        return false;
+    }
+
+    compositor_image_destroy(&source);
+
+    // wallpapers are opaque, avoid per-pixel alpha blending
+    size_t count = (size_t)scaled.width * scaled.height;
+
+    for (size_t i = 0; i < count; ++i) {
+        scaled.pixels[i] |= 0xFF000000;
+    }
+
+    // replace the previous wallpaper only after successful loading
+    compositor_image_destroy(&desktop_wallpaper);
+    desktop_wallpaper = scaled;
+
+    compositor_invalidate();
+    return true;
 }

@@ -1591,12 +1591,14 @@ b8 xhci_driver_init_driver(xhci_driver_t* driver) {
         printf("[XHCI DRIVER]: Failed to allocate memory for driver->port_devices\n");
         return false;
     }
+    memset(driver->port_devices, 0, (size_t)driver->max_ports * sizeof(xhci_device_t*)); // ENSURE THIS IS ZEROED
 
     driver->slot_devices = (xhci_device_t**)kmalloc(256 * sizeof(xhci_device_t*));
     if (!driver->slot_devices) {
         printf("[XHCI DRIVER]: Failed to allocate memory for driver->slot_devices\n");
         return false;
     }
+    memset(driver->slot_devices, 0, 256 * sizeof(xhci_device_t*)); // ENSURE THIS IS ZEROED
 
     // install irq handler
     driver->irq_vector = irq_alloc_vector();

@@ -135,25 +135,25 @@ int main(void) {
 
     printf("Successfully seeked to start of file.\n");
 
-    printf("Allocating 4196020 byte buffer for reading data\n");
-    unsigned char* buffer = malloc(4196020);
+    printf("Allocating byte buffer for reading data\n");
+    unsigned char* buffer = malloc(size);
     if (!buffer) {
         fclose(file);
-        printf("Failed to allocate 4196020 byte buffer!\n");
+        printf("Failed to allocate byte buffer!\n");
         return -1;
     }
 
     printf("Allocation succeeded.\n");
 
-    printf("Reading 4196020 bytes from file.\n");
-    if (fread(buffer, 1, 4196020, file) == 0) {
+    printf("Reading bytes from file.\n");
+    if (fread(buffer, 1, size, file) == 0) {
         free(buffer);
         fclose(file);
-        printf("Failed to read 4196020 bytes from file!\n");
+        printf("Failed to read SIZE bytes from file!\n");
         return -1;
     }
 
-    printf("Successfully read 4196020 bytes from file:\n");
+    printf("Successfully read bytes from file:\n");
 
     for (int i = 0; i < 10; ++i) {
         putc((char)buffer[i]);
