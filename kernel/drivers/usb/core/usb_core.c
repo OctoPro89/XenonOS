@@ -1,17 +1,19 @@
 #include <drivers/usb/core/usb_core.h>
 #include <drivers/usb/core/usb_device.h>
+#include <arch/x86_64/sync/sync.h>
 #include <memory/heap.h>
 #include <xlibc/string.h>
 #include <xlibc/stdio.h>
 #include <task.h>
 
 // tracks which usb_device_t is associated with each xhci_device_t
-// TODO: maybe increase
+// TODO: should increase to 256
 #define MAX_USB_DEVICES 16
 static usb_device_t* g_devices[MAX_USB_DEVICES];
 static IUSBDRIVER* g_bound_drivers[MAX_USB_DEVICES * 16];
 static usb_core_interface_driver_entry_t g_registered_drivers[MAX_USB_DEVICES * 16];
 static u16 g_registered_driver_count = 0;
+static spinlock_t g_usbcore_lock;
 
 typedef struct {
     usb_device_t* dev;
@@ -35,6 +37,50 @@ static b8 match_interface(const usb_core_interface_match_t match, const usb_inte
     return true;
 }
 
+static finalization_ticket_t claim_finalization_if_ready_locked(usb_device_t* dev) {
+    finalization_ticket_t ticket;
+    memset(&ticket, 0, sizeof(finalization_ticket_t));
+    if (!dev || !dev->disconnect_pending || !dev->hcd_teardown_complete || dev->active_driver_count != 0 || dev->finalize_started) {
+        return ticket;
+    }
+
+    dev->finalize_started = true;
+    ticket.dev = dev;
+    ticket.xdev = (xhci_device_t*)dev->hcd_device;
+    ticket.driver = (xhci_driver_t*)dev->hcd;
+    dev->hcd_device = NULL;
+    dev->hcd = NULL;
+
+    return ticket;
+}
+
+static void finish_claimed_finalization(finalization_ticket_t ticket) {
+    if (!ticket.dev) {
+        return;
+    }
+
+    u8 slot_id = ticket.xdev ? ticket.xdev->slot : 0;
+    if (ticket.xdev && ticket.xdev->core_device == ticket.dev) {
+        ticket.xdev->core_device = NULL;
+    }
+
+    u64 flags = 0;
+    spin_lock_irqsave(&g_usbcore_lock, &flags);
+    if (g_devices[slot_id] == ticket.dev) {
+        g_devices[slot_id] = NULL;
+    }
+    spin_unlock_irqrestore(&g_usbcore_lock, flags);
+
+    if (ticket.driver && ticket.xdev) {
+        xhci_driver_release_disconnected_device(ticket.driver, ticket.xdev);
+    }
+
+    kfree(ticket.dev);
+}
+
+// NOTE: this framework could use some work.
+// Currently once drv->run exits it's assumed that
+// the device is done / has been disconnected
 static void class_driver_task_entry(void* arg) {
     IUSBDRIVER* drv = (IUSBDRIVER*)arg;
     u8 slot_id = drv->bound_slot_id;
@@ -42,8 +88,36 @@ static void class_driver_task_entry(void* arg) {
     usb_device_t* dev = drv->bound_device;
     drv->run(drv);
 
-    u16 drv_idx = (u16)(slot_id) * 16 + iface_index;
-    // TODO: threading
+    // TODO: USB MSC run() immediately returns, however
+    // the created driver state needs to still exist.
+    // come up with a better solution.
+    if (strncmp(drv->name, "USB-MSC", 8) != 0) {
+        u16 drv_idx = (u16)(slot_id) * 16 + iface_index;
+        if (!(drv_idx >= MAX_USB_DEVICES * 16)) {
+            u64 flags = 0;
+            spin_lock_irqsave(&g_usbcore_lock, &flags);
+            if (g_bound_drivers[drv_idx] == drv) {
+                g_bound_drivers[drv_idx] = NULL;
+            }
+            spin_unlock_irqrestore(&g_usbcore_lock, flags);
+        }
+
+        finalization_ticket_t ticket;
+        memset(&ticket, 0, sizeof(finalization_ticket_t));
+        if (dev) {
+            u64 flags = 0;
+            spin_lock_irqsave(&dev->lifetime_lock, &flags);
+            if (dev->active_driver_count > 0) {
+                --dev->active_driver_count;
+            }
+            ticket = claim_finalization_if_ready_locked(dev);
+            spin_unlock_irqrestore(&dev->lifetime_lock, flags);
+        }
+
+        kfree(drv);
+
+        finish_claimed_finalization(ticket);
+    }
 
     task_exit();
 }
@@ -110,13 +184,20 @@ static IUSBDRIVER* take_bound_driver_for_device(u16 drv_idx, usb_device_t* dev) 
     }
 
     IUSBDRIVER* drv = NULL;
+    u64 flags = 0;
+    spin_lock_irqsave(&g_usbcore_lock, &flags);
     IUSBDRIVER* current = g_bound_drivers[drv_idx];
     if (current && current->bound_device == dev) {
         drv = current;
         g_bound_drivers[drv_idx] = NULL;
     }
+    spin_unlock_irqrestore(&g_usbcore_lock, flags);
 
     return drv;
+}
+
+void usb_core_init() {
+    spin_lock_init(&g_usbcore_lock);
 }
 
 void usb_core_device_configured(xhci_driver_t* driver, xhci_device_t* xdev, const usb_device_descriptor_t* desc) {
@@ -125,6 +206,11 @@ void usb_core_device_configured(xhci_driver_t* driver, xhci_device_t* xdev, cons
     usb_device_t* dev = build_usb_device(driver, xdev, desc);
     if (!dev) {
         printf("[USB CORE]: Failed to allocate usb_device_t for slot %u\n", slot_id);
+        return;
+    }
+
+    if (slot_id >= MAX_USB_DEVICES) {
+        printf("[USB CORE]: Unsupported slot ID %u\n", slot_id);
         return;
     }
 
@@ -147,6 +233,7 @@ void usb_core_device_configured(xhci_driver_t* driver, xhci_device_t* xdev, cons
                 continue;
             }
 
+            // TODO: create paused task then resume instead of this crap
             task_t* task = task_create(NULL, class_driver_task_entry, (void*)drv);
             if (!task) {
                 xassert(false, "");
@@ -172,7 +259,12 @@ void usb_core_device_configured(xhci_driver_t* driver, xhci_device_t* xdev, cons
                 continue;
             }
 
+            spin_lock_irqsave(&g_usbcore_lock, &flags);
             g_bound_drivers[drv_idx] = drv;
+            spin_unlock_irqrestore(&g_usbcore_lock, flags);
+
+            task->name = drv->name;
+            drv->task = task;
 
             printf("[USB CORE]: Bound %s to interface %u (class=0x%x)\n", drv->name, iface->interface_number, iface->interface_class);
 
@@ -196,6 +288,7 @@ void usb_core_device_disconnected(xhci_driver_t* driver, xhci_device_t* xdev) {
     u8 slot_id = xdev->slot;
     for (u8 i = 0; i < dev->num_interfaces; ++i) {
         u16 drv_idx = (u16)(slot_id) * 16 + i;
+        // TODO: this is a race condition
         IUSBDRIVER* drv = take_bound_driver_for_device(drv_idx, dev);
         if (!drv) { continue; }
 
@@ -217,7 +310,12 @@ void usb_core_finalize_disconnected_device(xhci_driver_t* driver, xhci_device_t*
 
     finalization_ticket_t ticket;
     memset(&ticket, 0, sizeof(finalization_ticket_t));
+    u64 flags = 0;
+    spin_lock_irqsave(&dev->lifetime_lock, &flags);
     dev->hcd_teardown_complete = true;
+    ticket = claim_finalization_if_ready_locked(dev);
+    spin_unlock_irqrestore(&dev->lifetime_lock, flags);
+    finish_claimed_finalization(ticket);
 }
 
 void usb_core_register_driver(const char* name, usb_core_interface_match_t match, usb_core_interface_driver_factory_func factory) {
@@ -229,5 +327,3 @@ void usb_core_register_driver(const char* name, usb_core_interface_match_t match
     g_registered_drivers[g_registered_driver_count] = entry;
     ++g_registered_driver_count;
 }
-
-void usb_core_init() { }

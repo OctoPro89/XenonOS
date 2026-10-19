@@ -7,6 +7,7 @@
 #define XIMAGE_FREE(p) kfree(p)
 #define XIMAGE_ASSERT(x) xassert(x, "IMAGE ERROR")
 
+// TODO:
 // disable TLS variables
 #define XIMAGE_NO_THREAD_LOCALS
 
