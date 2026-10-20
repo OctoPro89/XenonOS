@@ -78,6 +78,9 @@ b8 hid_mouse_handler_init(void* _self, const usb_hid_report_layout_t* layout, co
             return false;
         }
 
+        memset(self->button_fields, 0, button_count * sizeof(usb_hid_field_info_t*));
+        memset(self->prev_buttons, 0, button_count * sizeof(u8));
+
         u16 button_index = 0;
         for (u16 i = 0; i < report->field_count; ++i) {
             const usb_hid_field_info_t* field = &fields[i];
@@ -85,8 +88,6 @@ b8 hid_mouse_handler_init(void* _self, const usb_hid_report_layout_t* layout, co
                 self->button_fields[button_index++] = field;
             }
         }
-
-        memset(self->prev_buttons, 0, button_count * sizeof(u8));
     }
 
     self->button_count = button_count;

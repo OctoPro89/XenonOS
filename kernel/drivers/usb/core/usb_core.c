@@ -129,6 +129,8 @@ static usb_device_t* build_usb_device(xhci_driver_t* hcd, xhci_device_t* xdev, c
         return NULL;
     }
 
+    memset(dev, 0, sizeof(usb_device_t));
+
     dev->vid = desc->idVendor;
     dev->pid = desc->idProduct;
     dev->bcd_usb = desc->bcdUsb;

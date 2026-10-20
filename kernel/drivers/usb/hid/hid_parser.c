@@ -617,6 +617,8 @@ b8 usb_hid_parse_report_descriptor(const u8* descriptor, size_t length, usb_hid_
         return false;
     }
 
+    memset(items, 0, item_count * sizeof(usb_hid_report_item_t));
+
     size_t parsed_count = 0;
     if (!parse_items(descriptor, length, items, item_count, &parsed_count) || parsed_count != item_count) {
         xassert(false, "");
@@ -646,6 +648,8 @@ b8 usb_hid_parse_report_descriptor(const u8* descriptor, size_t length, usb_hid_
         return false;
     }
 
+    memset(out->input_reports, 0, num_reports * sizeof(usb_hid_input_report_info_t));
+
     if (num_fields > 0) {
         out->fields = (usb_hid_field_info_t*)kmalloc(num_fields * sizeof(usb_hid_field_info_t));
         if (!out->fields) {
@@ -653,6 +657,8 @@ b8 usb_hid_parse_report_descriptor(const u8* descriptor, size_t length, usb_hid_
             usb_hid_report_layout_destroy(out);
             return false;
         }
+
+        memset(out->fields, 0, num_fields * sizeof(usb_hid_field_info_t));
     }
 
     out->num_fields = (u16)num_fields;

@@ -117,6 +117,8 @@ static b8 hid_driver_create_handlers(hid_driver_t* self) {
         return false;
     }
 
+    memset(self->bindings, 0, sizeof(hid_handler_binding_t));
+
     u16 slot = 0;
     self->binding_count = 0;
     for (u16 i = 0; i < self->layout.num_input_reports; ++i) {

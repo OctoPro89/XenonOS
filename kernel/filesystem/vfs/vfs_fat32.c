@@ -2,6 +2,7 @@
 #include <xlibc/xstddef.h>
 #include <memory/heap.h>
 #include <filesystem/fat32/fat32.h>
+#include <xlibc/string.h>
 
 // stateless ops table
 VFS_FILESYSTEM fat32_ops = {

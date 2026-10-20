@@ -348,6 +348,7 @@ static void xhci_driver_setup_dcbaa(xhci_driver_t* driver) {
     dma_region_t dcbaa_region = xhci_alloc_memory(dcbaa_size, XHCI_DEVICE_CONTEXT_ALIGNMENT, XHCI_DEVICE_CONTEXT_BOUNDARY);
     driver->dcbaa = (u64*)dcbaa_region.virt;
     driver->dcbaa_virtual_addresses = (u64*)kmalloc((driver->max_device_slots + 1) * sizeof(u64)); // TODO: check this
+    memset(driver->dcbaa_virtual_addresses, 0, (driver->max_device_slots + 1) * sizeof(u64));
 
     /*
         according to spec:
@@ -2071,6 +2072,9 @@ b8 xhci_driver_usb_open_interrupt_in_stream(xhci_driver_t* driver, xhci_device_t
         xassert(false, "");
         return false;
     }
+
+    memset(payloads, 0, (size_t)(STREAM_QUEUE_DEPTH) * sizeof(xhci_interrupt_in_payload_t));
+    memset(storage, 0, (size_t)(STREAM_QUEUE_DEPTH) * payload_length);
 
     b8 rc = true;
     if (state->disconnecting || state->active_request || state->pending_head ||

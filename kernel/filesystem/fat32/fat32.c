@@ -5,42 +5,6 @@
 #include <memory/heap.h>
 #include <kernel.h>
 
-/*
-#include <time/time.h>
-static u64 debug_data_cluster_reads = 0;
-static u64 debug_fat_cache_hits = 0;
-static u64 debug_fat_sector_reads = 0;
-static u64 debug_cluster_read_ns = 0;
-*/
-
-static b8 fat32_read_fat_entry_checked(FAT32_FS* fs, u32 cluster, u32* out_cluster) {
-    u32 fat_offset = cluster * 4;
-    u32 fat_sector = fs->fat_start_lba + (fat_offset / 512);
-    u32 ent_offset = fat_offset % 512;
-
-    if (fs->fat_cache_valid &&
-        fs->fat_cache_lba == fat_sector) {
-        // debug_fat_cache_hits++;
-    }
-
-    if (!fs->fat_cache_valid || fs->fat_cache_lba != fat_sector) {
-        if (!fs->dev->read(fs->dev->driver_data, fat_sector, 1, fs->fat_cache)) {
-            fs->fat_cache_valid = false;
-            return false;
-        }
-
-        // ++debug_fat_sector_reads;
-        fs->fat_cache_lba = fat_sector;
-        fs->fat_cache_valid = true;
-    }
-
-    u32 value;
-    memcpy(&value, &fs->fat_cache[ent_offset], sizeof(value));
-
-    *out_cluster = value & 0x0FFFFFFF;
-    return true;
-}
-
 static b8 fat32_get_cluster_at(FAT32_FILE *f, u32 target_index, u32 *out_cluster) {
     if (!f->cluster_cursor_valid || target_index < f->current_cluster_index) {
         f->current_cluster = f->first_cluster;
@@ -51,7 +15,7 @@ static b8 fat32_get_cluster_at(FAT32_FILE *f, u32 target_index, u32 *out_cluster
     while (f->current_cluster_index < target_index) {
         u32 next_cluster;
 
-        if (!fat32_read_fat_entry_checked(f->fs, f->current_cluster, &next_cluster)) {
+        if (!fat32_read_fat_entry(f->fs, f->current_cluster, &next_cluster)) {
             f->cluster_cursor_valid = false;
             return false;
         }
@@ -95,7 +59,10 @@ static __hint_inline__ void fat32_reset_lfn(FAT32_DIR* dir) {
 }
 
 static b8 fat32_advance_directory_cluster(FAT32_DIR* dir) {
-    u32 next = fat32_read_fat_entry(dir->fs, dir->cluster);
+    u32 next = 0;
+    if (!fat32_read_fat_entry(dir->fs, dir->cluster, &next)) {
+        return false;
+    }
 
     if (fat32_is_eoc(next)) {
         dir->end = 1;
@@ -170,41 +137,36 @@ u32 fat32_cluster_to_lba(FAT32_FS* fs, u32 cluster) {
     return fs->data_start_lba + (cluster - 2) * fs->sectors_per_cluster;
 }
 
-u32 fat32_read_fat_entry(FAT32_FS* fs, u32 cluster) {
-    u32 next_cluster;
+b8 fat32_read_fat_entry(FAT32_FS* fs, u32 cluster, u32* out_cluster) {
+    u32 fat_offset = cluster * 4;
+    u32 fat_sector = fs->fat_start_lba + (fat_offset / 512);
+    u32 ent_offset = fat_offset % 512;
 
-    if (!fat32_read_fat_entry_checked(fs, cluster, &next_cluster)) {
-        return 0; // invalid cluster, must reject
+    if (fs->fat_cache_valid &&
+        fs->fat_cache_lba == fat_sector) {
     }
 
-    return next_cluster;
+    if (!fs->fat_cache_valid || fs->fat_cache_lba != fat_sector) {
+        if (!fs->dev->read(fs->dev->driver_data, fat_sector, 1, fs->fat_cache)) {
+            fs->fat_cache_valid = false;
+            return false;
+        }
+
+        // ++debug_fat_sector_reads;
+        fs->fat_cache_lba = fat_sector;
+        fs->fat_cache_valid = true;
+    }
+
+    u32 value;
+    memcpy(&value, &fs->fat_cache[ent_offset], sizeof(value));
+
+    *out_cluster = value & 0x0FFFFFFF;
+    return true;
 }
 
-/*
 b8 fat32_read_cluster(FAT32_FS* fs, u32 cluster, void* buffer) {
     u32 lba = fat32_cluster_to_lba(fs, cluster);
-    debug_data_cluster_reads++;
     return (b8)fs->dev->read(fs->dev->driver_data, lba, fs->sectors_per_cluster, buffer);
-}
-    */
-b8 fat32_read_cluster(FAT32_FS* fs, u32 cluster, void* buffer) {
-    u32 lba = fat32_cluster_to_lba(fs, cluster);
-
-    // u64 start = ktimer_get_system_time_in_nanoseconds();
-
-    b8 ok = (b8)fs->dev->read(
-        fs->dev->driver_data,
-        lba,
-        fs->sectors_per_cluster,
-        buffer
-    );
-
-    // u64 end = ktimer_get_system_time_in_nanoseconds();
-
-    // debug_cluster_read_ns += end - start;
-    // debug_data_cluster_reads++;
-
-    return ok;
 }
 
 u32 fat32_entry_cluster(FAT32_DIRECTORY_ENTRY* ent) {
@@ -292,6 +254,7 @@ FAT32_FILE* fat32_open(FAT32_FS* fs, const char* path) {
 
     FAT32_FILE* f = kmalloc(sizeof(FAT32_FILE));
     if (!f) { return NULL; }
+    memset(f, 0, sizeof(FAT32_FILE));
     f->fs = fs;
     f->first_cluster = fat32_entry_cluster(&ent);
     f->size = ent.size;
@@ -307,6 +270,7 @@ FAT32_FILE* fat32_open(FAT32_FS* fs, const char* path) {
         kfree(f);
         return NULL;
     }
+    memset(f->cluster_buffer, 0, cluster_size);
 
     f->current_cluster = f->first_cluster;
     f->current_cluster_index = 0;
@@ -408,6 +372,11 @@ int fat32_find_in_dir(FAT32_FS* fs, u32 start_cluster, const char* name, FAT32_D
     u32 cluster_size = fs->sectors_per_cluster * 512;
 
     u8* buf = kmalloc(cluster_size);
+    if (!buf) {
+        return 0;
+    }
+
+    memset(buf, 0, cluster_size);
 
     char lfn_parts[MAX_LFN_PARTS][14]; // each entry max 13 chars + null
     int lfn_count = 0;
@@ -492,7 +461,10 @@ int fat32_find_in_dir(FAT32_FS* fs, u32 start_cluster, const char* name, FAT32_D
             memset(lfn_parts, 0, sizeof(lfn_parts));
         }
 
-        cluster = fat32_read_fat_entry(fs, cluster);
+        if (!fat32_read_fat_entry(fs, cluster, &cluster)) {
+            kfree(buf);
+            return 0;
+        }
     }
 
     kfree(buf);
@@ -614,6 +586,8 @@ FAT32_DIR* fat32_opendir(FAT32_FS* fs, const char* path) {
         kfree(dir);
         return NULL;
     }
+
+    memset(dir->buffer, 0, dir->cluster_size);
 
     if (!fat32_read_cluster(fs, dir->cluster, dir->buffer)) {
         kfree(dir);

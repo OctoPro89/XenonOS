@@ -1,6 +1,7 @@
 #include <drivers/usb/xhci_endpoint.h>
 #include <memory/heap.h>
 #include <memory/paging.h>
+#include <xlibc/string.h>
 
 // Convert USB endpoint descriptor attributes to xHCI endpoint type
 static u8 usb_to_xhci_ep_type(u8 usb_type, b8 is_in) {
@@ -47,6 +48,8 @@ xhci_endpoint_t xhci_endpoint_init(u8 slot_id, const usb_endpoint_descriptor_t* 
         xassert(false, "");
         return endpoint;
     }
+
+    memset(endpoint.async_state, 0, sizeof(xhci_endpoint_async_state_t));
 
     endpoint.async_state->active_request = NULL;
     endpoint.async_state->pending_head = NULL;

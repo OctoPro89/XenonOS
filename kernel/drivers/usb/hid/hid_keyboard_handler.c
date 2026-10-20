@@ -144,6 +144,10 @@ b8 hid_keyboard_handler_init(void* _handler, const usb_hid_report_layout_t* layo
         return false;
     }
 
+    memset(handler->key_fields, 0, key_field_count * sizeof(usb_hid_field_info_t*));
+    memset(handler->prev_keycodes, 0, key_field_count * sizeof(u16));
+    memset(handler->crnt_keycodes, 0, key_field_count * sizeof(u16));
+
     u16 slot = 0;
     for (u16 i = 0; i < report->field_count; ++i) {
         const usb_hid_field_info_t* field = &fields[i];
@@ -159,9 +163,6 @@ b8 hid_keyboard_handler_init(void* _handler, const usb_hid_report_layout_t* layo
             handler->key_fields[slot++] = field;
         }
     }
-
-    memset(handler->prev_keycodes, 0, key_field_count * sizeof(u16));
-    memset(handler->crnt_keycodes, 0, key_field_count * sizeof(u16));
 
     handler->key_field_count = key_field_count;
     handler->report_id = report->report_id;

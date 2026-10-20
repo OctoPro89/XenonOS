@@ -127,7 +127,7 @@ typedef struct {
 
 int fat32_init(FAT32_FS* fs, block_device* dev, u32 part_lba);
 u32 fat32_cluster_to_lba(FAT32_FS* fs, u32 cluster);
-u32 fat32_read_fat_entry(FAT32_FS* fs, u32 cluster);
+b8 fat32_read_fat_entry(FAT32_FS* fs, u32 cluster, u32* out_cluster);
 b8 fat32_read_cluster(FAT32_FS* fs, u32 cluster, void* buffer);
 u32 fat32_entry_cluster(FAT32_DIRECTORY_ENTRY* ent);
 void fat32_format_8_3(u8* name, char* out);

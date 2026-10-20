@@ -36,9 +36,6 @@ void graphics_init(Framebuffer* fb) {
     size_t framebuffer_size = pixels_per_line * current_height * bytes_per_pixel;
     vmm_map_mmio(&kernel_space, FRAMEBUFFER_VIRT_BASE, framebuffer_phys, framebuffer_size);
 
-    // TODO: Fix heap to be able to handle this
-    // backbuffer = (volatile u32*)FRAMBUFFER_VIRT_BASE;
-
     backbuffer = (uint32_t*)kmalloc(framebuffer_size);
     if (!backbuffer) {
         serial_write_str("Failed to allocate backbuffer!");

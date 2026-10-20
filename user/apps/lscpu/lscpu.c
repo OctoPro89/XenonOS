@@ -33,7 +33,7 @@ int main() {
     printf("Model:                 %d\n", info.model);
     printf("Stepping:              %d\n", info.stepping);
     
-    printf("Flags:                ");
+    printf("Flags:                 ");
     if (info.edx_features & CPUID_FEAT_EDX_PAE)   printf("pae ");
     if (info.edx_features & CPUID_FEAT_EDX_APIC)  printf("apic ");
     if (info.edx_features & CPUID_FEAT_EDX_PGE)   printf("pge ");

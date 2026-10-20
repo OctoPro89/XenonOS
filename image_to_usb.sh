@@ -31,6 +31,7 @@ sudo cp build/user/apps/ls /mnt/usb/bin/
 sudo cp build/user/apps/lscpu /mnt/usb/bin/
 sudo cp build/user/apps/heaptest /mnt/usb/bin/
 sudo cp build/user/apps/wintest /mnt/usb/bin/
+sudo cp build/user/apps/fstest /mnt/usb/bin/
 sudo cp hello /mnt/usb/bin/
 
 # Unmount

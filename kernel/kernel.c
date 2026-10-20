@@ -75,6 +75,90 @@ static void fs_test() {
     printf("Filesize: %u bytes\n", size);
 
     u8* buffer = kmalloc(26);
+    memset(buffer, 0, 26);
+    fread(buffer, 10, 1, f);
+    for (int i = 0; i < 10; ++i) { putc((char)buffer[i]); }
+
+    printf("\n");
+
+    fread(buffer, 16, 1, f);
+    for (int i = 0; i < 16; ++i) { putc((char)buffer[i]); }
+
+    fseek(f, -20, SEEK_CUR);
+
+    fread(buffer, 16, 1, f);
+    for (int i = 0; i < 16; ++i) { putc((char)buffer[i]); }
+
+    kfree(buffer);
+    fclose(f);
+
+    printf("\n");
+    printf("\n");
+}
+
+static void ahci_test() {
+    PCI_Device* ahci_dev = pci_find_ahci(); // find AHCI device
+    if (ahci_dev == NULL) {
+        printf("Failed to find AHCI device!\n");
+        while(1);
+    }
+    printf("Found AHCI device\n");
+
+    printf("Initializing AHCI driver\n");
+    printf("AHCI Info:\n");
+
+    ahci_init(ahci_dev);
+    ahci_probe_ports();
+
+    // Pick first port
+    HBA_PORT* port = ahci_get_port(0);
+
+    printf("AHCI driver initialized successfully\n");
+
+    printf("\n");
+
+    block_device boot_disk = {
+        .driver_data = (void*)port,
+        .read = ahci_block_read,
+    };
+
+    printf("Finding FAT32 partition\n");
+
+    u64 part_lba;
+
+    if (!gpt_find_fat32(&boot_disk, &part_lba)) {
+        printf("No FAT32 partition found\n");
+        while (1);
+    }
+
+    printf("Found FAT32 partition successfully\n");
+
+    printf("Initializing FAT32 driver\n");
+
+    FAT32_FS fs;
+    fat32_init(&fs, &boot_disk, part_lba);
+
+    printf("Initialized FAT32 driver successfully\n");
+    printf("\n");
+
+    printf("Setting up Virtual File System\n");
+
+    vfs_mount_root(&fat32_ops, (void*)&fs);
+
+    printf("Set up Virtual File System successfully\n");
+
+    FILE* f = fopen("testlongfilename.txt", "r");
+    if (!f) {
+        printf("Failed to open file!\n");
+        while(1);
+    }
+
+    fseek(f, 0, SEEK_END);
+    u32 size = ftell(f);
+    fseek(f, 0, SEEK_SET);
+    printf("Filesize: %u bytes\n", size);
+
+    u8* buffer = kmalloc(26);
     fread(buffer, 10, 1, f);
     for (int i = 0; i < 10; ++i) { putc((char)buffer[i]); }
 
@@ -100,6 +184,7 @@ void fat32_list_root(FAT32_FS* fs) {
 
     u32 cluster_size = fs->sectors_per_cluster * 512;
     u8* buf = kmalloc(cluster_size);
+    memset(buf, 0, cluster_size);
 
     while (cluster < 0x0FFFFFF8) {
         fat32_read_cluster(fs, cluster, buf);
@@ -118,7 +203,10 @@ void fat32_list_root(FAT32_FS* fs) {
             printf("\tFile: %s Size: %u\n", name, ent->size);
         }
 
-        cluster = fat32_read_fat_entry(fs, cluster);
+        if (!fat32_read_fat_entry(fs, cluster, &cluster)) {
+            kfree(buf);
+            return;
+        }
     }
 
     kfree(buf);
@@ -308,34 +396,6 @@ static void kernel_main(void* arg) {
 
     printf("XHCI Driver initialized successfully\n");
     printf("\n");
-
-    /*
-    PCI_Device* ahci_dev = pci_find_ahci(); // find AHCI device
-    if (ahci_dev == NULL) {
-        printf("Failed to find AHCI device!\n");
-        while(1);
-    }
-
-    printf("Found AHCI device\n");
-
-    printf("Initializing AHCI driver\n");
-    printf("AHCI Info:\n");
-
-    ahci_init(ahci_dev);
-    ahci_probe_ports();
-
-    // Pick first port
-    HBA_PORT* port = ahci_get_port(0);
-
-    printf("AHCI driver initialized successfully\n");
-
-    printf("\n");
-
-    block_device boot_disk = {
-        .driver_data = (void*)port,
-        .read = ahci_block_read,
-    };
-    */
 
     printf("Creating XHCI driver task!\n");
     task_t* xhci_driver_task = task_create(NULL, xhci_driver_task_entry, (void*)&xhci_driver);

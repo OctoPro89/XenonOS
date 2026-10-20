@@ -74,6 +74,8 @@ b8 usb_transfer_open_interrupt_in_stream(usb_device_t* dev, u8 endpoint_addr, u3
         return false;
     }
 
+    memset(stream, 0, sizeof(usb_interrupt_in_stream_t));
+
     stream->dev = dev;
     stream->endpoint_addr = endpoint_addr;
     *out_stream = stream;
