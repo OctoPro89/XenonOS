@@ -4,6 +4,30 @@
 #include <de/surface.h>
 #include <windowing/window/window.h>
 
+// TODO: move to another file
+#define CRASH_PROCESS_NAME_MAX 32
+
+typedef struct {
+    char process_name[CRASH_PROCESS_NAME_MAX];
+    uint64_t pid;
+
+    uint64_t exception;
+    uint64_t error_code;
+    uint64_t rip;
+
+    uint64_t rax, rbx, rcx, rdx;
+    uint64_t rsi, rdi, rbp;
+    uint64_t r8, r9, r10, r11;
+    uint64_t r12, r13, r14, r15;
+    uint64_t rflags;
+} compositor_crash_report_t;
+
+
+/**
+ * @brief Copies a report into the compositor's pending-crash queue, does not draw or allocate memory
+ */
+void compositor_report_crash(const compositor_crash_report_t* report);
+
 b8 compositor_init(xenon_surface_t* target);
 
 /**

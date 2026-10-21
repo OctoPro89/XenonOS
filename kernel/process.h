@@ -8,6 +8,7 @@
 
 #define PROCESS_CWD_MAX 256
 
+struct regs;
 typedef struct process process_t;
 
 typedef u64 pid_t;
@@ -70,3 +71,5 @@ void process_reap(process_t* process);
 int process_setup_stdio(process_t* process, terminal_t* terminal);
 
 void user_process_task_entry(void* arg);
+
+void process_handle_user_exception(struct regs* regs) __attribute__((noreturn));

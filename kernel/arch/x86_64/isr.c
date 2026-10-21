@@ -3,6 +3,9 @@
 #include <graphics/graphics.h> // TODO: remove
 #include <arch/x86_64/irq.h>
 #include <task.h>
+#include <windowing/compositor/compositor.h> // TODO: move to another file
+#include <process.h> // TODO: move to another file
+#include <windowing/window/internal.h>
 
 void serial_write_str(const char*);
 void serial_write_hex(u64);
@@ -139,12 +142,72 @@ static void exception_panic(struct regs* r) {
     while(1); // halt
 }
 
+static void fill_crash_registers(compositor_crash_report_t* report, const struct regs* r) {
+    report->exception = r->int_no;
+    report->error_code = r->err_code;
+    report->rip = r->rip;
+
+    report->rax = r->rax;
+    report->rbx = r->rbx;
+    report->rcx = r->rcx;
+    report->rdx = r->rdx;
+
+    report->rsi = r->rsi;
+    report->rdi = r->rdi;
+    report->rbp = r->rbp;
+
+    report->r8  = r->r8;
+    report->r9  = r->r9;
+    report->r10 = r->r10;
+    report->r11 = r->r11;
+    report->r12 = r->r12;
+    report->r13 = r->r13;
+    report->r14 = r->r14;
+    report->r15 = r->r15;
+
+    report->rflags = r->rflags;
+}
+
 // IMPORTANT: returns the RSP of the context that the assembly stub should restore
 u64 isr_common_handler(struct regs *r)
 {
     // CPU exceptions are never scheduler events
     if (r->int_no < 32) {
+        if ((r->cs & 3) == 3) {
+            compositor_crash_report_t report = {0};
+            process_t* process = process_current();
+
+            fill_crash_registers(&report, r);
+
+            if (process) {
+                report.pid = process->pid;
+
+                const char* name = NULL;
+
+                if (process->window) {
+                    for (u64 i = 0; i < CRASH_PROCESS_NAME_MAX; ++i) {
+                        if (i >= WINDOW_TITLE_MAX) { break; }
+                        report.process_name[i] = process->window->title[i];
+                    }
+                }
+                else {
+                    const char fallback_name[] = "User process";
+                    for (u64 i = 0; i < sizeof(fallback_name); ++i) {
+                        report.process_name[i] = fallback_name[i];
+                    }
+                }
+            }
+
+            compositor_report_crash(&report);
+
+            // exception originated in user mode, record the fault, terminate the process, and schedule another task
+            process_handle_user_exception(r);
+            __builtin_unreachable();
+        }
+
+        // kernel-mode exception, panic
         exception_panic(r);
+        __builtin_unreachable();
     }
 
     // These are kernel software interrupts, not APIC IRQs, do NOT call irq_dispatch() for them, because irq_dispatch() sends an APIC EOI

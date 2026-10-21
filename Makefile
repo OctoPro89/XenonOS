@@ -13,7 +13,7 @@ KERNCFLAGS = -I$(EFI_INCLUDE) -I$(EFI_INCLUDE)/$(EFI_ARCH) \
          -fno-stack-protector -fstrict-aliasing -fno-omit-frame-pointer \
          -fshort-wchar \
          -mno-red-zone \
-         -c -g -O3 -D XENONOS_DEBUG=1 -D QEMU_DEBUG \
+         -c -g -O3 -D XENONOS_DEBUG=1 \
 		 -D XENON_KERNEL
 		 -Werror=return-type \
 		 -Werror=incompatible-pointer-types \
@@ -193,6 +193,22 @@ build/user/apps/fstest: \
 		build/user/libc/libc.a \
 		-o $@
 
+	
+# crashtest
+build/user/apps/crashtest.o: user/apps/crashtest/crashtest.c
+	mkdir -p $(dir $@)
+	clang $(USERCFLAGS) $< -o $@ -I"kernel/" -I"user/"
+
+build/user/apps/crashtest: \
+	build/user/start.o \
+	build/user/apps/crashtest.o \
+	build/user/libc/libc.a
+	ld.lld -T user/user.ld \
+		build/user/apps/crashtest.o \
+		build/user/start.o \
+		build/user/libc/libc.a \
+		-o $@
+
 # doom
 build/user/apps/doomobjs/%.o: user/apps/doom/%.c
 	mkdir -p $(dir $@)
@@ -210,7 +226,9 @@ build/user/apps/doom: \
 		build/user/libwindow/libwindow.a \
 	    -o $@
 
-userapps: build/user/apps/sh build/user/apps/ls build/user/apps/lscpu build/user/apps/doom build/user/apps/wintest build/user/apps/heaptest build/user/apps/fstest
+userapps: build/user/apps/sh build/user/apps/ls build/user/apps/lscpu \
+		  build/user/apps/doom build/user/apps/wintest build/user/apps/heaptest \
+		  build/user/apps/fstest build/user/apps/crashtest
 
 # --- Image ---
 image: build/BOOTX64.EFI build/kernel.elf
@@ -246,6 +264,7 @@ run: image userapps
 	sudo cp build/user/apps/wintest /mnt/bin/
 	sudo cp build/user/apps/heaptest /mnt/bin/
 	sudo cp build/user/apps/fstest /mnt/bin/
+	sudo cp build/user/apps/crashtest /mnt/bin/
 	sudo cp build/user/apps/doom /mnt/bin/
 	sudo cp hello /mnt/bin/
 	sudo umount /mnt
@@ -278,6 +297,7 @@ run: image userapps
 	sudo cp build/user/apps/heaptest /mnt/bin/
 	sudo cp build/user/apps/wintest /mnt/bin/
 	sudo cp build/user/apps/fstest /mnt/bin/
+	sudo cp build/user/apps/crashtest /mnt/bin/
 	sudo cp build/user/apps/doom /mnt/bin/
 	sudo cp hello /mnt/bin/
 	sudo umount /mnt

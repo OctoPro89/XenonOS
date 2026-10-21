@@ -88,6 +88,34 @@ static b8 power_menu_open;
 static b8 power_button_hovered;
 static power_action_t power_action_hovered;
 
+/*
+ * User-process crash reports are copied into a small bounded queue. The
+ * queue is protected by a tiny atomic lock because reporting can originate
+ * outside the compositor's event/render path.
+ */
+#define CRASH_QUEUE_CAPACITY 8
+#define CRASH_DIALOG_WIDTH   560
+#define CRASH_DIALOG_HEIGHT  350
+#define CRASH_DIALOG_BG      0xFF1C2636
+#define CRASH_DIALOG_BORDER  0xFF718096
+#define CRASH_DIALOG_PANEL   0xFF263449
+#define CRASH_DIALOG_BUTTON  0xFF3B82F6
+#define CRASH_DIALOG_BUTTON_HOVER 0xFF60A5FA
+#define CRASH_DIALOG_TEXT    0xFFF8FAFC
+#define CRASH_DIALOG_MUTED   0xFFB8C5D6
+
+static spinlock_t crash_queue_lock;
+static compositor_crash_report_t crash_queue[CRASH_QUEUE_CAPACITY];
+static u32 crash_queue_head;
+static u32 crash_queue_count;
+static compositor_crash_report_t active_crash;
+static b8 crash_dialog_visible;
+static b8 crash_button_hovered;
+
+static __hint_inline__ b8 point_in_rect(i32 px, i32 py, i32 x, i32 y, i32 width, i32 height) {
+    return px >= x && py >= y && px < x + width && py < y + height;
+}
+
 static void compositor_mark_surface_invalid(window_surface_handle_t handle);
 
 static void clamp_cursor() {
@@ -297,6 +325,150 @@ static void render_power_menu(xenon_surface_t* s) {
     xenon_surface_rect(s, (u32)(rcx + 3), (u32)(rcy - 8), 5, 2, TEXT_MUTED);
     xenon_surface_rect(s, (u32)(rcx + 6), (u32)(rcy - 8), 2, 5, TEXT_MUTED);
     xenon_surface_str(s, x + 43, reboot_y + 12, "Reboot", power_action_hovered == POWER_ACTION_REBOOT ? TEXT_WHITE : TEXT_MUTED);
+}
+
+static const char* crash_exception_name(u64 vector) {
+    static const char* const names[32] = {
+        "Divide-by-zero Error", "Debug", "Non-maskable Interrupt", "Breakpoint",
+        "Overflow", "Bound Range Exceeded", "Invalid Opcode", "Device Not Available",
+        "Double Fault", "Coprocessor Segment Overrun", "Invalid TSS", "Segment Not Present",
+        "Stack-Segment Fault", "General Protection Fault", "Page Fault", "Reserved",
+        "x87 Floating-Point Exception", "Alignment Check", "Machine Check",
+        "SIMD Floating-Point Exception", "Virtualization Exception",
+        "Control Protection Exception", "Reserved", "Reserved", "Reserved",
+        "Reserved", "Reserved", "Reserved", "Hypervisor Injection Exception",
+        "VMM Communication Exception", "Security Exception", "Reserved"
+    };
+    return vector < 32 ? names[vector] : "Unknown CPU Exception";
+}
+
+static void crash_draw_hex(xenon_surface_t* s, i32 x, i32 y, const char* label, u64 value) {
+    static const char digits[] = "0123456789ABCDEF";
+    char text[40];
+    u32 n = 0;
+    while (label[n] && n < 8) {
+        text[n] = label[n];
+        ++n;
+    }
+    text[n++] = ' ';
+    text[n++] = '0';
+    text[n++] = 'x';
+    for (i32 i = 15; i >= 0; --i) {
+        text[n++] = digits[(value >> (i * 4)) & 0xF];
+    }
+    text[n] = '\0';
+    xenon_surface_str(s, x, y, text, CRASH_DIALOG_MUTED);
+}
+
+static void get_crash_dialog_rect(i32* x, i32* y, i32* w, i32* h) {
+    *w = target && target->width < CRASH_DIALOG_WIDTH ? (i32)target->width - 16 : CRASH_DIALOG_WIDTH;
+    *h = target && target->height < CRASH_DIALOG_HEIGHT ? (i32)target->height - 16 : CRASH_DIALOG_HEIGHT;
+    if (*w < 220) *w = target ? (i32)target->width : 220;
+    if (*h < 180) *h = target ? (i32)target->height : 180;
+    *x = target ? ((i32)target->width - *w) / 2 : 0;
+    *y = target ? ((i32)target->height - *h) / 2 : 0;
+}
+
+static b8 crash_ok_hit_test(i32 px, i32 py) {
+    i32 x, y, w, h;
+    if (!crash_dialog_visible || !target) return false;
+    get_crash_dialog_rect(&x, &y, &w, &h);
+    return point_in_rect(px, py, x + w - 112, y + h - 42, 88, 28);
+}
+
+static void crash_promote_next_locked(void) {
+    if (crash_queue_count == 0) {
+        crash_dialog_visible = false;
+        crash_button_hovered = false;
+        return;
+    }
+    active_crash = crash_queue[crash_queue_head];
+    crash_queue_head = (crash_queue_head + 1) % CRASH_QUEUE_CAPACITY;
+    --crash_queue_count;
+    crash_dialog_visible = true;
+    crash_button_hovered = false;
+}
+
+void compositor_report_crash(const compositor_crash_report_t* report) {
+    if (!report) return;
+
+    u64 flags = 0;
+    spin_lock_irqsave(&crash_queue_lock, &flags);
+    if (!crash_dialog_visible) {
+        active_crash = *report;
+        active_crash.process_name[CRASH_PROCESS_NAME_MAX - 1] = '\0';
+        crash_dialog_visible = true;
+        crash_button_hovered = false;
+    } else if (crash_queue_count < CRASH_QUEUE_CAPACITY) {
+        u32 tail = (crash_queue_head + crash_queue_count) % CRASH_QUEUE_CAPACITY;
+        crash_queue[tail] = *report;
+        crash_queue[tail].process_name[CRASH_PROCESS_NAME_MAX - 1] = '\0';
+        ++crash_queue_count;
+    }
+    spin_unlock_irqrestore(&crash_queue_lock, flags);
+
+    compositor_invalidate();
+}
+
+static void dismiss_crash_dialog() {
+    u64 flags = 0;
+    spin_lock_irqsave(&crash_queue_lock, &flags);
+    crash_promote_next_locked();
+    spin_unlock_irqrestore(&crash_queue_lock, flags);
+    compositor_invalidate();
+}
+
+static void render_crash_dialog(xenon_surface_t* s) {
+    if (!s || !crash_dialog_visible) return;
+
+    i32 x, y, w, h;
+    get_crash_dialog_rect(&x, &y, &w, &h);
+
+    // dim the desktop
+    xenon_surface_rect(s, 0, 0, s->width, s->height, 0x99000000);
+    round_rect(s, x, y, w, h, 14, CRASH_DIALOG_BORDER);
+    round_rect(s, x + 1, y + 1, w - 2, h - 2, 13, CRASH_DIALOG_BG);
+
+    xenon_surface_str(s, x + 22, y + 18, "Application crashed", 0xFFF87171);
+    xenon_surface_str(s, x + 22, y + 42, active_crash.process_name[0] ? active_crash.process_name : "User process", CRASH_DIALOG_TEXT);
+
+    char pid_text[32] = "PID: ";
+    u32 n = 5;
+    u64 pid = active_crash.pid;
+    char digits[20];
+    u32 digit_count = 0;
+    do {
+        digits[digit_count++] = (char)('0' + (pid % 10));
+        pid /= 10;
+    } while (pid && digit_count < sizeof(digits));
+    while (digit_count && n < sizeof(pid_text) - 1) pid_text[n++] = digits[--digit_count];
+    pid_text[n] = '\0';
+    xenon_surface_str(s, x + 22, y + 62, pid_text, CRASH_DIALOG_MUTED);
+    xenon_surface_str(s, x + 22, y + 82, crash_exception_name(active_crash.exception), CRASH_DIALOG_TEXT);
+
+    crash_draw_hex(s, x + 22,  y + 112, "RIP:", active_crash.rip);
+    crash_draw_hex(s, x + 292, y + 112, "ERR:", active_crash.error_code);
+    crash_draw_hex(s, x + 22,  y + 132, "RAX:", active_crash.rax);
+    crash_draw_hex(s, x + 292, y + 132, "RBX:", active_crash.rbx);
+    crash_draw_hex(s, x + 22,  y + 152, "RCX:", active_crash.rcx);
+    crash_draw_hex(s, x + 292, y + 152, "RDX:", active_crash.rdx);
+    crash_draw_hex(s, x + 22,  y + 172, "RSI:", active_crash.rsi);
+    crash_draw_hex(s, x + 292, y + 172, "RDI:", active_crash.rdi);
+    crash_draw_hex(s, x + 22,  y + 192, "RBP:", active_crash.rbp);
+    crash_draw_hex(s, x + 292, y + 192, "RFLAGS:", active_crash.rflags);
+    crash_draw_hex(s, x + 22,  y + 212, "R8:", active_crash.r8);
+    crash_draw_hex(s, x + 292, y + 212, "R9:", active_crash.r9);
+    crash_draw_hex(s, x + 22,  y + 232, "R10:", active_crash.r10);
+    crash_draw_hex(s, x + 292, y + 232, "R11:", active_crash.r11);
+    crash_draw_hex(s, x + 22,  y + 252, "R12:", active_crash.r12);
+    crash_draw_hex(s, x + 292, y + 252, "R13:", active_crash.r13);
+    crash_draw_hex(s, x + 22,  y + 272, "R14:", active_crash.r14);
+    crash_draw_hex(s, x + 292, y + 272, "R15:", active_crash.r15);
+
+    const i32 button_x = x + w - 112;
+    const i32 button_y = y + h - 42;
+    round_rect(s, button_x, button_y, 88, 28, 7, crash_button_hovered ? CRASH_DIALOG_BUTTON_HOVER : CRASH_DIALOG_BUTTON);
+    xenon_surface_str(s, button_x + 36, button_y + 10, "OK", CRASH_DIALOG_TEXT);
 }
 
 static void render_taskbar(xenon_surface_t* s) {
@@ -535,6 +707,7 @@ b8 compositor_init(xenon_surface_t* surface) {
     dragging_id = -1;
 
     spin_lock_init(&surfaces_lock);
+    spin_lock_init(&crash_queue_lock);
 
     window_server_set_invalidate_callback(compositor_invalidate);
     clamp_cursor();
@@ -574,6 +747,7 @@ void compositor_render() {
     }
 
     render_power_menu(target);
+    render_crash_dialog(target);
 
     xenon_surface_image_data(target, (u32)cursor_x, (u32)cursor_y, mouse_cursor_data, CURSOR_W, CURSOR_H, true);
 
@@ -630,10 +804,6 @@ static void clamp_window_position(i32* x, i32* y, i32 width, i32 height) {
     if (*y < 0) *y = 0;
     if (*x > max_x) *x = max_x;
     if (*y > max_y) *y = max_y;
-}
-
-static __hint_inline__ b8 point_in_rect(i32 px, i32 py, i32 x, i32 y, i32 width, i32 height) {
-    return px >= x && py >= y && px < x + width && py < y + height;
 }
 
 static power_action_t power_menu_hit_test(i32 px, i32 py) {
@@ -722,6 +892,34 @@ static void process_mouse_event(const input_mouse_event_t* evt) {
 
     b8 left_down = (evt->buttons & MOUSE_BUTTON_LEFT) != 0;
     b8 left_was_down = (previous_buttons & MOUSE_BUTTON_LEFT) != 0;
+
+    // crash dialog consumes all mouse input while visible
+    u64 crash_flags = 0;
+    spin_lock_irqsave(&crash_queue_lock, &crash_flags);
+    b8 modal_crash_visible = crash_dialog_visible;
+    spin_unlock_irqrestore(&crash_queue_lock, crash_flags);
+
+    if (modal_crash_visible) {
+        b8 over_ok = crash_ok_hit_test(cursor_x, cursor_y);
+
+        crash_flags = 0;
+        spin_lock_irqsave(&crash_queue_lock, &crash_flags);
+        if (crash_dialog_visible) {
+            crash_button_hovered = over_ok;
+        }
+        spin_unlock_irqrestore(&crash_queue_lock, crash_flags);
+
+        if (left_down && !left_was_down && over_ok) {
+            dismiss_crash_dialog();
+        } else if (cursor_x != old_x || cursor_y != old_y ||
+                evt->buttons != previous_buttons || evt->wheel != 0) {
+            compositor_invalidate();
+        }
+
+        previous_buttons = evt->buttons;
+        dragging_id = -1;
+        return;
+    }
 
     b8 old_button_hovered = power_button_hovered;
     power_button_hovered = power_button_hit_test(cursor_x, cursor_y);

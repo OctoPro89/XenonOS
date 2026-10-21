@@ -7,6 +7,8 @@
 #include <io/terminal_file.h>
 #include <tty/terminal.h>
 #include <arch/x86_64/sync/sync.h>
+#include <arch/x86_64/irq.h>
+#include <arch/x86_64/io.h>
 #include <unistd.h>
 
 static process_t* process_list;
@@ -240,4 +242,40 @@ void user_process_task_entry(void* arg) {
     enter_user_mode(process->entry, user_rsp);
 
     __builtin_unreachable();
+}
+
+void process_handle_user_exception(struct regs* regs) {
+    task_t* task = scheduler_current();
+    process_t* process = task ? task->process : NULL;
+
+    // this handler is only valid for a genuine user-mode exception
+    if (!regs || (regs->cs & 3) != 3 || !process) {
+        serial_write_str("\r\nFATAL: user exception handler entered without a valid user process\r\n");
+
+        for (;;) {
+            asm volatile("cli; hlt");
+        }
+    }
+
+    serial_write_str("\r\nProcess exception\r\n");
+
+    serial_write_str("PID: ");
+    serial_write_hex((u64)process->pid);
+
+    serial_write_str(" Vector: ");
+    serial_write_hex(regs->int_no);
+
+    serial_write_str(" RIP: ");
+    serial_write_hex(regs->rip);
+
+    serial_write_str(" Error: ");
+    serial_write_hex(regs->err_code);
+
+    serial_write_str("\r\n");
+
+    // Publish the process's exit status and wake process_wait(), EFAULT is used here as a generic abnormal-termination status
+    process_exit(process, -EFAULT);
+
+    // never return to the faulting instruction, the scheduler marks this task dead and switches away from it
+    task_exit();
 }
