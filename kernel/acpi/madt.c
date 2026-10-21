@@ -1,6 +1,8 @@
 #include <acpi/madt.h>
 #include <acpi/ioapic.h>
 
+// TODO: may need
+
 lapic_desc_t madt_local_apic;
 
 __PRIVILEGED_CODE void madt_init(acpi_sdt_header_t* acpi_madt_table) {

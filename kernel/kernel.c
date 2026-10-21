@@ -253,11 +253,14 @@ void kernel_setup_usb_drivers() {
     usb_core_init();
 
     usb_core_register_driver("USB-HID DRIVER", USB_MAKE_MATCH(USB_CLASS_HID, USB_MATCH_ANY, USB_MATCH_ANY), hid_driver_factory);
+
+#ifndef QEMU_DEBUG
     // registers USB Mass Storage interface using SCSI tranparent commands over Bulk-Only-Transport only
     usb_core_register_driver("USB-MSC DRIVER", USB_MAKE_MATCH(USB_CLASS_MASS_STORAGE, MSC_SUBCLASS_SCSI, MSC_PROTOCOL_BULK_ONLY), msc_driver_factory);
 
     // make sure to get one callback from boot USB
     msc_driver_set_initialize_notify_callback(usb_drive_init); // don't get another callback
+#endif
 }
 
 u32 system_console_write_len = 0;
@@ -400,6 +403,7 @@ static void kernel_main(void* arg) {
     printf("Creating XHCI driver task!\n");
     task_t* xhci_driver_task = task_create(NULL, xhci_driver_task_entry, (void*)&xhci_driver);
 
+#ifndef QEMU_DEBUG
     // wait until boot USB drive is set up before launching shit
     u64 flags = 0;
     spin_lock_irqsave(&boot_usb_lock, &flags);
@@ -454,6 +458,7 @@ static void kernel_main(void* arg) {
     }
 
     vfs_closedir(dir);
+#endif
 
     // boot USB plugged in and set up
     window_server_init();
@@ -466,15 +471,19 @@ static void kernel_main(void* arg) {
         for (;;);
     }
 
+#ifndef QEMU_DEBUG
     if (!compositor_set_wallpaper("haimiya.png")) {
         // TODO:
         printf("Failed to load wallpaper image!\n");
     }
+#endif
 
     // task_t* system_console_task = task_create(NULL, system_console_task_entry, NULL);
 
+#ifndef QEMU_DEBUG
     printf("Launching usermode shell\n");
     task_t* launch_shell_task = task_create(NULL, launch_shell_task_entry, NULL);
+#endif
 
     for (;;) {
         compositor_process_events();

@@ -4,7 +4,11 @@
 
 #define SERIAL_COM1 0x3F8
 
+extern u8 ASMCALL x64_inb(u16 port);
 extern void ASMCALL x64_outb(u16 port, u8 value);
+
+extern u16 ASMCALL x64_inw(u16 port);
+extern void ASMCALL x64_outw(u16 port, u16 value);
 
 extern u32 ASMCALL x64_inl(u16 port);
 extern void ASMCALL x64_outl(u16 port, u32 value);

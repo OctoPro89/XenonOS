@@ -13,7 +13,7 @@ KERNCFLAGS = -I$(EFI_INCLUDE) -I$(EFI_INCLUDE)/$(EFI_ARCH) \
          -fno-stack-protector -fstrict-aliasing -fno-omit-frame-pointer \
          -fshort-wchar \
          -mno-red-zone \
-         -c -g -O3 -D XENONOS_DEBUG=1 \
+         -c -g -O3 -D XENONOS_DEBUG=1 -D QEMU_DEBUG \
 		 -D XENON_KERNEL
 		 -Werror=return-type \
 		 -Werror=incompatible-pointer-types \

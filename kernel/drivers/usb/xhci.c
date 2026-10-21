@@ -1576,7 +1576,7 @@ b8 xhci_driver_init_driver(xhci_driver_t* driver) {
     pci_bar_t* bar = &driver->pci_device->bar[0];
     driver->xhc_base = xhci_map_mmio(bar->base, bar->size);
 
-    pci_enable_bus_master(driver->pci_device); // TODO: maybe move to before and MMIO
+    pci_enable_bus_master(driver->pci_device);
     xhci_driver_parse_capability_registers(driver);
 
     xhci_driver_parse_extended_capabilities(driver);

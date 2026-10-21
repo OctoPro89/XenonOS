@@ -1,5 +1,7 @@
 #pragma once
+
 #include <xlibc/xstdint.h>
+#include <memory/paging.h>
 #include <kernel.h>
 
 // ACPI RSDP (Root System Description Pointer)
@@ -39,4 +41,11 @@ typedef struct {
     void* data;               // Pointer to the table data
 } acpi_table;
 
+// Generic address strucutre address space IDs
+#define ACPI_GENERIC_ADDRESS_STRUCTURE_SPACE_SYSTEM_MEMORY 0
+#define ACPI_GENERIC_ADDRESS_STRUCTURE_SPACE_SYSTEM_IO 1
+#define ACPI_GENERIC_ADDRESS_STRUCTURE_SPACE_PCI_CONFIG 2
+
 __PRIVILEGED_CODE void acpi_enumerate_acpi_tables(void* rsdp);
+
+__PRIVILEGED_CODE const acpi_sdt_header_t* acpi_map_table(paddr_t phys);

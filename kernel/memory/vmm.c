@@ -19,6 +19,7 @@ static uint8_t vmm_bitmap[BITMAP_SIZE];
 
 vmm_space_t kernel_space;
 
+// TODO: this has a bug with the page flags
 static pte_t* get_table(vmm_space_t* space, pte_t* table, uint16_t index, int create) {
     if (!(table[index] & PAGE_PRESENT)) {
         if (!create) { return NULL; }
@@ -258,7 +259,7 @@ void vmm_map_mmio(vmm_space_t* space, vaddr_t virt, paddr_t phys, size_t size){
     size = (size + 0xFFF) & ~0xFFF;
 
     for (size_t off = 0; off < size; off += 0x1000) {
-        vmm_map(space, virt + off, phys + off, PAGE_WRITABLE | PAGE_CACHE_DISABLE);
+        vmm_map(space, virt + off, phys + off, PAGE_PRESENT | PAGE_WRITABLE | PAGE_CACHE_DISABLE);
     }
 }
 

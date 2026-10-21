@@ -2,7 +2,6 @@
 #include <windowing/compositor/compositor_image.h>
 #include <windowing/window/window.h>
 #include <windowing/window/internal.h>
-#include <de/mouse_cursor.h>
 #include <drivers/input/input.h>
 #include <task.h>
 #include <xlibc/string.h>
@@ -11,6 +10,8 @@
 
 #include <arch/x86_64/sync/sync.h>
 #include <kernel.h>
+
+#include <de/mouse_cursor.h>
 
 // TODO: partial redrawing
 // TODO: use window damaging
@@ -40,6 +41,20 @@
 #define TASKBAR_BACKGROUND   0xFF202938
 #define TASKBAR_SEPARATOR    0xFF465164
 
+#define POWER_BUTTON_SIZE       32
+#define POWER_BUTTON_MARGIN     10
+#define POWER_MENU_WIDTH        176
+#define POWER_MENU_ROW_HEIGHT   34
+#define POWER_MENU_PADDING      6
+#define POWER_MENU_HEIGHT       (POWER_MENU_PADDING * 2 + POWER_MENU_ROW_HEIGHT * 2)
+
+#define POWER_BUTTON_HOVER      0xFF35445C
+#define POWER_MENU_BACKGROUND   0xFF202938
+#define POWER_MENU_BORDER       0xFF465164
+#define POWER_MENU_HOVER        0xFF35445C
+#define POWER_MENU_DANGER       0xFFF87171
+#define POWER_MENU_DANGER_BG    0xFF3B2932
+
 #define COMPOSITOR_MAX_WINDOWS WINDOW_MAX_COUNT
 
 static compositor_image_t desktop_wallpaper;
@@ -61,6 +76,17 @@ spinlock_t surfaces_lock;
 // stable per-frame copies of window meta
 static window_snapshot_t snapshots[COMPOSITOR_MAX_WINDOWS];
 static u32 snapshot_count;
+
+// TODO: structure this better and less of a hack-in
+typedef enum {
+    POWER_ACTION_NONE = 0,
+    POWER_ACTION_SHUTDOWN,
+    POWER_ACTION_REBOOT
+} power_action_t;
+
+static b8 power_menu_open;
+static b8 power_button_hovered;
+static power_action_t power_action_hovered;
 
 static void compositor_mark_surface_invalid(window_surface_handle_t handle);
 
@@ -105,9 +131,9 @@ static void round_rect(xenon_surface_t* s, i32 x, i32 y, i32 w, i32 h, i32 radiu
     }
 }
 
-static void render_taskbar(xenon_surface_t* s) {
-    if (!s || s->width < 1 || s->height < TASKBAR_HEIGHT + TASKBAR_BOTTOM) {
-        return;
+static b8 get_taskbar_rect(const xenon_surface_t* s, i32* out_x, i32* out_y, i32* out_width, i32* out_height) {
+    if (!s || !out_x || !out_y || !out_width || !out_height || s->height < TASKBAR_HEIGHT + TASKBAR_BOTTOM) {
+        return false;
     }
 
     i32 width = TASKBAR_MAX_WIDTH;
@@ -122,12 +148,167 @@ static void render_taskbar(xenon_surface_t* s) {
     }
 
     if (width <= 0) {
+        return false;
+    }
+
+    *out_width = width;
+    *out_height = TASKBAR_HEIGHT;
+    *out_x = ((i32)s->width - width) / 2;
+    *out_y = (i32)s->height - TASKBAR_HEIGHT - TASKBAR_BOTTOM;
+
+    return true;
+}
+
+static void draw_power_icon(xenon_surface_t* s, i32 x, i32 y, i32 size, u32 color) {
+    const i32 cx = x + size / 2;
+    const i32 cy = y + size / 2;
+    const i32 outer = 8;
+    const i32 inner = 5;
+
+    for (i32 py = -outer; py <= outer; ++py) {
+        for (i32 px = -outer; px <= outer; ++px) {
+            const i32 d2 = px * px + py * py;
+
+            if (d2 > outer * outer || d2 < inner * inner) {
+                continue;
+            }
+
+            // open the ring at the top
+            if (py < 0 && px >= -2 && px <= 2) {
+                continue;
+            }
+
+            const i32 sx = cx + px;
+            const i32 sy = cy + py;
+
+            if (sx >= 0 && sy >= 0 && sx < (i32)s->width && sy < (i32)s->height) {
+                xenon_surface_rect(s, (u32)sx, (u32)sy, 1, 1, color);
+            }
+        }
+    }
+
+    round_rect(s, (u32)(cx - 1), (u32)(cy - 10), 3, 10, 2, color);
+}
+
+static b8 get_power_button_rect(i32* out_x, i32* out_y, i32* out_size) {
+    i32 tx, ty, tw, th;
+
+    if (!target || !get_taskbar_rect(target, &tx, &ty, &tw, &th)) {
+        return false;
+    }
+
+    const i32 size = POWER_BUTTON_SIZE;
+
+    *out_x = tx + tw - POWER_BUTTON_MARGIN - size;
+    *out_y = ty + (th - size) / 2;
+    *out_size = size;
+
+    return true;
+}
+
+static void get_power_menu_rect(i32* out_x, i32* out_y) {
+    i32 bx, by, bs;
+
+    if (!get_power_button_rect(&bx, &by, &bs)) {
+        *out_x = 0;
+        *out_y = 0;
         return;
     }
 
-    const i32 height = TASKBAR_HEIGHT;
-    const i32 x = ((i32)s->width - width) / 2;
-    const i32 y = (i32)s->height - height - TASKBAR_BOTTOM;
+    *out_x = bx + bs - POWER_MENU_WIDTH;
+    *out_y = by - POWER_MENU_HEIGHT - 20;
+}
+
+static void render_power_button(xenon_surface_t* s) {
+    i32 x, y, size;
+
+    if (!s || !get_power_button_rect(&x, &y, &size)) {
+        return;
+    }
+
+    const b8 active = power_button_hovered || power_menu_open;
+
+    if (active) {
+        // round_rect(s, x, y, size, size, 10, POWER_BUTTON_BORDER);
+
+        round_rect(s, x + 1, y + 1, size - 2, size - 2, 9, POWER_BUTTON_HOVER);
+    }
+
+    const i32 icon_size = 20;
+    const i32 icon_x = x + (size - icon_size) / 2;
+    const i32 icon_y = y + (size - icon_size) / 2;
+
+    draw_power_icon(s, icon_x, icon_y, icon_size, TEXT_WHITE);
+}
+
+static void render_power_menu(xenon_surface_t* s) {
+    if (!power_menu_open || !s) {
+        return;
+    }
+
+    i32 x, y;
+    get_power_menu_rect(&x, &y);
+
+    round_rect(s, x, y, POWER_MENU_WIDTH, POWER_MENU_HEIGHT, 12, POWER_MENU_BORDER);
+
+    round_rect(s, x + 1, y + 1, POWER_MENU_WIDTH - 2, POWER_MENU_HEIGHT - 2, 11, POWER_MENU_BACKGROUND);
+
+    const i32 row_x = x + POWER_MENU_PADDING;
+    const i32 row_width = POWER_MENU_WIDTH - POWER_MENU_PADDING * 2;
+
+    const i32 shutdown_y = y + POWER_MENU_PADDING;
+    const i32 reboot_y = shutdown_y + POWER_MENU_ROW_HEIGHT;
+
+    if (power_action_hovered == POWER_ACTION_REBOOT) {
+        round_rect(s, row_x, reboot_y, row_width, POWER_MENU_ROW_HEIGHT, 7, POWER_MENU_HOVER);
+    }
+
+    if (power_action_hovered == POWER_ACTION_SHUTDOWN) {
+        round_rect(s, row_x, shutdown_y, row_width, POWER_MENU_ROW_HEIGHT, 7, POWER_MENU_DANGER_BG);
+    }
+
+    const u32 shutdown_icon_color = power_action_hovered == POWER_ACTION_SHUTDOWN ? POWER_MENU_DANGER : TEXT_MUTED;
+
+    const u32 reboot_icon_color = power_action_hovered == POWER_ACTION_REBOOT ? TEXT_WHITE : TEXT_MUTED;
+
+    draw_power_icon(s, x + 15, shutdown_y + 7, 20, shutdown_icon_color);
+    
+    xenon_surface_str(s, x + 43, shutdown_y + 12, "Shut down", power_action_hovered == POWER_ACTION_SHUTDOWN ? TEXT_WHITE : TEXT_MUTED);
+
+    const i32 rcx = x + 25;
+    const i32 rcy = reboot_y + 17;
+
+    for (i32 py = -6; py <= 6; ++py) {
+        for (i32 px = -6; px <= 6; ++px) {
+            const i32 d2 = px * px + py * py;
+
+            if (d2 < 20 || d2 > 36) {
+                continue;
+            }
+
+            if (px > 0 && py < 0) {
+                continue;
+            }
+
+            xenon_surface_rect(s, (u32)(rcx + px), (u32)(rcy + py), 1, 1, power_action_hovered == POWER_ACTION_REBOOT ? TEXT_WHITE : TEXT_MUTED);
+        }
+    }
+
+    xenon_surface_rect(s, (u32)(rcx + 3), (u32)(rcy - 8), 5, 2, TEXT_MUTED);
+    xenon_surface_rect(s, (u32)(rcx + 6), (u32)(rcy - 8), 2, 5, TEXT_MUTED);
+    xenon_surface_str(s, x + 43, reboot_y + 12, "Reboot", power_action_hovered == POWER_ACTION_REBOOT ? TEXT_WHITE : TEXT_MUTED);
+}
+
+static void render_taskbar(xenon_surface_t* s) {
+    if (!s || s->width < 1 || s->height < TASKBAR_HEIGHT + TASKBAR_BOTTOM) {
+        return;
+    }
+
+    i32 x, y, width, height;
+
+    if (!get_taskbar_rect(s, &x, &y, &width, &height)) {
+        return;
+    }
 
     // outer border and dock body
     round_rect(s, x, y, width, height, TASKBAR_RADIUS, TASKBAR_BORDER);
@@ -141,12 +322,16 @@ static void render_taskbar(xenon_surface_t* s) {
 
     // subtle divider between the desktop identity and future dock items
     const i32 separator_x = x + 100;
+    const i32 separator_x2 = x + width - 50;
 
     xenon_surface_rect(s, (u32)separator_x, (u32)(y + 12), 1, (u32)(height - 24), TASKBAR_SEPARATOR);
 
     xenon_surface_str(s, separator_x + 14, center_y, "Desktop", TEXT_MUTED);
-}
 
+    xenon_surface_rect(s, (u32)separator_x2, (u32)(y + 12), 1, (u32)(height - 24), TASKBAR_SEPARATOR);
+
+    render_power_button(s);
+}
 
 // converts the supported client formats into opaque 0xXXRRGGBB pixels
 static __hint_inline__ u32 convert_pixel(u32 pixel, window_pixel_format_t format) {
@@ -388,6 +573,8 @@ void compositor_render() {
         window_clear_damage(snapshots[i].handle);
     }
 
+    render_power_menu(target);
+
     xenon_surface_image_data(target, (u32)cursor_x, (u32)cursor_y, mouse_cursor_data, CURSOR_W, CURSOR_H, true);
 
     xenon_surface_present(target);
@@ -445,6 +632,80 @@ static void clamp_window_position(i32* x, i32* y, i32 width, i32 height) {
     if (*y > max_y) *y = max_y;
 }
 
+static __hint_inline__ b8 point_in_rect(i32 px, i32 py, i32 x, i32 y, i32 width, i32 height) {
+    return px >= x && py >= y && px < x + width && py < y + height;
+}
+
+static power_action_t power_menu_hit_test(i32 px, i32 py) {
+    i32 x, y;
+    get_power_menu_rect(&x, &y);
+
+    if (!point_in_rect(px, py, x, y, POWER_MENU_WIDTH, POWER_MENU_HEIGHT)) {
+        return POWER_ACTION_NONE;
+    }
+
+    const i32 row_y = y + POWER_MENU_PADDING;
+
+    if (point_in_rect(px, py + 0, x + POWER_MENU_PADDING, row_y, POWER_MENU_WIDTH - POWER_MENU_PADDING * 2, POWER_MENU_ROW_HEIGHT)) {
+        return POWER_ACTION_SHUTDOWN;
+    }
+
+    if (point_in_rect(px, py, x + POWER_MENU_PADDING, row_y + POWER_MENU_ROW_HEIGHT, POWER_MENU_WIDTH - POWER_MENU_PADDING * 2, POWER_MENU_ROW_HEIGHT)) {
+        return POWER_ACTION_REBOOT;
+    }
+
+    return POWER_ACTION_NONE;
+}
+
+static b8 power_button_hit_test(i32 px, i32 py) {
+    i32 x, y, size;
+
+    if (!get_power_button_rect(&x, &y, &size)) {
+        return false;
+    }
+
+    return point_in_rect(px, py, x, y, size, size);
+}
+
+#include <power/power.h>
+
+static b8 handle_power_click(i32 px, i32 py) {
+    if (power_menu_open) {
+        power_action_t action = power_menu_hit_test(px, py);
+
+        if (action != POWER_ACTION_NONE) {
+            power_menu_open = false;
+            power_action_hovered = POWER_ACTION_NONE;
+            compositor_invalidate();
+
+            if (action == POWER_ACTION_SHUTDOWN) {
+                shutdown();
+            } else if (action == POWER_ACTION_REBOOT) {
+                reboot();
+            }
+
+            return true;
+        }
+
+        power_menu_open = false;
+        power_action_hovered = POWER_ACTION_NONE;
+
+        if (power_button_hit_test(px, py)) {
+            compositor_invalidate();
+            return true;
+        }
+    }
+
+    if (power_button_hit_test(px, py)) {
+        power_menu_open = true;
+        power_action_hovered = POWER_ACTION_NONE;
+        compositor_invalidate();
+        return true;
+    }
+
+    return false;
+}
+
 static void process_mouse_event(const input_mouse_event_t* evt) {
     i32 old_x = cursor_x;
     i32 old_y = cursor_y;
@@ -462,27 +723,49 @@ static void process_mouse_event(const input_mouse_event_t* evt) {
     b8 left_down = (evt->buttons & MOUSE_BUTTON_LEFT) != 0;
     b8 left_was_down = (previous_buttons & MOUSE_BUTTON_LEFT) != 0;
 
+    b8 old_button_hovered = power_button_hovered;
+    power_button_hovered = power_button_hit_test(cursor_x, cursor_y);
+
+    power_action_t old_action_hovered = power_action_hovered;
+
+    if (power_menu_open) {
+        power_action_hovered =
+            power_menu_hit_test(cursor_x, cursor_y);
+    } else {
+        power_action_hovered = POWER_ACTION_NONE;
+    }
+
+    if (old_button_hovered != power_button_hovered ||
+        old_action_hovered != power_action_hovered) {
+        compositor_invalidate();
+    }
+
     if (left_down && !left_was_down) {
-        snapshot_count = window_server_snapshot(snapshots, COMPOSITOR_MAX_WINDOWS);
+        if (!handle_power_click(cursor_x, cursor_y)) {
+            snapshot_count =
+                window_server_snapshot(snapshots, COMPOSITOR_MAX_WINDOWS);
 
-        i32 index = hit_test(cursor_x, cursor_y);
+            i32 index = hit_test(cursor_x, cursor_y);
 
-        if (index >= 0) {
-            window_snapshot_t* hit = &snapshots[index];
-            i32 wx = (i32)hit->rect.x;
-            i32 wy = (i32)hit->rect.y;
+            if (index >= 0) {
+                window_snapshot_t* hit = &snapshots[index];
+                i32 wx = (i32)hit->rect.x;
+                i32 wy = (i32)hit->rect.y;
 
-            // close button hit test, queue CLOSE_REQUEST don't destroy the window here
-            if (cursor_y >= wy + 9 && cursor_y < wy + 19 && cursor_x >= wx + (i32)hit->rect.width - 23 && cursor_x < wx + (i32)hit->rect.width - 13) {
-                window_server_request_close(hit->handle);
-            } else {
-                window_server_raise(hit->handle);
-                // only the title bar initiates dragging
-                if (cursor_y >= wy &&
-                    cursor_y < wy + TITLEBAR_H) {
-                    dragging_id = (i32)hit->id;
-                    drag_offset_x = cursor_x - wx;
-                    drag_offset_y = cursor_y - wy;
+                if (cursor_y >= wy + 9 &&
+                    cursor_y < wy + 19 &&
+                    cursor_x >= wx + (i32)hit->rect.width - 23 &&
+                    cursor_x < wx + (i32)hit->rect.width - 13) {
+                    window_server_request_close(hit->handle);
+                } else {
+                    window_server_raise(hit->handle);
+
+                    if (cursor_y >= wy &&
+                        cursor_y < wy + TITLEBAR_H) {
+                        dragging_id = (i32)hit->id;
+                        drag_offset_x = cursor_x - wx;
+                        drag_offset_y = cursor_y - wy;
+                    }
                 }
             }
         }
@@ -589,7 +872,6 @@ static void compositor_mark_surface_invalid(window_surface_handle_t handle) {
     // TODO: terrible assumption but don't assume that two windows don't close on the same frame
     __atomic_store_n(&surface_invalid, (u32)handle, __ATOMIC_SEQ_CST);
 }
-
 
 b8 compositor_set_wallpaper(const char* path) {
     if (!target || !path) {
