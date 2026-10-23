@@ -54,3 +54,7 @@ b8 amd_smn_read(u32 address, u32* value) {
     *value = result;
     return 1;
 }
+
+b8 amd_smn_initialized() {
+    return amd_smn_ready;
+}

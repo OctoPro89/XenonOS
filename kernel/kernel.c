@@ -393,8 +393,6 @@ static void kernel_main(void* arg) {
         printf("AMD SMN unavailable\n");
     }
 
-    while(1);
-
     PCI_Device* xhci_dev = pci_find_xhci(); // find XHCI device
     if (xhci_dev == NULL) {
         printf("Failed to find XHCI device!\n");

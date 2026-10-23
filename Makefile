@@ -224,6 +224,22 @@ build/user/apps/de_setvar: \
 		build/user/libc/libc.a \
 		-o $@
 
+# hwmon
+build/user/apps/hwmon.o: user/apps/hwmon/hwmon.c
+	mkdir -p $(dir $@)
+	clang $(USERCFLAGS) $< -o $@ -I"kernel/" -I"user/"
+
+build/user/apps/hwmon: \
+	build/user/start.o \
+	build/user/apps/hwmon.o \
+	build/user/libc/libc.a
+	ld.lld -T user/user.ld \
+		build/user/apps/hwmon.o \
+		build/user/start.o \
+		build/user/libc/libc.a \
+		build/user/libwindow/libwindow.a \
+		-o $@
+
 # doom
 build/user/apps/doomobjs/%.o: user/apps/doom/%.c
 	mkdir -p $(dir $@)
@@ -243,7 +259,8 @@ build/user/apps/doom: \
 
 userapps: build/user/apps/sh build/user/apps/ls build/user/apps/lscpu \
 		  build/user/apps/doom build/user/apps/wintest build/user/apps/heaptest \
-		  build/user/apps/fstest build/user/apps/crashtest build/user/apps/de_setvar
+		  build/user/apps/fstest build/user/apps/crashtest build/user/apps/de_setvar \
+		  build/user/apps/hwmon
 
 # --- Image ---
 image: build/BOOTX64.EFI build/kernel.elf

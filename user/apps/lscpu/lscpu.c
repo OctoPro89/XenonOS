@@ -23,7 +23,7 @@ i32 syscall_get_cpu_temp_c() {
     asm volatile (
         "syscall"
         : "=a"(ret)
-        : "a"(SYS_GET_CPU_TEMP_C)
+        : "a"(SYS_HWMON_GET_CPU_TEMP_MC)
         : "rcx", "r11", "r10", "memory"
     );
 
@@ -63,7 +63,17 @@ int main() {
     if (info.ecx_leaf7 & CPUID_FEAT_ECX_LA57)     printf("la57 ");
     printf("\n");
 
-    // printf("Temperature: %d celcius\n", syscall_get_cpu_temp_c());
+    i32 temp_mc = syscall_get_cpu_temp_c();
+
+    i32 whole = temp_mc / 1000;
+    i32 fraction = temp_mc % 1000;
+
+    // keep the fractional part positive for negative temperatures
+    if (fraction < 0) {
+        fraction = -fraction;
+    }
+
+    printf("Temperature: %d.%d C\n", whole, fraction);
 
     return 0;
 }

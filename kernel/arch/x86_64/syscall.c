@@ -20,6 +20,8 @@
 #include <memory/heap.h>
 #include <memory/paging.h>
 #include <time/time.h>
+#include <drivers/hwmon/amd_smn.h>
+#include <drivers/hwmon/amd_zen_temp.h>
 
 #define REG_EAX 0
 #define REG_EBX 1
@@ -1047,8 +1049,16 @@ ssize_t sys_set_desktop_env_var(desktop_env_var_t var, void* val, size_t length)
     return 0;
 }
 
-i32 sys_get_cpu_temp_c() {
-    return msr_read_cpu_temperature();
+i32 sys_get_cpu_temp_mc() {
+    if (amd_smn_initialized()) {
+        i32 millidegrees_c = 0;
+        if (!amd_zen_read_temperature(&millidegrees_c)) {
+            return -EAGAIN;
+        }
+
+        return millidegrees_c;
+    }
+    return msr_read_cpu_temperature(); // TODO: return in millidegrees celcius
 }
 
 u64 syscall_dispatch(struct syscall_regs* r) {
@@ -1126,8 +1136,8 @@ u64 syscall_dispatch(struct syscall_regs* r) {
         case SYS_SET_DESKTOP_ENV_VAR: {
             return (u64)sys_set_desktop_env_var((desktop_env_var_t)r->rdi, (void*)r->rsi, (size_t)r->rdx);
         }
-        case SYS_GET_CPU_TEMP_C: {
-            return (u64)(i64)sys_get_cpu_temp_c();
+        case SYS_HWMON_GET_CPU_TEMP_MC: {
+            return (u64)(i64)sys_get_cpu_temp_mc();
         }
         default: {
             return (u64)-ENOSYS;
