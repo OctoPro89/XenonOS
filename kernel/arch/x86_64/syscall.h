@@ -35,6 +35,8 @@
 #define SYS_OPEN                        20
 #define SYS_SEEK                        21
 #define SYS_SLEEP_NS                    22
+#define SYS_SET_DESKTOP_ENV_VAR         23
+#define SYS_GET_CPU_TEMP_C              24
 // NOTE: userspace should just use SYS_CLOSE on directories it'll work fine
 
 // NOTE: Must match stack pushes in arch/x86_64/syscall.asm
@@ -55,6 +57,10 @@ struct syscall_regs {
 };
 
 typedef struct window_config window_config_t;
+
+typedef enum {
+    DESKTOP_ENV_VAR_WALLPAPER_IMAGE_PATH = 0
+} desktop_env_var_t;
 
 ssize_t sys_read(fd_t fd, void* buffer, size_t size);
 ssize_t sys_write(fd_t fd, const void* buffer, size_t size);
@@ -78,6 +84,8 @@ ssize_t sys_get_cpu_info(cpu_info_t* info);
 ssize_t sys_open(const char* user_path, int flags);
 ssize_t sys_seek(fd_t fd, ssize_t offset, int whence);
 void sys_sleep_ns(u32 ns);
+ssize_t sys_set_desktop_env_var(desktop_env_var_t var, void* val, size_t length);
+i32 sys_get_cpu_temp_c();
 
 u64 syscall_dispatch(struct syscall_regs* r);
 void syscall_handler(struct syscall_regs* r);

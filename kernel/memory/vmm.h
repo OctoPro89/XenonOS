@@ -30,7 +30,7 @@ vaddr_t vmm_map_physically_contiguous_pages(vmm_space_t* space, paddr_t addr, si
 void vmm_unmap_pages(vmm_space_t* space, vaddr_t virt, size_t pages);
 
 vaddr_t vmm_map_physical_page(vmm_space_t* space, paddr_t phys, uint64_t flags);
-void vmm_map_mmio(vmm_space_t* space, vaddr_t virt, paddr_t phys, size_t size);
+b8 vmm_map_mmio(vmm_space_t* space, vaddr_t virt, paddr_t phys, size_t size);
 
 paddr_t vmm_virt_to_phys(vmm_space_t* space, vaddr_t virt);
 

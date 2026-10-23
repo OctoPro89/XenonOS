@@ -17,6 +17,19 @@ ssize_t syscall_get_cpu_info(cpu_info_t* buf) {
     return (ssize_t)ret;
 }
 
+i32 syscall_get_cpu_temp_c() {
+    long ret;
+
+    asm volatile (
+        "syscall"
+        : "=a"(ret)
+        : "a"(SYS_GET_CPU_TEMP_C)
+        : "rcx", "r11", "r10", "memory"
+    );
+
+    return (i32)ret;
+}
+
 int main() {
     cpu_info_t info;
     
@@ -48,7 +61,9 @@ int main() {
     
     if (info.ecx_leaf7 & CPUID_FEAT_ECX_FSGSBASE) printf("fsgsbase ");
     if (info.ecx_leaf7 & CPUID_FEAT_ECX_LA57)     printf("la57 ");
-    
     printf("\n");
+
+    // printf("Temperature: %d celcius\n", syscall_get_cpu_temp_c());
+
     return 0;
 }

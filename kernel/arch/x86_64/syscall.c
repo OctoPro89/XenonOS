@@ -1,5 +1,6 @@
 #include "syscall.h"
 #include <arch/x86_64/io.h>
+#include <arch/x86_64/msr.h>
 #include <arch/x86_64/cpuid.h>
 #include <arch/x86_64/uapi_cpuid.h>
 #include <io/fd_table.h>
@@ -1027,6 +1028,29 @@ void sys_sleep_ns(u32 ns) {
     task_sleep_ns(ns);
 }
 
+ssize_t sys_set_desktop_env_var(desktop_env_var_t var, void* val, size_t length) {
+    if (!val || length == 0) { return -EINVAL; }
+    
+    switch (var) {
+        case DESKTOP_ENV_VAR_WALLPAPER_IMAGE_PATH: {
+            if (length > USER_PATH_MAX) { return -ENAMETOOLONG; }
+            char path[USER_PATH_MAX];
+            copy_user_path(path, val);
+            compositor_queue_set_wallpaper(path);
+            break;
+        }
+        default: {
+            return -EINVAL;
+        }
+    }
+
+    return 0;
+}
+
+i32 sys_get_cpu_temp_c() {
+    return msr_read_cpu_temperature();
+}
+
 u64 syscall_dispatch(struct syscall_regs* r) {
     switch (r->rax) {
         case SYS_READ: {
@@ -1098,6 +1122,12 @@ u64 syscall_dispatch(struct syscall_regs* r) {
         case SYS_SLEEP_NS: {
             sys_sleep_ns((u32)r->rdi);
             return 0;
+        }
+        case SYS_SET_DESKTOP_ENV_VAR: {
+            return (u64)sys_set_desktop_env_var((desktop_env_var_t)r->rdi, (void*)r->rsi, (size_t)r->rdx);
+        }
+        case SYS_GET_CPU_TEMP_C: {
+            return (u64)(i64)sys_get_cpu_temp_c();
         }
         default: {
             return (u64)-ENOSYS;

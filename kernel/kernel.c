@@ -46,6 +46,9 @@
 #include <windowing/window/window_server.h>
 #include <windowing/compositor/compositor.h>
 
+#include <drivers/hwmon/amd_smn.h>
+#include <drivers/hwmon/amd_zen_temp.h>
+
 #include <memory/paging.h>
 #include <memory/pmm.h>
 #include <memory/vmm.h>
@@ -369,6 +372,29 @@ static void kernel_main(void* arg) {
 
     pci_scan(); // find pci devices
 
+    if (amd_smn_init()) {
+        i32 temp_mc;
+
+        if (amd_zen_read_temperature(&temp_mc)) {
+            i32 whole = temp_mc / 1000;
+            i32 fraction = temp_mc % 1000;
+
+            // keep the fractional part positive for negative temperatures
+            if (fraction < 0) {
+                fraction = -fraction;
+            }
+
+            printf("CPU temperature raw millidegrees: %d\n", temp_mc);
+            printf("CPU temperature: %d.%d C\n", whole, fraction);
+        } else {
+            printf("CPU temperature unavailable\n");
+        }
+    } else {
+        printf("AMD SMN unavailable\n");
+    }
+
+    while(1);
+
     PCI_Device* xhci_dev = pci_find_xhci(); // find XHCI device
     if (xhci_dev == NULL) {
         printf("Failed to find XHCI device!\n");
@@ -492,6 +518,8 @@ static void kernel_main(void* arg) {
         task_yield();
     }
 }
+
+#include <arch/x86_64/msr.h>
 
 void ASMCALL kernel_main_trampoline(BootInfo* bootInfo) {
     x86_64_HAL_init();

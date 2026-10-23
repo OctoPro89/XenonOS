@@ -22,7 +22,6 @@ typedef struct {
     uint64_t rflags;
 } compositor_crash_report_t;
 
-
 /**
  * @brief Copies a report into the compositor's pending-crash queue, does not draw or allocate memory
  */
@@ -52,3 +51,8 @@ void compositor_release_surface(window_surface_handle_t surface_handle);
  * @returns True on success, false otherwise
  */
 b8 compositor_set_wallpaper(const char* path);
+
+/**
+ * @brief Queues a wallpaper change, calling `callback` when done.
+ */
+void compositor_queue_set_wallpaper(const char* path);

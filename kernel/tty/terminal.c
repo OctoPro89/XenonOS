@@ -13,6 +13,11 @@
 #define HID_KEY_LEFT_SHIFT 0xE1
 #define HID_KEY_RIGHT_SHIFT 0xE5
 
+#define XETERM_COLOR_GREEN  0x0023D18B
+#define XETERM_COLOR_TEXT   0x00CCCCCC
+#define XETERM_COLOR_PATH   0x003883D8
+#define XETERM_COLOR_BG     0x00191A1B
+
 static char keycode_to_ascii(u16 usage, b8 shift) {
     switch (usage) {
         /* Letters */
@@ -105,31 +110,214 @@ static char keycode_to_ascii(u16 usage, b8 shift) {
 #define TERMINAL_FONT_WIDTH 8
 #define TERMINAL_FONT_HEIGHT 8
 
+static u32 csi_param(terminal_t* terminal, u32 index, u32 fallback) {
+    if (index >= terminal->csi_param_count ||
+        terminal->csi_params[index] == 0) {
+        return fallback;
+    }
+
+    return terminal->csi_params[index];
+}
+
+static u32 ansi_color(u32 color) {
+    // ANSI order: black, red, green, yellow,
+    // blue, magenta, cyan, white
+    static const u32 colors[8] = {
+        0x00000000,
+        0x00AA0000,
+        0x0000AA00,
+        0x00AA5500,
+        0x000000AA,
+        0x00AA00AA,
+        0x0000AAAA,
+        0x00AAAAAA
+    };
+
+    return colors[color & 7];
+}
+
+static u32 terminal_ansi_to_rgb(u8 index) {
+    static const u32 palette[16] = {
+        0x00000000,
+        0x00AA0000,
+        0x0000AA00,
+        0x00AA5500,
+        0x000000AA,
+        0x00AA00AA,
+        0x0000AAAA,
+        0x00AAAAAA,
+
+        0x00555555,
+        0x00FF5555,
+        0x0055FF55,
+        0x00FFFF55,
+        0x005555FF,
+        0x00FF55FF,
+        0x0055FFFF,
+        0x00FFFFFF 
+    };
+
+    return palette[index & 0x0F];
+}
+
+static void terminal_execute_csi( terminal_t* terminal, char command) {
+    u32 p0 = csi_param(terminal, 0, 0);
+
+    switch (command) {
+        case 'J': {
+            // ESC [ 2 J: erase the entire display
+            if (p0 == 2 || p0 == 3) {
+                terminal_clear(terminal, true);
+            } else if (p0 == 0) {
+                // erase from cursor to end of display
+                for (u32 y = terminal->cursor_y; y < terminal->rows; ++y) {
+                    u32 start = (y == terminal->cursor_y) ? terminal->cursor_x : 0;
+
+                    for (u32 x = start; x < terminal->columns; ++x) {
+                        terminal->cells[y][x].ch = ' ';
+                    }
+                }
+            }
+            break;
+        }
+        case 'H':
+        case 'f': {
+            // ESC [ row ; col H. Coordinates are 1-based
+            u32 row = csi_param(terminal, 0, 1);
+            u32 col = csi_param(terminal, 1, 1);
+
+            if (row > terminal->rows) { row = terminal->rows; }
+            if (col > terminal->columns) { col = terminal->columns; }
+
+            terminal->cursor_y = row - 1;
+            terminal->cursor_x = col - 1;
+            break;
+        }
+        case 'A': {
+            u32 n = csi_param(terminal, 0, 1);
+            terminal->cursor_y = n > terminal->cursor_y ? 0 : terminal->cursor_y - n;
+            break;
+        }
+        case 'B': {
+            u32 n = csi_param(terminal, 0, 1);
+            u32 max_y = terminal->rows - 1;
+            terminal->cursor_y = n > max_y - terminal->cursor_y ? max_y : terminal->cursor_y + n;
+            break;
+        }
+        case 'C': {
+            u32 n = csi_param(terminal, 0, 1);
+            u32 max_x = terminal->columns - 1;
+            terminal->cursor_x = n > max_x - terminal->cursor_x ? max_x : terminal->cursor_x + n;
+            break;
+        }
+        case 'D': {
+            u32 n = csi_param(terminal, 0, 1);
+            terminal->cursor_x = n > terminal->cursor_x ? 0 : terminal->cursor_x - n;
+            break;
+        }
+        case 'm': {
+            for (u32 i = 0; i < terminal->csi_param_count; ++i) {
+                u32 p = terminal->csi_params[i];
+
+                if (p == 0) {
+                    terminal->foreground = 0x00AAAAAA;
+                    terminal->background = 0x00000000;
+                } else if (p >= 30 && p <= 37) {
+                    terminal->foreground = terminal_ansi_to_rgb((u8)(p - 30));
+                } else if (p >= 40 && p <= 47) {
+                    terminal->background = terminal_ansi_to_rgb((u8)(p - 40));
+                } else if (p >= 90 && p <= 97) {
+                    terminal->foreground = terminal_ansi_to_rgb((u8)(p - 90 + 8));
+                } else if (p >= 100 && p <= 107) {
+                    terminal->background = terminal_ansi_to_rgb((u8)(p - 100 + 8));
+                } else if (p == 39) {
+                    terminal->foreground = 0x00AAAAAA;
+                } else if (p == 49) {
+                    terminal->background = 0x00000000;
+                } else if ((p == 38 || p == 48) && i + 1 < terminal->csi_param_count) {
+                    u32 mode = terminal->csi_params[i + 1];
+
+                    if (mode == 2 && i + 4 < terminal->csi_param_count) {
+                        u32 r = terminal->csi_params[i + 2];
+                        u32 g = terminal->csi_params[i + 3];
+                        u32 b = terminal->csi_params[i + 4];
+
+                        if (r > 255) r = 255;
+                        if (g > 255) g = 255;
+                        if (b > 255) b = 255;
+
+                        u32 rgb = (r << 16) | (g << 8) | b;
+
+                        if (p == 38) {
+                            terminal->foreground = rgb;
+                        } else {
+                            terminal->background = rgb;
+                        }
+
+                        i += 4;
+                    } else if (mode == 5 && i + 2 < terminal->csi_param_count) {
+                        u32 index = terminal->csi_params[i + 2];
+
+                        if (p == 38) {
+                            terminal->foreground = terminal_ansi_to_rgb((u8)index);
+                        } else {
+                            terminal->background = terminal_ansi_to_rgb((u8)index);
+                        }
+
+                        i += 2;
+                    }
+                }
+            }
+            break;
+        }
+        default: {
+            // unsupported
+            break;
+        }
+    }
+}
+
 static void terminal_render_grid(terminal_t* terminal, const window_surface_t* surface) {
     if (!terminal || !surface || !surface->pixels) {
         return;
     }
 
+    window_surface_render_rect(surface, 0, 0, surface->width, surface->height, XETERM_COLOR_BG);
+
     for (u32 row = 0; row < terminal->rows; ++row) {
         for (u32 col = 0; col < terminal->columns; ++col) {
-            char c = terminal->cells[row][col].ch;
-            if (c == ' ') { continue; }
-            window_surface_render_char(surface, c, (i32)(col * TERMINAL_FONT_WIDTH), (i32)(row * TERMINAL_FONT_HEIGHT), terminal->foreground/* TODO: , terminal->background */);
+            terminal_cell_t* cell = &terminal->cells[row][col];
+
+            i32 x = (i32)(col * TERMINAL_FONT_WIDTH);
+            i32 y = (i32)(row * TERMINAL_FONT_HEIGHT);
+
+            u32 fg = cell->fg_rgb;
+            u32 bg = cell->bg_rgb;
+
+            window_surface_render_rect(surface, x, y, TERMINAL_FONT_WIDTH, TERMINAL_FONT_HEIGHT, bg);
+
+            if (cell->ch != ' ') {
+                window_surface_render_char(surface, cell->ch, x, y, fg);
+            }
         }
     }
 
-    // render cursor
-    u32 x = terminal->cursor_x * TERMINAL_FONT_WIDTH;
-    u32 y = terminal->cursor_y * TERMINAL_FONT_HEIGHT;
+    if (terminal->cursor_x < terminal->columns && terminal->cursor_y < terminal->rows) {
 
-    if (x + TERMINAL_FONT_WIDTH <= surface->width && y + TERMINAL_FONT_HEIGHT <= surface->height) {
+        u32 x = terminal->cursor_x * TERMINAL_FONT_WIDTH;
+        u32 y = terminal->cursor_y * TERMINAL_FONT_HEIGHT;
 
-        window_surface_render_rect(surface, (i32)x, (i32)y, TERMINAL_FONT_WIDTH, TERMINAL_FONT_HEIGHT, terminal->foreground);
+        if (x + TERMINAL_FONT_WIDTH <= surface->width && y + TERMINAL_FONT_HEIGHT <= surface->height) {
+            terminal_cell_t* cell = &terminal->cells[terminal->cursor_y][terminal->cursor_x];
 
-        char c = terminal->cells[terminal->cursor_y][terminal->cursor_x].ch;
+            u32 fg = cell->fg_rgb;
+            u32 bg = cell->bg_rgb;
 
-        if (c != ' ') {
-            window_surface_render_char(surface, c, (i32)x, (i32)y, terminal->background);
+            window_surface_render_rect(surface, (i32)x, (i32)y, TERMINAL_FONT_WIDTH, TERMINAL_FONT_HEIGHT, fg);
+
+            if (cell->ch != ' ') {
+                window_surface_render_char(surface, cell->ch, (i32)x, (i32)y, bg);
+            }
         }
     }
 }
@@ -154,7 +342,7 @@ static void terminal_scroll_up(terminal_t* terminal) {
     terminal->cursor_y = last_row;
 
     if (terminal->window && terminal->window->surface->pixels) {
-        window_surface_render_rect(terminal->window->surface, 0, 0, terminal->window->surface->width, terminal->window->surface->height, 0xFF101722);
+        window_surface_render_rect(terminal->window->surface, 0, 0, terminal->window->surface->width, terminal->window->surface->height, terminal->background);
         terminal_render_grid(terminal, terminal->window->surface);
 
         // damage coordinates are local to the window not desktop
@@ -173,40 +361,46 @@ static void terminal_advance_line(terminal_t* terminal) {
 }
 
 static void terminal_process_char(terminal_t* terminal, char c) {
-    serial_write_char(c);
     switch (c) {
-        case '\n':
+        case '\n': {
             terminal_advance_line(terminal);
             break;
-
-        case '\r':
+        }
+        case '\r': {
             terminal->cursor_x = 0;
             break;
-
-        case '\b':
+        }
+        case '\b': {
             if (terminal->edit_length > 0 &&
                 terminal->cursor_x > 0) {
                 terminal->cursor_x--;
 
-                terminal->cells[terminal->cursor_y]
-                            [terminal->cursor_x].ch = ' ';
+                terminal_cell_t* cell = &terminal->cells[terminal->cursor_y][terminal->cursor_x];
+
+                cell->ch = c;
+                cell->fg_rgb = terminal->foreground;
+                cell->bg_rgb = terminal->background;
             }
             break;
-
-        case '\t':
+        }
+        case '\t': {
             terminal->cursor_x = (terminal->cursor_x + 4) & ~3u;
 
             if (terminal->cursor_x >= terminal->columns) {
                 terminal_advance_line(terminal);
             }
             break;
-        default:
+        }
+        default: {
             if ((u8)c >= 0x20) {
                 if (terminal->cursor_x < terminal->columns &&
                     terminal->cursor_y < terminal->rows) {
 
-                    terminal->cells[terminal->cursor_y]
-                                [terminal->cursor_x].ch = c;
+                    terminal_cell_t* cell = &terminal->cells[terminal->cursor_y][terminal->cursor_x];
+
+                    cell->ch = c;
+                    cell->fg_rgb = terminal->foreground;
+                    cell->bg_rgb = terminal->background;
                 }
 
                 terminal->cursor_x++;
@@ -216,6 +410,71 @@ static void terminal_process_char(terminal_t* terminal, char c) {
                 }
             }
             break;
+        }
+    }
+}
+
+static void terminal_feed_char(terminal_t* terminal, char c) {
+    switch (terminal->parse_state) {
+        case TERMINAL_PARSE_NORMAL:
+            if ((u8)c == 0x1B) {
+                terminal->parse_state = TERMINAL_PARSE_ESC;
+                return;
+            }
+
+            terminal_process_char(terminal, c);
+            return;
+
+        case TERMINAL_PARSE_ESC:
+            if (c == '[') {
+                terminal->parse_state = TERMINAL_PARSE_CSI;
+                terminal->csi_param_count = 1;
+                terminal->csi_have_value = false;
+
+                for (u32 i = 0; i < 8; ++i) {
+                    terminal->csi_params[i] = 0;
+                }
+            } else {
+                terminal->parse_state = TERMINAL_PARSE_NORMAL;
+            }
+            return;
+
+        case TERMINAL_PARSE_CSI:
+            if (c >= '0' && c <= '9') {
+                u32 i = terminal->csi_param_count - 1;
+                u32 value = terminal->csi_params[i];
+
+                if (value < 10000) {
+                    value = value * 10 + (u32)(c - '0');
+                    if (value > 10000) {
+                        value = 10000;
+                    }
+                    terminal->csi_params[i] = (u16)value;
+                }
+
+                terminal->csi_have_value = true;
+                return;
+            }
+
+            if (c == ';') {
+                if (terminal->csi_param_count < 8) {
+                    terminal->csi_param_count++;
+                    terminal->csi_have_value = false;
+                } else {
+                    terminal->parse_state = TERMINAL_PARSE_NORMAL;
+                }
+                return;
+            }
+
+            if ((u8)c >= 0x40 && (u8)c <= 0x7E) {
+                terminal_execute_csi(terminal, c);
+            }
+
+            if ((u8)c < 0x20 || (u8)c > 0x7E ||
+                ((u8)c >= 0x40 && (u8)c <= 0x7E)) {
+                terminal->parse_state = TERMINAL_PARSE_NORMAL;
+            }
+            return;
     }
 }
 
@@ -244,12 +503,24 @@ void terminal_init(terminal_t* terminal) {
     terminal->columns = TERMINAL_COLUMNS;
     terminal->rows = TERMINAL_ROWS;
 
-    terminal->foreground = 0x00FFFFFF;
-    terminal->background = 0x00101820;
+    terminal->foreground = XETERM_COLOR_TEXT;
+    terminal->background = XETERM_COLOR_BG;
+
+    terminal->parse_state = TERMINAL_PARSE_NORMAL;
+    terminal->csi_param_count = 0;
+    terminal->csi_have_value = false;
+
+    for (u32 i = 0; i < 8; ++i) {
+        terminal->csi_params[i] = 0;
+    }
 
     for (u32 row = 0; row < terminal->rows; ++row) {
         for (u32 col = 0; col < terminal->columns; ++col) {
-            terminal->cells[row][col].ch = ' ';
+            terminal_cell_t* cell = &terminal->cells[row][col];
+
+            cell->ch = ' ';
+            cell->fg_rgb = terminal->foreground;
+            cell->bg_rgb = terminal->background;
         }
     }
 }
@@ -423,21 +694,53 @@ ssize_t terminal_write(terminal_t* terminal, const void* buffer, size_t size) {
     spin_lock_irqsave(&terminal->output_lock, &flags);
 
     for (size_t i = 0; i < size; i++) {
-        terminal_process_char(terminal, data[i]);
+        serial_write_char(data[i]);
+        terminal_feed_char(terminal, data[i]);
     }
 
     // TODO: fix don't do in a lock
     if (terminal->window && terminal->window->surface) {
         window_surface_render_rect(terminal->window->surface, 0, 0, terminal->window->surface->width, terminal->window->surface->height, terminal->background);
-
         terminal_render_grid(terminal, terminal->window->surface);
-
         window_server_damage(terminal->window, 0, 0, terminal->window->surface->width, terminal->window->surface->height);
     }
 
     spin_unlock_irqrestore(&terminal->output_lock, flags);
 
     return (ssize_t)size;
+}
+
+void terminal_clear(terminal_t* terminal, b8 locked) {
+    if (!terminal) {
+        return;
+    }
+
+    u64 flags = 0;
+    if (!locked) {
+        spin_lock_irqsave(&terminal->output_lock, &flags);
+    }
+
+    for (u32 row = 0; row < terminal->rows; ++row) {
+        for (u32 col = 0; col < terminal->columns; ++col) {
+            terminal_cell_t* cell = &terminal->cells[row][col];
+            cell->ch = ' ';
+            cell->fg_rgb = terminal->foreground;
+            cell->bg_rgb = terminal->background;
+        }
+    }
+
+    terminal->cursor_x = 0;
+    terminal->cursor_y = 0;
+
+    if (terminal->window && terminal->window->surface && terminal->window->surface->pixels) {
+        window_surface_render_rect(terminal->window->surface, 0, 0, terminal->window->surface->width, terminal->window->surface->height, terminal->background);
+        terminal_render_grid(terminal, terminal->window->surface);
+        window_server_damage(terminal->window, 0, 0, (i32)terminal->window->surface->width, (i32)terminal->window->surface->height);
+    }
+
+    if (!locked) {
+        spin_unlock_irqrestore(&terminal->output_lock, flags);
+    }
 }
 
 void terminal_attach_window(terminal_t* terminal, window_t* window) {

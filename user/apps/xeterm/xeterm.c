@@ -15,7 +15,7 @@ int main(void) {
             .x = 180,
             .y = 120,
             .width = 480,
-            .height = 320
+            .height = 313
         },
         .type = WINDOW_TYPE_NORMAL,
         .flags = 0
@@ -32,14 +32,14 @@ int main(void) {
     char line[256];
     
     for (;;) {
+        write(STDOUT_FILENO, "\033[38;2;35;209;139mxenonos@xe", sizeof("\033[38;2;35;209;139mxenonos@xe") - 1);
+        write(STDOUT_FILENO, "\033[38;2;204;204;204m:", sizeof("\033[38;2;204;204;204m:") - 1);
+        write(STDOUT_FILENO, "\033[38;2;56;131;216m", sizeof("\033[38;2;56;131;216m") - 1);
         if (getcwd(cwd, sizeof(cwd))) {
-            snprintf(prompt, sizeof(prompt), "xenonos@xe:%s$ ", cwd);
-        }
-        else {
-            snprintf(prompt, sizeof(prompt), "xenonos@xe:$ ", cwd);
+            write(STDOUT_FILENO, cwd, strlen(cwd));
         }
 
-        write(STDOUT_FILENO, prompt, strlen(prompt));
+        write(STDOUT_FILENO, "\033[38;2;204;204;204m$ ", sizeof("\033[38;2;204;204;204m$ ") - 1);
 
         ssize_t size = read(STDIN_FILENO, line, sizeof(line) - 1);
 
@@ -79,8 +79,7 @@ int main(void) {
             continue;
         }
 
-        if (strncmp(line, "cd", 2) == 0 &&
-            (line[2] == '\0' || line[2] == ' ' || line[2] == '\t')) {
+        if (strncmp(line, "cd", 2) == 0 && (line[2] == '\0' || line[2] == ' ' || line[2] == '\t')) {
             char* target = line + 2;
 
             while (*target == ' ' || *target == '\t') {
@@ -95,6 +94,11 @@ int main(void) {
                 // printf("cd: cannot change directory to %s (errno %d)\n", target, errno);
                 printf("cd: cannot change directory to %s\n", target);
             }
+            continue;
+        }
+
+        if (strncmp(line, "clear", 5) == 0) {
+            write(STDOUT_FILENO, "\033[2J", sizeof("\033[2J") - 1);
             continue;
         }
 

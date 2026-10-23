@@ -58,6 +58,8 @@
 #define COMPOSITOR_MAX_WINDOWS WINDOW_MAX_COUNT
 
 static compositor_image_t desktop_wallpaper;
+static u32 wallpaper_queued = 0;
+char g_new_wallpaper_path[256];
 
 static xenon_surface_t* target;
 static u32 frame_invalidated = 1;
@@ -723,6 +725,10 @@ void compositor_render() {
     // also sets frame_invalidated to false
     if (!target || !__atomic_exchange_n(&frame_invalidated, 0, __ATOMIC_ACQUIRE)) { return; }
 
+    if (__atomic_exchange_n(&wallpaper_queued, 0, __ATOMIC_ACQUIRE)) {
+        compositor_set_wallpaper(g_new_wallpaper_path);
+    }
+
     // TODO: remove this sucks
     window_surface_handle_t invalid_surface = WINDOW_SURFACE_INVALID_HANDLE;
 
@@ -1083,7 +1089,7 @@ b8 compositor_set_wallpaper(const char* path) {
         return false;
     }
 
-    if (!compositor_image_scale_nearest(&source, target->width, target->height, &scaled)) {
+    if (!compositor_image_scale_linear(&source, target->width, target->height, &scaled)) {
         compositor_image_destroy(&source);
         return false;
     }
@@ -1103,4 +1109,11 @@ b8 compositor_set_wallpaper(const char* path) {
 
     compositor_invalidate();
     return true;
+}
+
+void compositor_queue_set_wallpaper(const char* path) {
+    if (!path) { return; }
+
+    __atomic_store_n(&wallpaper_queued, 1, __ATOMIC_RELEASE);
+    strncpy(g_new_wallpaper_path, path, sizeof(g_new_wallpaper_path));
 }
