@@ -37,6 +37,7 @@
 #define SYS_SLEEP_NS                    22
 #define SYS_SET_DESKTOP_ENV_VAR         23
 #define SYS_HWMON_GET_CPU_TEMP_MC       24
+#define SYS_HWMON_GET_ONLINE_CPUS       24
 // NOTE: userspace should just use SYS_CLOSE on directories it'll work fine
 
 // NOTE: Must match stack pushes in arch/x86_64/syscall.asm

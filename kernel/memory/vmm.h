@@ -37,3 +37,11 @@ paddr_t vmm_virt_to_phys(vmm_space_t* space, vaddr_t virt);
 int vmm_update_page_flags(vmm_space_t* space, vaddr_t virt, u64 set_flags, u64 clear_flags);
 
 b8 vmm_user_range_valid(vmm_space_t* space, vaddr_t addr, size_t size, b8 write);
+
+/**
+ * @brief Allocates a stack under `space`
+ * @note Should only be used for kernel pages
+ */
+int vmm_alloc_stack(vmm_space_t* space, size_t usable_pages, u16 guard_pages, vaddr_t* out_base, vaddr_t* out_top);
+
+vaddr_t vmm_find_free_region(vmm_space_t* space, size_t size);

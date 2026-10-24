@@ -17,4 +17,6 @@ struct IDTR {
     uint64_t base;
 } __packed__;
 
-void idt_init(void);
+void idt_init();
+
+void idt_load_local();

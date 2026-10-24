@@ -1,7 +1,6 @@
 #include <arch/x86_64/apic/lapic.h>
 #include <arch/x86_64/msr.h>
 #include <arch/x86_64/io.h>
-#include <memory/paging.h>
 #include <memory/vmm.h>
 
 // ICR Register Offsets in the LAPIC MMIO space
@@ -199,4 +198,8 @@ __PRIVILEGED_CODE void lapic_disable_legacy_pic() {
     // send the disable command (0xFF) to both PIC1 and PIC2 data ports
     x64_outb(0xA1, 0xFF);
     x64_outb(0x21, 0xFF);
+}
+
+__PRIVILEGED_CODE vaddr_t lapic_get_va() {
+    return (vaddr_t)lapic_virtual_base;
 }

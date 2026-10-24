@@ -1,5 +1,6 @@
 #pragma once
 #include <xlibc/xstdint.h>
+#include <memory/paging.h>
 #include <kernel.h>
 
 #define IA32_APIC_BASE_MSR          0x1B
@@ -29,3 +30,5 @@ __PRIVILEGED_CODE void lapic_send_init_ipi(u8 apic_id);
 __PRIVILEGED_CODE void lapic_send_startup_ipi(u8 apic_id, u32 vector);
 __PRIVILEGED_CODE void lapic_wait_for_icr_cmd_completion();
 __PRIVILEGED_CODE void lapic_disable_legacy_pic();
+
+__PRIVILEGED_CODE vaddr_t lapic_get_va();

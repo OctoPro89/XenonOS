@@ -17,3 +17,17 @@ static inline paddr_t hhdm_to_phys(vaddr_t virt) {
 }
 
 __PRIVILEGED_CODE extern ASMCALL void tlb_flush_all();
+
+__PRIVILEGED_CODE static __hint_inline__ void invlpg(vaddr_t addr) {
+    asm volatile("invlpg (%0)" :: "r"(addr) : "memory");
+}
+
+__PRIVILEGED_CODE static __hint_inline__ u64 paging_read_cr3() {
+    u64 val;
+    asm volatile("mov %%cr3, %0" : "=r"(val));
+    return val;
+}
+
+__PRIVILEGED_CODE static __hint_inline__ paddr_t paging_get_kernel_pt_root() {
+    return paging_read_cr3() & ~0xFFFULL;
+}

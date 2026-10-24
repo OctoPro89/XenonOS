@@ -46,6 +46,10 @@
 #include <windowing/window/window_server.h>
 #include <windowing/compositor/compositor.h>
 
+#include <smp/smp.h>
+#include <smp/ipi.h>
+#include <smp/percpu.h>
+
 #include <drivers/hwmon/amd_smn.h>
 #include <drivers/hwmon/amd_zen_temp.h>
 
@@ -570,9 +574,9 @@ static void kernel_main(void* arg) {
     }
 }
 
-#include <arch/x86_64/msr.h>
-
 void ASMCALL kernel_main_trampoline(BootInfo* bootInfo) {
+    percpu_init_bsp();
+
     x86_64_HAL_init();
     syscall_init();
 
@@ -581,10 +585,14 @@ void ASMCALL kernel_main_trampoline(BootInfo* bootInfo) {
 
     acpi_enumerate_acpi_tables((void*)bootInfo->AcpiRsdp);
 
+    lapic_init();
+
+    if (smp_init() != SMP_CPU_INIT_RESULT_OK) {
+        printf("Initializing SMP failed, using BSP only.\n");
+    }
+
     u8 timer_irq_vector = irq_alloc_vector();
     irq_register_handler(timer_irq_vector, &timer_handler, NULL);
-
-    lapic_init();
 
     graphics_init(&bootInfo->fb);
     graphics_clear_screen(0);

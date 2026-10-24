@@ -17,3 +17,8 @@ static __hint_inline__ void barrier_io_read() {
 static __hint_inline__ void barrier_io_write() {
     asm volatile("" ::: "memory");
 }
+
+// SMP write barrier, ensures store-store ordering between CPUs
+static __hint_inline__ void barrier_smp_write() {
+    asm volatile("" ::: "memory");
+}

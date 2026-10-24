@@ -409,3 +409,161 @@ b8 vmm_user_range_valid(vmm_space_t* space, vaddr_t addr, size_t size, b8 write)
 
     return true;
 }
+
+static void rollback_non_contiguous(vmm_space_t* space, vaddr_t base, size_t mapped_bytes) {
+    size_t pages_to_cleanup = mapped_bytes / PAGE_SIZE;
+
+    for (size_t i = 0; i < pages_to_cleanup; ++i) {
+        vaddr_t curr_vaddr = base + (i * PAGE_SIZE);
+        
+        paddr_t phys = vmm_virt_to_phys(space, curr_vaddr);
+        
+        if (phys != 0) {
+            vmm_unmap(space, curr_vaddr);
+            pmm_free_page(phys);
+        }
+    }
+}
+
+static int vmm_page_is_mapped(vmm_space_t* space, vaddr_t virt) {
+    pte_t* pdpt;
+    pte_t* pd;
+    pte_t* pt;
+    pte_t entry;
+
+    if (!space || !space->pml4) {
+        return 1;
+    }
+
+    pdpt = get_table_noalloc(space->pml4, pml4_index(virt));
+    if (!pdpt) {
+        return 0;
+    }
+
+    entry = space->pml4[pml4_index(virt)];
+    if (!(entry & PAGE_PRESENT)) {
+        return 0;
+    }
+
+    entry = pdpt[pdpt_index(virt)];
+    if (!(entry & PAGE_PRESENT)) {
+        return 0;
+    }
+
+    // Bit 7 is PS in a PDPTE: 1 GiB page.
+    if (entry & (1ULL << 7)) {
+        return 1;
+    }
+
+    pd = get_table_noalloc(pdpt, pdpt_index(virt));
+    if (!pd) {
+        return 0;
+    }
+
+    entry = pd[pd_index(virt)];
+    if (!(entry & PAGE_PRESENT)) {
+        return 0;
+    }
+
+    // Bit 7 is PS in a PDE: 2 MiB page.
+    if (entry & (1ULL << 7)) {
+        return 1;
+    }
+
+    pt = get_table_noalloc(pd, pd_index(virt));
+    if (!pt) {
+        return 0;
+    }
+
+    return (pt[pt_index(virt)] & PAGE_PRESENT) != 0;
+}
+
+vaddr_t vmm_find_free_region(vmm_space_t* space, size_t size) {
+    size_t pages;
+    size_t run = 0;
+    size_t start = 0;
+    size_t i;
+
+    if (!space || !space->pml4 || size == 0) {
+        return 0;
+    }
+
+    pages = size / PAGE_SIZE;
+    if (size % PAGE_SIZE) {
+        pages++;
+    }
+
+    if (pages > VMM_PAGE_COUNT) {
+        return 0;
+    }
+
+    for (i = 0; i < VMM_PAGE_COUNT; i++) {
+        vaddr_t virt = VMM_ALLOC_BASE + i * PAGE_SIZE;
+
+        if (!BIT_TEST(i) && !vmm_page_is_mapped(space, virt)) {
+            if (run == 0) {
+                start = i;
+            }
+
+            run++;
+
+            if (run == pages) {
+                size_t j;
+
+                for (j = start; j < start + pages; j++) {
+                    BIT_SET(j);
+                }
+
+                return VMM_ALLOC_BASE + start * PAGE_SIZE;
+            }
+        } else {
+            run = 0;
+        }
+    }
+
+    return 0;
+}
+
+// TODO: check
+int vmm_alloc_stack(vmm_space_t* space, size_t usable_pages, u16 guard_pages, vaddr_t* out_base, vaddr_t* out_top) {
+    if (usable_pages == 0 || !out_base || !out_top) {
+        return -EINVAL;
+    }
+
+    u64 flags = PAGE_PRESENT | PAGE_WRITABLE;
+
+    size_t total_pages = usable_pages + guard_pages;
+    size_t total_size = total_pages * PAGE_SIZE;
+
+    vaddr_t vaddr_start = vmm_find_free_region(space, total_size);
+    if (vaddr_start == 0) {
+        return -ENOMEM;
+    }
+
+    vaddr_t base = vaddr_start + (guard_pages * PAGE_SIZE); 
+    size_t mapped_bytes = 0;
+
+    for (size_t i = 0; i < usable_pages; ++i) {
+        paddr_t phys = pmm_alloc_page();
+        if (phys == 0) {
+            rollback_non_contiguous(space, base, mapped_bytes);
+            vmm_free_virtual_pages(vaddr_start, total_pages);
+            return -ENOMEM;
+        }
+
+        memset((void*)phys_to_hhdm(phys), 0, PAGE_SIZE);
+
+        if (vmm_map(space, base + (i * PAGE_SIZE), phys, flags) != 0) {
+            pmm_free_page(phys);
+            rollback_non_contiguous(space, base, mapped_bytes);
+            vmm_free_virtual_pages(vaddr_start, total_pages);
+            return -EFAULT;
+        }
+
+        mapped_bytes += PAGE_SIZE;
+    }
+
+    *out_base = base;
+    *out_top = base + (usable_pages * PAGE_SIZE);
+    return 0;
+}

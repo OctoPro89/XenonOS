@@ -1,4 +1,5 @@
 #include "idt.h"
+#include <arch/x86_64/barrier.h>
 
 #define IDT_SIZE 256
 
@@ -18,11 +19,23 @@ static void set_idt_entry(int vec, void* handler) {
     idt[vec].zero        = 0;
 }
 
-void idt_init(void) {
+void idt_init() {
     for (int i = 0; i < 256; i++) {
         set_idt_entry(i, isr_stub_table[i]);
     }
 
+    struct IDTR idtr = {
+        .limit = sizeof(idt) - 1,
+        .base = (uint64_t)idt
+    };
+
+    // ensure all IDT entry writes are visible before loading IDTR
+    barrier_smp_write();
+
+    asm volatile ("lidt %0" : : "m"(idtr));
+}
+
+void idt_load_local() {
     struct IDTR idtr = {
         .limit = sizeof(idt) - 1,
         .base = (uint64_t)idt
