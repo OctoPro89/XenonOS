@@ -30,3 +30,5 @@ void window_server_raise(window_t* window);
  * @brief Tell the compositor which content region changed
  */
 void window_server_damage(window_t* window, i32 x, i32 y, i32 width, i32 height);
+
+void window_server_set_focused(window_t* window);

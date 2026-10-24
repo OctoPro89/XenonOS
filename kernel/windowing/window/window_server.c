@@ -422,25 +422,30 @@ u32 window_server_snapshot(window_snapshot_t* out, u32 capacity) {
     return count;
 }
 
-void window_server_notify_keyboard_subscribers(input_keyboard_event_t* evt) {
-    if (!evt) { return; }
+b8 window_server_notify_keyboard_subscribers(input_keyboard_event_t* evt) {
+    if (!evt) { return false; }
     u64 flags = 0;
     spin_lock_irqsave(&window_server_lock, &flags);
+    b8 found = false;
     
     for (u32 i = 0; i < active_count; ++i) {
         if (window_slots[i].e_flags & WINDOW_EVENT_FLAGS_KEYBOARD) {
-            if (valid_window(&window_slots[i])) {
+            if (valid_window(&window_slots[i]) && window_slots[i].focused) {
                 window_event_t wevt = {
                     .buttons = 0,
                     .keycode = evt->usage,
                     .type = (evt->action == INPUT_KBD_ACTION_DOWN) ? WINDOW_EVENT_KEY_DOWN : WINDOW_EVENT_KEY_UP
                 };
                 queue_event(&window_slots[i], &wevt);
+
+                found = true;
             }
         }
     }
 
     spin_unlock_irqrestore(&window_server_lock, flags);
+
+    return found;
 }
 
 void window_server_subscribe_to_keyboard(window_t* window) {
@@ -448,4 +453,17 @@ void window_server_subscribe_to_keyboard(window_t* window) {
     spin_lock_irqsave(&window_server_lock, &flags);
     window->e_flags |= WINDOW_EVENT_FLAGS_KEYBOARD;
     spin_unlock_irqrestore(&window_server_lock, flags);
+}
+
+void window_server_set_focused(window_t* window) {
+    for (u32 i = 0; i < active_count; ++i) {
+        if (window_slots[i].e_flags & WINDOW_EVENT_FLAGS_KEYBOARD) {
+            if (valid_window(&window_slots[i]) && (&window_slots[i]) == window) {
+                window->focused = true;
+            }
+            else {
+                window->focused = false;
+            }
+        }
+    }
 }

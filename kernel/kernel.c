@@ -358,6 +358,57 @@ void launch_shell_task_entry(void* arg) {
     int exit_code = process_wait(process);
     printf("shell exited with code %d\n", exit_code);
     process_reap(process);
+    task_exit();
+}
+
+spinlock_t launch_program_path_lock;
+char launch_program_path[256];
+
+void launch_program_entry(void* arg) {
+    char path[256]; // don't hold the lock whilst doing all of this
+    u64 flags = 0;
+    spin_lock_irqsave(&launch_program_path_lock, &flags);
+    strncpy(path, launch_program_path, 255);
+    spin_unlock_irqrestore(&launch_program_path_lock, flags);
+    
+    process_t* process = process_create();
+    if (!process) {
+        return;
+    }
+
+    int result = process_load_elf(process, path);
+    if (result < 0) {
+        process_destroy(process);
+        return;
+    }
+
+    // set working directory, defaults to root
+    strncpy(process->cwd, "/", PROCESS_CWD_MAX);
+
+    result = process_start(process);
+    if (result < 0) {
+        process_destroy(process);
+        return;
+    }
+
+    (void)process_wait(process);
+    process_reap(process);
+    task_exit();
+}
+
+// TODO: resource cleanup
+static b8 xenon_spawn_program(const char* absolute_path) {
+    if (absolute_path) {
+        u64 flags = 0;
+        spin_lock_irqsave(&launch_program_path_lock, &flags);
+        strncpy(launch_program_path, absolute_path, 255);
+        spin_unlock_irqrestore(&launch_program_path_lock, flags);
+
+        task_t* t = task_create(NULL, launch_program_entry, (void*)NULL);
+        return t != NULL;
+    }
+    
+    return false;
 }
 
 static void kernel_main(void* arg) {
@@ -502,6 +553,8 @@ static void kernel_main(void* arg) {
     }
 #endif
 
+    compositor_set_program_spawn_fn(xenon_spawn_program);
+
     // task_t* system_console_task = task_create(NULL, system_console_task_entry, NULL);
 
 #ifndef QEMU_DEBUG
@@ -538,6 +591,7 @@ void ASMCALL kernel_main_trampoline(BootInfo* bootInfo) {
 
     // needs to run before any printing
     spin_lock_init(&system_console_lock);
+    spin_lock_init(&launch_program_path_lock);
 
     spin_lock_init(&boot_usb_lock);
     wait_queue_init(&boot_usb_wq);

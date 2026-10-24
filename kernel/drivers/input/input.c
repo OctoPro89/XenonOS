@@ -4,6 +4,7 @@
 #include <arch/x86_64/sync/sync.h>
 #include <task.h>
 #include <windowing/window/internal.h>
+#include <windowing/compositor/compositor.h>
 
 static ring_buffer_t* g_kbd_rb;
 static ring_buffer_t* g_mouse_rb;
@@ -41,8 +42,13 @@ b8 input_push_keyboard_event(const input_keyboard_event_t* evt) {
     b8 pushed = ring_buffer_push(g_kbd_rb, evt);
 
     if (pushed) {
-        wait_queue_wake_one_locked(&g_kbd_waiters);
-        window_server_notify_keyboard_subscribers(evt);
+        // TODO: decide who gets input
+        if (compositor_handle_key_event(evt->usage, evt->action == INPUT_KBD_ACTION_DOWN)) {
+            // consumed
+        }
+        else if (!window_server_notify_keyboard_subscribers(evt)) {
+            wait_queue_wake_one_locked(&g_kbd_waiters);
+        }
     }
 
     spin_unlock_irqrestore(&g_kbd_wait_lock, flags);

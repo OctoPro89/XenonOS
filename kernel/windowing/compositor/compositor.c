@@ -5,16 +5,17 @@
 #include <drivers/input/input.h>
 #include <task.h>
 #include <xlibc/string.h>
+#include <xlibc/ctype.h>
 #include <memory/heap.h>
 #include <graphics/graphics.h>
-
+#include <filesystem/vfs/vfs.h>
 #include <arch/x86_64/sync/sync.h>
 #include <kernel.h>
-
 #include <de/mouse_cursor.h>
 
 // TODO: partial redrawing
 // TODO: use window damaging
+// TODO: split some of these into separate files
 
 #define DESKTOP_BG    0xFF18212F
 #define DESKTOP_PANEL 0xFF101722
@@ -56,6 +57,57 @@
 #define POWER_MENU_DANGER_BG    0xFF3B2932
 
 #define COMPOSITOR_MAX_WINDOWS WINDOW_MAX_COUNT
+
+#define LAUNCHER_WIDTH          560
+#define LAUNCHER_HEIGHT         360
+#define LAUNCHER_VISIBLE_MAX    7
+#define LAUNCHER_ROW_HEIGHT     27
+#define LAUNCHER_QUERY_MAX      56
+#define LAUNCHER_PATH_MAX       255
+
+#define LAUNCHER_BORDER         0xFF56657A
+#define LAUNCHER_BACKGROUND     0xFF1C2636
+#define LAUNCHER_FIELD_BG       0xFF111827
+#define LAUNCHER_ROW_SELECTED   0xFF315A84
+
+#define HID_KEY_ENTER        0x28
+#define HID_KEY_ESCAPE       0x29
+#define HID_KEY_BACKSPACE    0x2A
+#define HID_KEY_LEFT_SHIFT   0xE1
+#define HID_KEY_RIGHT_SHIFT  0xE5
+#define HID_KEY_LEFT_GUI     0xE3
+#define HID_KEY_RIGHT_GUI    0xE7
+#define HID_KEY_UP_ARROW     0x52
+#define HID_KEY_DOWN_ARROW   0x51
+#define HID_KEY_S            0x16
+
+typedef struct launcher_program {
+    struct launcher_program* next;
+    char name[VFS_NAME_MAX + 1];
+} launcher_program_t;
+
+static launcher_program_t* launcher_programs;
+static launcher_program_t* launcher_programs_tail;
+
+static b8 launcher_scanned;
+static b8 launcher_scan_error;
+static b8 launcher_open;
+
+static char launcher_query[LAUNCHER_QUERY_MAX + 1];
+static u32 launcher_query_len;
+static u32 launcher_selected;
+
+static const char* launcher_status;
+
+static b8 launcher_left_super_down;
+static b8 launcher_right_super_down;
+static b8 launcher_shift_down;
+
+static b8 launcher_eat_keyup[256];
+
+typedef b8 (*compositor_program_spawn_fn)(const char* absolute_path);
+
+static compositor_program_spawn_fn launcher_spawn_callback;
 
 static compositor_image_t desktop_wallpaper;
 static u32 wallpaper_queued = 0;
@@ -159,6 +211,147 @@ static void round_rect(xenon_surface_t* s, i32 x, i32 y, i32 w, i32 h, i32 radiu
             xenon_surface_rect(s, (u32)(x + inset), (u32)(y + row), (u32)(w - inset * 2), 1, color);
         }
     }
+}
+
+static b8 launcher_name_matches(const char* name) {
+    if (!name) return false;
+
+    if (launcher_query_len == 0) {
+        return true;
+    }
+
+    for (u32 i = 0; name[i]; ++i) {
+        u32 j = 0;
+
+        while (launcher_query[j] && name[i + j] && tolower(name[i + j]) == tolower(launcher_query[j])) {
+            ++j;
+        }
+
+        if (j == launcher_query_len) {
+            return true;
+        }
+    }
+
+    return false;
+}
+
+static b8 launcher_scan_bin() {
+    VFS_DIR* dir = vfs_opendir("/bin");
+
+    if (!dir) {
+        return false;
+    }
+
+    launcher_scanned = true;
+
+    VFS_DIRENT ent;
+    int rc;
+
+    while ((rc = vfs_readdir(dir, &ent)) > 0) {
+        ent.name[VFS_NAME_MAX] = '\0';
+
+        if (ent.type != VFS_TYPE_FILE) {
+            continue;
+        }
+
+        if (!ent.name[0] || (ent.name[0] == '.' && ent.name[1] == '\0') || (ent.name[0] == '.' && ent.name[1] == '.' && ent.name[2] == '\0')) {
+            continue;
+        }
+
+        u32 len = strlen(ent.name);
+
+        // "/bin/" is 5 characters; VFS paths are limited to 255
+        if (len + 5 > LAUNCHER_PATH_MAX) {
+            launcher_scan_error = true;
+            continue;
+        }
+
+        b8 invalid_name = false;
+
+        for (u32 i = 0; i < len; ++i) {
+            if (ent.name[i] == '/') {
+                invalid_name = true;
+                break;
+            }
+        }
+
+        if (invalid_name) {
+            continue;
+        }
+
+        launcher_program_t* item = kmalloc(sizeof(*item));
+
+        if (!item) {
+            launcher_scan_error = true;
+            break;
+        }
+
+        for (u32 i = 0; i <= len; ++i) {
+            item->name[i] = ent.name[i];
+        }
+
+        item->next = NULL;
+
+        if (launcher_programs_tail)
+            launcher_programs_tail->next = item;
+        else
+            launcher_programs = item;
+
+        launcher_programs_tail = item;
+    }
+
+    if (rc < 0) {
+        launcher_scan_error = true;
+    }
+
+    vfs_closedir(dir);
+    return true;
+}
+
+static u32 launcher_match_count() {
+    u32 count = 0;
+
+    for (launcher_program_t* p = launcher_programs; p; p = p->next) {
+        if (launcher_name_matches(p->name)) {
+            ++count;
+        }
+    }
+
+    return count;
+}
+
+// rank is the zero-based position in the filtered results
+static launcher_program_t* launcher_match_at(u32 rank) {
+    for (launcher_program_t* p = launcher_programs; p; p = p->next) {
+        if (!launcher_name_matches(p->name)) {
+            continue;
+        }
+
+        if (rank == 0)
+            return p;
+
+        --rank;
+    }
+
+    return NULL;
+}
+
+static void launcher_open_search() {
+    launcher_open = true;
+    launcher_query_len = 0;
+    launcher_query[0] = '\0';
+    launcher_selected = 0;
+    launcher_status = NULL;
+
+    if (!launcher_scanned) {
+        if (false) {
+            launcher_status = "Cannot open /bin";
+        } else if (launcher_scan_error) {
+            launcher_status = "Warning: program list incomplete";
+        }
+    }
+
+    compositor_invalidate();
 }
 
 static b8 get_taskbar_rect(const xenon_surface_t* s, i32* out_x, i32* out_y, i32* out_width, i32* out_height) {
@@ -329,6 +522,108 @@ static void render_power_menu(xenon_surface_t* s) {
     xenon_surface_str(s, x + 43, reboot_y + 12, "Reboot", power_action_hovered == POWER_ACTION_REBOOT ? TEXT_WHITE : TEXT_MUTED);
 }
 
+static void render_launcher(xenon_surface_t* s) {
+    if (!s || !launcher_open) {
+        return;
+    }
+
+    i32 w = LAUNCHER_WIDTH;
+    i32 h = LAUNCHER_HEIGHT;
+
+    if (w > (i32)s->width - 16) {
+        w = (i32)s->width - 16;
+    }
+
+    if (h > (i32)s->height - 16) {
+        h = (i32)s->height - 16;
+    }
+
+    if (w < 300 || h < 220) {
+        return;
+    }
+
+    i32 x = ((i32)s->width - w) / 2;
+    i32 y = ((i32)s->height - h) / 2;
+
+    // dim desktop, TODO:
+    // xenon_surface_rect(s, 0, 0, s->width, s->height, 0x99000000);
+    round_rect(s, x, y, w, h, 16, LAUNCHER_BORDER);
+    round_rect(s, x + 1, y + 1, w - 2, h - 2, 15, LAUNCHER_BACKGROUND);
+    xenon_surface_str(s, x + 20, y + 17, "Search Programs", TEXT_WHITE);
+    xenon_surface_str(s, x + 20, y + 33, "Installed applications in /bin", TEXT_MUTED);
+    round_rect(s, x + 14, y + 48, w - 28, 34, 7, LAUNCHER_FIELD_BG);
+
+    const char* search_text = launcher_query_len ? launcher_query : "Type a program name...";
+
+    xenon_surface_str(s, x + 25, y + 61, search_text, launcher_query_len ? TEXT_WHITE : TEXT_MUTED);
+
+    u32 total = launcher_match_count();
+
+    u32 available_rows = (u32)(h - 132) / LAUNCHER_ROW_HEIGHT;
+
+    if (available_rows > LAUNCHER_VISIBLE_MAX) {
+        available_rows = LAUNCHER_VISIBLE_MAX;
+    }
+
+    if (available_rows == 0) {
+        available_rows = 1;
+    }
+
+    u32 first = 0;
+
+    if (launcher_selected >= available_rows) {
+        first = launcher_selected - available_rows + 1;
+    }
+
+    u32 rows = total > first ? total - first : 0;
+
+    if (rows > available_rows) {
+        rows = available_rows;
+    }
+
+    for (u32 row = 0; row < rows; ++row) {
+        u32 rank = first + row;
+        launcher_program_t* item = launcher_match_at(rank);
+
+        if (!item) {
+            break;
+        }
+
+        i32 row_y = y + 94 + (i32)row * LAUNCHER_ROW_HEIGHT;
+
+        if (rank == launcher_selected) {
+            round_rect(s, x + 12, row_y, w - 24, 25, 6, LAUNCHER_ROW_SELECTED);
+        }
+
+        // clip names
+        char display_name[57];
+        u32 i = 0;
+
+        while (item->name[i] && i < 53) {
+            display_name[i] = item->name[i];
+            ++i;
+        }
+
+        if (item->name[i]) {
+            display_name[i++] = '.';
+            display_name[i++] = '.';
+            display_name[i++] = '.';
+        }
+
+        display_name[i] = '\0';
+
+        xenon_surface_str(s, x + 24, row_y + 8, display_name, rank == launcher_selected ? TEXT_WHITE : TEXT_MUTED);
+    }
+
+    if (total == 0) {
+        xenon_surface_str(s, x + 24, y + 108, "No matching programs", TEXT_MUTED);
+    }
+
+    const char* footer = launcher_status ? launcher_status : "Enter: launch   Up/Down: select   Esc: close";
+
+    xenon_surface_str(s, x + 18, y + h - 23, footer, launcher_status ? 0xFFFCA5A5 : TEXT_MUTED);
+}
+
 static const char* crash_exception_name(u64 vector) {
     static const char* const names[32] = {
         "Divide-by-zero Error", "Debug", "Non-maskable Interrupt", "Breakpoint",
@@ -378,7 +673,7 @@ static b8 crash_ok_hit_test(i32 px, i32 py) {
     return point_in_rect(px, py, x + w - 112, y + h - 42, 88, 28);
 }
 
-static void crash_promote_next_locked(void) {
+static void crash_promote_next_locked() {
     if (crash_queue_count == 0) {
         crash_dialog_visible = false;
         crash_button_hovered = false;
@@ -715,6 +1010,10 @@ b8 compositor_init(xenon_surface_t* surface) {
     clamp_cursor();
     __atomic_store_n(&frame_invalidated, 1, __ATOMIC_RELEASE);
 
+    if (!launcher_scan_bin()) {
+        return false;
+    }
+
     return true;
 }
 
@@ -753,6 +1052,7 @@ void compositor_render() {
     }
 
     render_power_menu(target);
+    render_launcher(target);
     render_crash_dialog(target);
 
     xenon_surface_image_data(target, (u32)cursor_x, (u32)cursor_y, mouse_cursor_data, CURSOR_W, CURSOR_H, true);
@@ -917,8 +1217,7 @@ static void process_mouse_event(const input_mouse_event_t* evt) {
 
         if (left_down && !left_was_down && over_ok) {
             dismiss_crash_dialog();
-        } else if (cursor_x != old_x || cursor_y != old_y ||
-                evt->buttons != previous_buttons || evt->wheel != 0) {
+        } else if (cursor_x != old_x || cursor_y != old_y || evt->buttons != previous_buttons || evt->wheel != 0) {
             compositor_invalidate();
         }
 
@@ -933,8 +1232,7 @@ static void process_mouse_event(const input_mouse_event_t* evt) {
     power_action_t old_action_hovered = power_action_hovered;
 
     if (power_menu_open) {
-        power_action_hovered =
-            power_menu_hit_test(cursor_x, cursor_y);
+        power_action_hovered = power_menu_hit_test(cursor_x, cursor_y);
     } else {
         power_action_hovered = POWER_ACTION_NONE;
     }
@@ -946,8 +1244,7 @@ static void process_mouse_event(const input_mouse_event_t* evt) {
 
     if (left_down && !left_was_down) {
         if (!handle_power_click(cursor_x, cursor_y)) {
-            snapshot_count =
-                window_server_snapshot(snapshots, COMPOSITOR_MAX_WINDOWS);
+            snapshot_count = window_server_snapshot(snapshots, COMPOSITOR_MAX_WINDOWS);
 
             i32 index = hit_test(cursor_x, cursor_y);
 
@@ -964,11 +1261,11 @@ static void process_mouse_event(const input_mouse_event_t* evt) {
                 } else {
                     window_server_raise(hit->handle);
 
-                    if (cursor_y >= wy &&
-                        cursor_y < wy + TITLEBAR_H) {
+                    if (cursor_y >= wy && cursor_y < wy + TITLEBAR_H) {
                         dragging_id = (i32)hit->id;
                         drag_offset_x = cursor_x - wx;
                         drag_offset_y = cursor_y - wy;
+                        window_server_set_focused(hit->handle);
                     }
                 }
             }
@@ -1116,4 +1413,212 @@ void compositor_queue_set_wallpaper(const char* path) {
 
     __atomic_store_n(&wallpaper_queued, 1, __ATOMIC_RELEASE);
     strncpy(g_new_wallpaper_path, path, sizeof(g_new_wallpaper_path));
+}
+
+static b8 launcher_super_down() {
+    return launcher_left_super_down || launcher_right_super_down;
+}
+
+static char launcher_key_to_ascii(u16 keycode, b8 shift) {
+    if (keycode >= 0x04 && keycode <= 0x1D) {
+        return (char)('a' + keycode - 0x04);
+    }
+
+    if (keycode >= 0x1E && keycode <= 0x26) {
+        static const char normal[]  = "123456789";
+        static const char shifted[] = "!@#$%^&*(";
+
+        return shift ? shifted[keycode - 0x1E] : normal[keycode - 0x1E];
+    }
+
+    if (keycode == 0x27)
+        return shift ? ')' : '0';
+
+    switch (keycode) {
+        case 0x2C: return ' ';
+        case 0x2D: return shift ? '_' : '-';
+        case 0x2E: return shift ? '+' : '=';
+        case 0x2F: return shift ? '{' : '[';
+        case 0x30: return shift ? '}' : ']';
+        case 0x31: return shift ? '|' : '\\';
+        case 0x33: return shift ? ':' : ';';
+        case 0x34: return shift ? '"' : '\'';
+        case 0x35: return shift ? '~' : '`';
+        case 0x36: return shift ? '<' : ',';
+        case 0x37: return shift ? '>' : '.';
+        case 0x38: return shift ? '?' : '/';
+        default:   return 0;
+    }
+}
+
+static void launcher_launch_selected() {
+    launcher_program_t* item = launcher_match_at(launcher_selected);
+
+    if (!item) {
+        launcher_status = "No matching programs";
+        compositor_invalidate();
+        return;
+    }
+
+    if (!launcher_spawn_callback) {
+        launcher_status = "Process launch handler not installed";
+        compositor_invalidate();
+        return;
+    }
+
+    char path[LAUNCHER_PATH_MAX + 1];
+    const char prefix[] = "/bin/";
+    u32 pos = 0;
+
+    for (u32 i = 0; i < sizeof(prefix) - 1; ++i) {
+        path[pos++] = prefix[i];
+    }
+
+    for (u32 i = 0; item->name[i]; ++i) {
+        path[pos++] = item->name[i];
+    }
+
+    path[pos] = '\0';
+
+    char out_path[LAUNCHER_PATH_MAX + 1];
+
+    vfs_resolve_path("/", path, out_path, sizeof(out_path));
+
+    if (launcher_spawn_callback(path)) {
+        launcher_open = false;
+        launcher_status = NULL;
+    } else {
+        launcher_status = "Could not start program";
+    }
+
+    compositor_invalidate();
+}
+
+b8 compositor_handle_key_event(u16 keycode, b8 pressed) {
+    if (keycode == HID_KEY_LEFT_GUI || keycode == HID_KEY_RIGHT_GUI) {
+        if (keycode == HID_KEY_LEFT_GUI) {
+            launcher_left_super_down = pressed;
+        }
+        else {
+            launcher_right_super_down = pressed;
+        }
+
+        if (keycode < 256) {
+            launcher_eat_keyup[keycode] = pressed;
+        }
+
+        return true;
+    }
+
+    if (keycode == HID_KEY_LEFT_SHIFT || keycode == HID_KEY_RIGHT_SHIFT) {
+        launcher_shift_down = pressed;
+
+        if (launcher_open) {
+            if (keycode < 256) {
+                launcher_eat_keyup[keycode] = pressed;
+            }
+
+            return true;
+        }
+
+        if (!pressed && keycode < 256 && launcher_eat_keyup[keycode]) {
+            launcher_eat_keyup[keycode] = false;
+            return true;
+        }
+
+        return false;
+    }
+
+    // consume matching releases even if the overlay just closed
+    if (!pressed && keycode < 256 &&
+        launcher_eat_keyup[keycode]) {
+        launcher_eat_keyup[keycode] = false;
+        return true;
+    }
+
+    // win + s
+    if (pressed && launcher_super_down() && keycode == HID_KEY_S) {
+        if (!launcher_open) {
+            launcher_open_search();
+        }
+
+        if (keycode < 256) {
+            launcher_eat_keyup[keycode] = true;
+        }
+
+        return true;
+    }
+
+    if (!launcher_open)
+        return false;
+
+    // while open, the launcher owns keyboard input
+    if (!pressed) {
+        return true;
+    }
+
+    if (keycode < 256) {
+        launcher_eat_keyup[keycode] = true;
+    }
+
+    switch (keycode) {
+        case HID_KEY_ESCAPE: {
+            launcher_open = false;
+            launcher_status = NULL;
+            compositor_invalidate();
+            return true;
+        }
+        case HID_KEY_ENTER: {
+            launcher_launch_selected();
+            return true;
+        }
+        case HID_KEY_BACKSPACE: {
+            if (launcher_query_len > 0) {
+                launcher_query[--launcher_query_len] = '\0';
+                launcher_selected = 0;
+                launcher_status = NULL;
+                compositor_invalidate();
+            }
+            return true;
+        }
+        case HID_KEY_UP_ARROW: {
+            if (launcher_selected > 0) {
+                --launcher_selected;
+            }
+
+            launcher_status = NULL;
+            compositor_invalidate();
+            return true;
+        }
+        case HID_KEY_DOWN_ARROW: {
+            u32 count = launcher_match_count();
+
+            if (count && launcher_selected + 1 < count) {
+                ++launcher_selected;
+            }
+
+            launcher_status = NULL;
+            compositor_invalidate();
+            return true;
+        }
+        default: {
+            break;
+        }
+    }
+
+    char c = launcher_key_to_ascii(keycode, launcher_shift_down);
+
+    if (c && launcher_query_len < LAUNCHER_QUERY_MAX) {
+        launcher_query[launcher_query_len++] = c;
+        launcher_query[launcher_query_len] = '\0';
+        launcher_selected = 0;
+        launcher_status = NULL;
+        compositor_invalidate();
+    }
+
+    return true;
+}
+
+void compositor_set_program_spawn_fn(compositor_program_spawn_fn fn) {
+    launcher_spawn_callback = fn;
 }

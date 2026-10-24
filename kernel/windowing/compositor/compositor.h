@@ -56,3 +56,9 @@ b8 compositor_set_wallpaper(const char* path);
  * @brief Queues a wallpaper change, calling `callback` when done.
  */
 void compositor_queue_set_wallpaper(const char* path);
+
+typedef b8 (*compositor_program_spawn_fn)(const char* absolute_path);
+
+void compositor_set_program_spawn_fn(compositor_program_spawn_fn fn);
+
+b8 compositor_handle_key_event(u16 keycode, b8 pressed);
