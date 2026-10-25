@@ -10,6 +10,8 @@
 #include <filesystem/sys_dirent.h>
 #include <arch/x86_64/uapi_cpuid.h>
 
+#define USER_PATH_MAX 256
+
 // TODO: maybe align to linux
 // VERY IMPORTANT: IF THESE ARE CHANGED THEY MUST BE UPDATED IN unistd and libwindow
 #define SYS_READ                        0
@@ -37,7 +39,8 @@
 #define SYS_SLEEP_NS                    22
 #define SYS_SET_DESKTOP_ENV_VAR         23
 #define SYS_HWMON_GET_CPU_TEMP_MC       24
-#define SYS_HWMON_GET_ONLINE_CPUS       24
+#define SYS_HWMON_GET_ONLINE_CPUS       25
+#define SYS_HWMON_GET_TOTAL_CPUS        26
 // NOTE: userspace should just use SYS_CLOSE on directories it'll work fine
 
 // NOTE: Must match stack pushes in arch/x86_64/syscall.asm
@@ -67,7 +70,7 @@ ssize_t sys_read(fd_t fd, void* buffer, size_t size);
 ssize_t sys_write(fd_t fd, const void* buffer, size_t size);
 int sys_close(fd_t fd);
 __attribute__((noreturn)) void sys_exit(int code);
-u64 sys_spawn(const char* user_path);
+u64 sys_spawn(const char* user_path, int argc, const char* const user_argv[]);
 u64 sys_wait(u64 pid);
 ssize_t sys_window_create(const window_config_t* user_config);
 ssize_t sys_window_destroy();
@@ -86,7 +89,9 @@ ssize_t sys_open(const char* user_path, int flags);
 ssize_t sys_seek(fd_t fd, ssize_t offset, int whence);
 void sys_sleep_ns(u32 ns);
 ssize_t sys_set_desktop_env_var(desktop_env_var_t var, void* val, size_t length);
-i32 sys_get_cpu_temp_c();
+i32 sys_hwmon_get_cpu_temp_c();
+u64 sys_hwmon_get_online_cpus();
+u64 sys_hwmon_get_total_cpus();
 
 u64 syscall_dispatch(struct syscall_regs* r);
 void syscall_handler(struct syscall_regs* r);

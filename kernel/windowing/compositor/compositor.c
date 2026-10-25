@@ -113,6 +113,8 @@ static compositor_image_t desktop_wallpaper;
 static u32 wallpaper_queued = 0;
 char g_new_wallpaper_path[256];
 
+static mutex_t wallpaper_mutex;
+
 static xenon_surface_t* target;
 static u32 frame_invalidated = 1;
 
@@ -982,6 +984,8 @@ static void render_window( xenon_surface_t* s, const window_snapshot_t* win) {
 }
 
 static void render_desktop_background() {
+    mutex_lock(&wallpaper_mutex);
+
     if (desktop_wallpaper.pixels) {
         compositor_image_draw(target, &desktop_wallpaper, 0, 0, 0);
     }
@@ -990,6 +994,8 @@ static void render_desktop_background() {
         xenon_surface_str(target, 20, 20, "Xenon Desktop", TEXT_WHITE);
         xenon_surface_str(target, 20, 40, "Development build", TEXT_MUTED);
     }
+
+    mutex_unlock(&wallpaper_mutex);
 
     render_taskbar(target);
 }
@@ -1005,6 +1011,7 @@ b8 compositor_init(xenon_surface_t* surface) {
 
     spin_lock_init(&surfaces_lock);
     spin_lock_init(&crash_queue_lock);
+    mutex_init(&wallpaper_mutex);
 
     window_server_set_invalidate_callback(compositor_invalidate);
     clamp_cursor();
@@ -1021,13 +1028,13 @@ b8 compositor_init(xenon_surface_t* surface) {
 void compositor_invalidate() { __atomic_store_n(&frame_invalidated, 1, __ATOMIC_RELEASE); }
 
 void compositor_render() {
-    // also sets frame_invalidated to false
-    if (!target || !__atomic_exchange_n(&frame_invalidated, 0, __ATOMIC_ACQUIRE)) { return; }
-
     if (__atomic_exchange_n(&wallpaper_queued, 0, __ATOMIC_ACQUIRE)) {
         compositor_set_wallpaper(g_new_wallpaper_path);
     }
 
+    // also sets frame_invalidated to false
+    if (!target || !__atomic_exchange_n(&frame_invalidated, 0, __ATOMIC_ACQUIRE)) { return; }
+    
     // TODO: remove this sucks
     window_surface_handle_t invalid_surface = WINDOW_SURFACE_INVALID_HANDLE;
 
@@ -1335,8 +1342,6 @@ const window_surface_t* compositor_create_surface_for_window(window_t* window) {
     u64 flags = 0;
     spin_lock_irqsave(&surfaces_lock, &flags);
 
-    __atomic_add_fetch(&surfaces[surfaces_count].refcount, 1, __ATOMIC_RELAXED);
-
     surfaces[surfaces_count] = (window_surface_t) {
         .width = width,
         .height = height,
@@ -1345,9 +1350,12 @@ const window_surface_t* compositor_create_surface_for_window(window_t* window) {
         .handle = (window_surface_handle_t)surfaces_count, // TODO: better
         .pixels = pixels
     };
+
+    __atomic_add_fetch(&surfaces[surfaces_count].refcount, 1, __ATOMIC_RELAXED);
     
     if (!window_server_set_surface(window, &surfaces[surfaces_count])) {
         surfaces[surfaces_count].pixels = NULL;
+        spin_unlock_irqrestore(&surfaces_lock, flags);
         kfree(pixels);
         return NULL;
     }
@@ -1400,9 +1408,16 @@ b8 compositor_set_wallpaper(const char* path) {
         scaled.pixels[i] |= 0xFF000000;
     }
 
-    // replace the previous wallpaper only after successful loading
-    compositor_image_destroy(&desktop_wallpaper);
+    mutex_lock(&wallpaper_mutex);
+
+    compositor_image_t old = desktop_wallpaper;
     desktop_wallpaper = scaled;
+
+    mutex_unlock(&wallpaper_mutex);
+    
+    // replace the previous wallpaper only after successful loading
+    // safe only if every reader uses the same mutex
+    compositor_image_destroy(&old);
 
     compositor_invalidate();
     return true;
@@ -1411,8 +1426,8 @@ b8 compositor_set_wallpaper(const char* path) {
 void compositor_queue_set_wallpaper(const char* path) {
     if (!path) { return; }
 
-    __atomic_store_n(&wallpaper_queued, 1, __ATOMIC_RELEASE);
     strncpy(g_new_wallpaper_path, path, sizeof(g_new_wallpaper_path));
+    __atomic_store_n(&wallpaper_queued, 1, __ATOMIC_RELEASE);
 }
 
 static b8 launcher_super_down() {

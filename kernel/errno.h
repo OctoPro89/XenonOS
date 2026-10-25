@@ -5,6 +5,7 @@
 #define ESRCH           3  // No such process
 #define EINTR           4  // Interrupted system call
 #define EIO             5  // I/O error
+#define	E2BIG		    7  // Argument list too long
 #define EBADF           9  // Bad file number
 #define ECHILD          10 // No child processes
 #define EAGAIN          11 // Try again

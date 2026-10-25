@@ -318,11 +318,8 @@ void DG_SetWindowTitle(const char* title) {
     // TODO:
 }
 
-int main(void) {
-    // TODO: args
-    char arg[64];
-    strncpy(arg, "doom", 64);
-    doomgeneric_Create(1, (char**)&arg);
+int main(int argc, char** argv) {
+    doomgeneric_Create(argc, argv);
 
     while (!quit) {
         doomgeneric_Tick();

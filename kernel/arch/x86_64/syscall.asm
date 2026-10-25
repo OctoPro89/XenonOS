@@ -81,10 +81,10 @@ syscall_entry:
 
     mov rax, [rsp]
 
-    ; Discard saved RAX.
+    ; discard saved RAX
     add rsp, 8
 
-    ; Restore everything else.
+    ; restore everything else
     pop rbx
     pop rdx
     pop rsi

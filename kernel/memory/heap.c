@@ -4,15 +4,14 @@
 #include <xlibc/string.h>
 #include <xlibc/xassert.h>
 
-/*
-    *** IMPORTANT NOTE ***
-    The current block header is likely 24 bytes on x86_64 so the returned
-    pointers are probably only 8 byte aligned instead of 16 bytes. This may
-    cause problems with SIMD
-*/
+// TODO: rollback pages
 
 #define HEAP_START 0xFFFFA00000000000ULL
 #define HEAP_END   0xFFFFA00010000000ULL
+
+#define HEAP_ALIGN 16
+
+#define HEAP_HEADER_SIZE ((sizeof(heap_block) + HEAP_ALIGN - 1) & ~(size_t)(HEAP_ALIGN - 1))
 
 typedef struct heap_block {
     size_t size;
@@ -25,7 +24,7 @@ static vaddr_t heap_ptr = HEAP_START;
 
 static void* heap_expand(size_t size)
 {
-    size_t total = size + sizeof(heap_block);
+    size_t total = size + HEAP_HEADER_SIZE;
     size_t pages = (total + 0xFFF) / PAGE_SIZE;
 
     xassert(heap_ptr + pages * PAGE_SIZE < HEAP_END, "Invalid heap_expand()");
@@ -34,14 +33,20 @@ static void* heap_expand(size_t size)
 
     for (size_t i = 0; i < pages; i++) {
         paddr_t phys = pmm_alloc_page();
+        if (phys == 0) {
+            return NULL;
+        }
 
-        vmm_map(&kernel_space, heap_ptr, phys, PAGE_PRESENT | PAGE_WRITABLE);
+        if (vmm_map(&kernel_space, heap_ptr, phys, PAGE_PRESENT | PAGE_WRITABLE) != 0) {
+            pmm_free_page(phys);
+            return NULL;
+        }
 
         heap_ptr += PAGE_SIZE;
     }
 
     heap_block* block = (heap_block*)start;
-    block->size = pages * PAGE_SIZE - sizeof(heap_block);
+    block->size = pages * PAGE_SIZE - HEAP_HEADER_SIZE;
     block->free = 1;
     block->next = NULL;
 
@@ -62,11 +67,11 @@ static heap_block* find_free(size_t size)
 
 static void split(heap_block* block, size_t size)
 {
-    if (block->size <= size + sizeof(heap_block)) { return; }
+    if (block->size <= size + HEAP_HEADER_SIZE) { return; }
 
-    heap_block* newb = (heap_block*)((uint8_t*)block + sizeof(heap_block) + size);
+    heap_block* newb = (heap_block*)((uint8_t*)block + HEAP_HEADER_SIZE + size);
 
-    newb->size = block->size - size - sizeof(heap_block);
+    newb->size = block->size - size - HEAP_HEADER_SIZE;
     newb->free = 1;
     newb->next = block->next;
 
@@ -78,12 +83,20 @@ void* kmalloc(size_t size)
 {
     if (!size) { return NULL; }
 
+    if (size > SIZE_MAX - 15) {
+        return NULL;
+    }
+
     size = (size + 15) & ~15;
 
     heap_block* block = find_free(size);
 
     if (!block) {
         block = heap_expand(size);
+
+        if (!block) {
+            return NULL;
+        }
 
         if (!heap_head) { heap_head = block; }
         else {
@@ -96,14 +109,14 @@ void* kmalloc(size_t size)
     split(block, size);
     block->free = 0;
 
-    return (void*)((uint8_t*)block + sizeof(heap_block));
+    return (void*)((uint8_t*)block + HEAP_HEADER_SIZE);
 }
 
 void kfree(void* ptr)
 {
     if (!ptr) return;
 
-    heap_block* block = (heap_block*)((uint8_t*)ptr - sizeof(heap_block));
+    heap_block* block = (heap_block*)((uint8_t*)ptr - HEAP_HEADER_SIZE);
 
     block->free = 1;
 
@@ -111,7 +124,7 @@ void kfree(void* ptr)
 
     while (curr && curr->next) {
         if (curr->free && curr->next->free) {
-            curr->size += sizeof(heap_block) + curr->next->size;
+            curr->size += HEAP_HEADER_SIZE + curr->next->size;
             curr->next = curr->next->next;
         } else {
             curr = curr->next;
@@ -139,7 +152,7 @@ void* krealloc(void* ptr, size_t size)
 
     size = (size + 15) & ~(size_t)15;
 
-    heap_block* block = (heap_block*)((uint8_t*)ptr - sizeof(heap_block));
+    heap_block* block = (heap_block*)((uint8_t*)ptr - HEAP_HEADER_SIZE);
 
     // shrink in place, or retain the existing block if the unused tail would be too small to split
     if (block->size >= size) {
@@ -150,8 +163,8 @@ void* krealloc(void* ptr, size_t size)
     // try to grow into the immediately following free block
     heap_block* next = block->next;
 
-    if (next && next->free && next->size <= SIZE_MAX - sizeof(heap_block) - block->size && block->size + sizeof(heap_block) + next->size >= size) {
-        block->size += sizeof(heap_block) + next->size;
+    if (next && next->free && next->size <= SIZE_MAX - HEAP_HEADER_SIZE - block->size && block->size + HEAP_HEADER_SIZE + next->size >= size) {
+        block->size += HEAP_HEADER_SIZE + next->size;
         block->next = next->next;
 
         split(block, size);

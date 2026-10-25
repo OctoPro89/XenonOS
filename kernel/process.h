@@ -7,6 +7,9 @@
 #include <tty/terminal.h>
 
 #define PROCESS_CWD_MAX 256
+#define PROCESS_MAX_ARGS 64
+#define PROCESS_MAX_ARG_BYTES 16384
+#define PROCESS_STACK_PAGES 8
 
 struct regs;
 typedef struct process process_t;
@@ -38,6 +41,8 @@ struct process {
 
     u64 entry;
     u64 user_stack_top;
+
+    u64 initial_user_rsp; // holds the final stack pointer after argument data has been constructed
 
     task_t* main_task;
     window_t* window; // for now processes only have one window
@@ -73,3 +78,5 @@ int process_setup_stdio(process_t* process, terminal_t* terminal);
 void user_process_task_entry(void* arg);
 
 void process_handle_user_exception(struct regs* regs) __attribute__((noreturn));
+
+int process_setup_arguments(process_t* process, int argc, const char* const argv[]);

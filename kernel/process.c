@@ -2,6 +2,9 @@
 #include <task.h>
 #include <errno.h>
 #include <memory/heap.h>
+#include <memory/pmm.h>
+#include <memory/paging.h>
+#include <memory/vmm.h>
 #include <xlibc/string.h>
 #include <xlibc/xassert.h>
 #include <io/terminal_file.h>
@@ -10,10 +13,171 @@
 #include <arch/x86_64/irq.h>
 #include <arch/x86_64/io.h>
 #include <unistd.h>
+#include <errno.h>
 
 static process_t* process_list;
 static spinlock_t process_list_lock;
 static pid_t next_pid = 1;
+
+
+static u64 align_down_16(u64 value) {
+    return value & ~0xFULL;
+}
+
+int process_setup_arguments(process_t* process, int argc, const char* const argv[]) {
+    if (!process || argc < 0 || argc > PROCESS_MAX_ARGS) {
+        return -EINVAL;
+    }
+
+    if (argc > 0 && !argv) {
+        return -EINVAL;
+    }
+
+    const u64 stack_top = process->user_stack_top;
+    const u64 stack_bottom = stack_top - (PROCESS_STACK_PAGES * PAGE_SIZE);
+
+    /*
+        need to access the child's user stack through its
+        virtual addresses while writing to its physical pages
+    
+        since this function runs in the kernel, do not simply
+        dereference child user virtual addresses: the child's
+        address space may not be the currently active one
+    
+        use a temporary mapping-independent write helper below
+     */
+
+    u64 sp = stack_top;
+    u64 argv_user[PROCESS_MAX_ARGS];
+
+    // copy strings onto the stack, from last argument to first
+    size_t total_string_bytes = 0;
+
+    for (int i = argc - 1; i >= 0; --i) {
+        if (!argv[i]) {
+            return -EINVAL;
+        }
+
+        size_t len = strlen(argv[i]) + 1;
+
+        if (len > PROCESS_MAX_ARG_BYTES - total_string_bytes) {
+            return -E2BIG;
+        }
+
+        total_string_bytes += len;
+
+        if (sp < stack_bottom || len > sp - stack_bottom) {
+            return -E2BIG;
+        }
+
+        sp -= len;
+
+        // record the child's USER VIRTUAL ADDRESS, argv[i] itself is a kernel pointer here
+        argv_user[i] = sp;
+
+        // copy the string into the child's address space
+        size_t copied = 0;
+
+        while (copied < len) {
+            u64 page_va = (sp + copied) & ~(PAGE_SIZE - 1);
+            size_t page_offset = (sp + copied) - page_va;
+            size_t chunk = PAGE_SIZE - page_offset;
+
+            if (chunk > len - copied) {
+                chunk = len - copied;
+            }
+
+            paddr_t phys = vmm_virt_to_phys(process->space, page_va);
+
+            if (!phys) {
+                return -EFAULT;
+            }
+
+            void* dest = (u8*)phys_to_hhdm(phys) + page_offset;
+
+            memcpy(dest, argv[i] + copied, chunk);
+
+            copied += chunk;
+        }
+    }
+
+    /*
+     * reserve:
+     *   argc             8 bytes
+     *   argv[0..argc-1]  argc * 8 bytes
+     *   argv[argc]       8 bytes (NULL)
+     *
+     * the whole initial stack area starts at a 16-byte aligned address
+     */
+    u64 table_words = (u64)argc + 2;
+    u64 table_bytes = table_words * sizeof(u64);
+
+    if (sp < stack_bottom || table_bytes > sp - stack_bottom) {
+        return -E2BIG;
+    }
+
+    // place the table below the strings, then align its start down to a 16-byte boundary
+    u64 table_start = align_down_16(sp - table_bytes);
+
+    if (table_start < stack_bottom) {
+        return -E2BIG;
+    }
+
+    sp = table_start;
+
+    /*
+     * construct a temporary kernel-side table
+     *
+     * layout:
+     *   [0]         argc
+     *   [1]         argv[0]
+     *   ...
+     *   [argc]      argv[argc - 1]
+     *   [argc + 1]  NULL
+     */
+    u64 initial_stack[PROCESS_MAX_ARGS + 2];
+
+    initial_stack[0] = (u64)argc;
+
+    for (int i = 0; i < argc; ++i) {
+        initial_stack[i + 1] = argv_user[i];
+    }
+
+    initial_stack[argc + 1] = 0;
+
+    // write the table into the address spaec
+    size_t table_copied = 0;
+
+    while (table_copied < table_bytes) {
+        u64 dest_va = sp + table_copied;
+        u64 page_va = dest_va & ~(PAGE_SIZE - 1);
+        size_t page_offset = dest_va - page_va;
+
+        size_t chunk = PAGE_SIZE - page_offset;
+
+        if (chunk > table_bytes - table_copied) {
+            chunk = table_bytes - table_copied;
+        }
+
+        paddr_t phys = vmm_virt_to_phys(process->space, page_va);
+
+        if (!phys) {
+            return -EFAULT;
+        }
+
+        void* dest = (u8*)phys_to_hhdm(phys) + page_offset;
+
+        memcpy(dest, (const u8*)initial_stack + table_copied, chunk);
+
+        table_copied += chunk;
+    }
+
+    // rsp points to argc argv begins at rsp+ 8
+    process->user_stack_top = stack_top;
+    process->initial_user_rsp = sp;
+
+    return 0;
+}
 
 static void process_register(process_t* process) {
     u64 flags = 0;
@@ -232,12 +396,19 @@ extern void ASMCALL enter_user_mode(u64 entry, u64 stack) __attribute__((noretur
 
 void user_process_task_entry(void* arg) {
     process_t* process = arg;
+
     vmm_switch(process->space);
 
-    // TODO: / IMPORTANT NOTE: this HAS TO HAPPEN with compiled code because of alignment. ELF entry expects 16 byte alignment but since
-    // the "call" instruction isn't being used the alignments can disagree. Using -O1 -O2 -O3 can all expose this. Please keep this in mind
-    // for the future
-    u64 user_rsp = (process->user_stack_top & ~0xFULL) - 8;
+    /*
+     * initial_user_rsp points to:
+     *   [rsp]       = argc
+     *   [rsp + 8]   = argv[0]
+     *   ...
+     *   [rsp + 8 * (argc + 1)] = NULL
+     *
+     * process_setup_arguments() has already aligned RSP to 16 bytes
+     */
+    u64 user_rsp = process->initial_user_rsp;
 
     enter_user_mode(process->entry, user_rsp);
 

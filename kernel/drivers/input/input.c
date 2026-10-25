@@ -31,24 +31,30 @@ b8 input_init() {
     return true;
 }
 
-b8 input_push_keyboard_event(const input_keyboard_event_t* evt) {
+b8 input_push_keyboard_event(const input_keyboard_event_t *evt)
+{
     if (!g_kbd_rb || !evt) {
         return false;
     }
 
+    // let the compositor handle shortcuts and other global keys
+    if (compositor_handle_key_event(evt->usage, evt->action == INPUT_KBD_ACTION_DOWN)) {
+        return true;
+    }
+
+    // try to deliver the event to the focused window
+    if (window_server_notify_keyboard_subscribers(evt)) {
+        return true;
+    }
+
+    // no window handled it: enqueue it for raw keyboard consumers (terminal)
     u64 flags;
     spin_lock_irqsave(&g_kbd_wait_lock, &flags);
 
     b8 pushed = ring_buffer_push(g_kbd_rb, evt);
 
     if (pushed) {
-        // TODO: decide who gets input
-        if (compositor_handle_key_event(evt->usage, evt->action == INPUT_KBD_ACTION_DOWN)) {
-            // consumed
-        }
-        else if (!window_server_notify_keyboard_subscribers(evt)) {
-            wait_queue_wake_one_locked(&g_kbd_waiters);
-        }
+        wait_queue_wake_one_locked(&g_kbd_waiters);
     }
 
     spin_unlock_irqrestore(&g_kbd_wait_lock, flags);

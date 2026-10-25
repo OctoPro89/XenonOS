@@ -97,7 +97,7 @@ static void exception_panic(struct regs* r) {
     }
     printf(" ===\r\n");
 
-    printf("INT:    ");  serial_write_dec(r->int_no);
+    printf("INT:    ");  printf("%llu", r->int_no);
     printf("  ERR: "); printf("%x", r->err_code);
     printf("\r\n");
 

@@ -22,5 +22,5 @@ void* sbrk(ssize_t increment);
 
 // TODO: move to real header
 typedef u64 pid_t;
-pid_t spawn(const char* path);
+pid_t spawn(const char* path, int argc, const char* const* argv);
 int wait(pid_t pid);

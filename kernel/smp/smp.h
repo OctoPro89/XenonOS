@@ -27,13 +27,13 @@ typedef enum {
     SMP_CPU_INIT_RESULT_ERR_NO_CPUS = -1,
     SMP_CPU_INIT_RESULT_ERR_BOOT_TIMEOUT = -2,
     SMP_CPU_INIT_RESULT_ERR_PREPARE = -3
-} cpu_init_result_t;
+} smp_cpu_init_result_t;
 
 /**
  * @brief Enumerate CPUs from ACPI MADT and initialize the SMP subsystem.
  * Marks the BSP as online, all APs as offline.
  * @note Call after acpi_init().
- * @returns SMP_CPU_INIT_RESULT_OK on success, otherwise a negative cpu_init_result_t.
+ * @returns SMP_CPU_INIT_RESULT_OK on success, otherwise a negative smp_cpu_init_result_t.
  */
 __PRIVILEGED_CODE i32 smp_init();
 

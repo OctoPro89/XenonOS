@@ -11,6 +11,8 @@
 
 #include <drivers/usb/usb_descriptors.h>
 
+// TODO: multiple readers causes issues
+
 #define MSC_BOT_RESET          0xFF
 
 #define SCSI_TEST_UNIT_READY   0x00
@@ -346,7 +348,9 @@ static void msc_driver_run(void* _self) {
 
     printf("[USB-MSC]: Device initialized successfully\n");
 
-    g_initialize_callback(self);
+    if (g_initialize_callback) {
+        g_initialize_callback(self);
+    }
 }
 
 static void msc_driver_disconnect(void* _self) {

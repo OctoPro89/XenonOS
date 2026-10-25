@@ -228,6 +228,8 @@ int process_load_elf(process_t* process, const char* path) {
             return -ENOMEM;
         }
 
+        memset((void*)phys_to_hhdm(phys), 0, PAGE_SIZE);
+
         int rc = vmm_map(process->space, USER_STACK_TOP - ((u64)(i + 1) * PAGE_SIZE), phys, PAGE_PRESENT | PAGE_USER | PAGE_WRITABLE);
         if (rc < 0) {
             pmm_free_page(phys);

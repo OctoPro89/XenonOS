@@ -96,9 +96,13 @@ build/user/libwindow/libwindow.a: $(LIBWINDOW_C_OBJS)
 	mkdir -p $(dir $@)
 	ar rcs $@ $^
 
-build/user/start.o: user/start.c
+build/user/start_c.o: user/start.c
 	mkdir -p $(dir $@)
 	clang $(USERCFLAGS) $< -o $@ -I"kernel/" -I"user/"
+
+build/user/start_asm.o: user/start.asm
+	mkdir -p $(dir $@)
+	nasm $(ASMFLAGS) $< -o $@
 
 # xeterm
 build/user/apps/xeterm.o: user/apps/xeterm/xeterm.c
@@ -106,13 +110,15 @@ build/user/apps/xeterm.o: user/apps/xeterm/xeterm.c
 	clang $(USERCFLAGS) $< -o $@ -I"kernel/" -I"user/"
 
 build/user/apps/sh: \
-	build/user/start.o \
+	build/user/start_c.o \
+	build/user/start_asm.o \
 	build/user/apps/xeterm.o \
 	build/user/libc/libc.a \
 	build/user/libwindow/libwindow.a
 	ld.lld -T user/user.ld \
 		build/user/apps/xeterm.o \
-		build/user/start.o \
+		build/user/start_c.o \
+		build/user/start_asm.o \
 		build/user/libc/libc.a \
 		build/user/libwindow/libwindow.a \
 		-o $@
@@ -123,12 +129,31 @@ build/user/apps/ls.o: user/apps/ls/ls.c
 	clang $(USERCFLAGS) $< -o $@ -I"kernel/" -I"user/"
 
 build/user/apps/ls: \
-	build/user/start.o \
+	build/user/start_c.o \
+	build/user/start_asm.o \
 	build/user/apps/ls.o \
 	build/user/libc/libc.a
 	ld.lld -T user/user.ld \
 		build/user/apps/ls.o \
-		build/user/start.o \
+		build/user/start_c.o \
+		build/user/start_asm.o \
+		build/user/libc/libc.a \
+		-o $@
+
+# cat
+build/user/apps/cat.o: user/apps/cat/cat.c
+	mkdir -p $(dir $@)
+	clang $(USERCFLAGS) $< -o $@ -I"kernel/" -I"user/"
+
+build/user/apps/cat: \
+	build/user/start_c.o \
+	build/user/start_asm.o \
+	build/user/apps/cat.o \
+	build/user/libc/libc.a
+	ld.lld -T user/user.ld \
+		build/user/apps/cat.o \
+		build/user/start_c.o \
+		build/user/start_asm.o \
 		build/user/libc/libc.a \
 		-o $@
 
@@ -138,12 +163,14 @@ build/user/apps/lscpu.o: user/apps/lscpu/lscpu.c
 	clang $(USERCFLAGS) $< -o $@ -I"kernel/" -I"user/"
 
 build/user/apps/lscpu: \
-	build/user/start.o \
+	build/user/start_c.o \
+	build/user/start_asm.o \
 	build/user/apps/lscpu.o \
 	build/user/libc/libc.a
 	ld.lld -T user/user.ld \
 		build/user/apps/lscpu.o \
-		build/user/start.o \
+		build/user/start_c.o \
+		build/user/start_asm.o \
 		build/user/libc/libc.a \
 		-o $@
 
@@ -153,12 +180,14 @@ build/user/apps/wintest.o: user/apps/wintest/wintest.c
 	clang $(USERCFLAGS) $< -o $@ -I"kernel/" -I"user/"
 
 build/user/apps/wintest: \
-	build/user/start.o \
+	build/user/start_c.o \
+	build/user/start_asm.o \
 	build/user/apps/wintest.o \
 	build/user/libc/libc.a
 	ld.lld -T user/user.ld \
 		build/user/apps/wintest.o \
-		build/user/start.o \
+		build/user/start_c.o \
+		build/user/start_asm.o \
 		build/user/libc/libc.a \
 		build/user/libwindow/libwindow.a \
 		-o $@
@@ -169,12 +198,14 @@ build/user/apps/heaptest.o: user/apps/heaptest/heaptest.c
 	clang $(USERCFLAGS) $< -o $@ -I"kernel/" -I"user/"
 
 build/user/apps/heaptest: \
-	build/user/start.o \
+	build/user/start_c.o \
+	build/user/start_asm.o \
 	build/user/apps/heaptest.o \
 	build/user/libc/libc.a
 	ld.lld -T user/user.ld \
 		build/user/apps/heaptest.o \
-		build/user/start.o \
+		build/user/start_c.o \
+		build/user/start_asm.o \
 		build/user/libc/libc.a \
 		-o $@
 
@@ -184,15 +215,16 @@ build/user/apps/fstest.o: user/apps/fstest/fstest.c
 	clang $(USERCFLAGS) $< -o $@ -I"kernel/" -I"user/"
 
 build/user/apps/fstest: \
-	build/user/start.o \
+	build/user/start_c.o \
+	build/user/start_asm.o \
 	build/user/apps/fstest.o \
 	build/user/libc/libc.a
 	ld.lld -T user/user.ld \
 		build/user/apps/fstest.o \
-		build/user/start.o \
+		build/user/start_c.o \
+		build/user/start_asm.o \
 		build/user/libc/libc.a \
 		-o $@
-
 	
 # crashtest
 build/user/apps/crashtest.o: user/apps/crashtest/crashtest.c
@@ -200,12 +232,14 @@ build/user/apps/crashtest.o: user/apps/crashtest/crashtest.c
 	clang $(USERCFLAGS) $< -o $@ -I"kernel/" -I"user/"
 
 build/user/apps/crashtest: \
-	build/user/start.o \
+	build/user/start_c.o \
+	build/user/start_asm.o \
 	build/user/apps/crashtest.o \
 	build/user/libc/libc.a
 	ld.lld -T user/user.ld \
 		build/user/apps/crashtest.o \
-		build/user/start.o \
+		build/user/start_c.o \
+		build/user/start_asm.o \
 		build/user/libc/libc.a \
 		-o $@
 
@@ -215,12 +249,14 @@ build/user/apps/de_setvar.o: user/apps/de_setvar/de_setvar.c
 	clang $(USERCFLAGS) $< -o $@ -I"kernel/" -I"user/"
 
 build/user/apps/de_setvar: \
-	build/user/start.o \
+	build/user/start_c.o \
+	build/user/start_asm.o \
 	build/user/apps/de_setvar.o \
 	build/user/libc/libc.a
 	ld.lld -T user/user.ld \
 		build/user/apps/de_setvar.o \
-		build/user/start.o \
+		build/user/start_c.o \
+		build/user/start_asm.o \
 		build/user/libc/libc.a \
 		-o $@
 
@@ -230,12 +266,14 @@ build/user/apps/hwmon.o: user/apps/hwmon/hwmon.c
 	clang $(USERCFLAGS) $< -o $@ -I"kernel/" -I"user/"
 
 build/user/apps/hwmon: \
-	build/user/start.o \
+	build/user/start_c.o \
+	build/user/start_asm.o \
 	build/user/apps/hwmon.o \
 	build/user/libc/libc.a
 	ld.lld -T user/user.ld \
 		build/user/apps/hwmon.o \
-		build/user/start.o \
+		build/user/start_c.o \
+		build/user/start_asm.o \
 		build/user/libc/libc.a \
 		build/user/libwindow/libwindow.a \
 		-o $@
@@ -246,12 +284,14 @@ build/user/apps/doomobjs/%.o: user/apps/doom/%.c
 	clang $(USERCFLAGS) -I"kernel/" -I"user/" -I"kernel/xlibc/" $< -o $@
 
 build/user/apps/doom: \
-    build/user/start.o \
+    build/user/start_c.o \
+    build/user/start_asm.o \
     $(DOOM_C_OBJS) \
     build/user/libc/libc.a \
 	build/user/libwindow/libwindow.a
 	ld.lld -T user/user.ld \
-	    build/user/start.o \
+	    build/user/start_c.o \
+	    build/user/start_asm.o \
 	    $(DOOM_C_OBJS) \
 	    build/user/libc/libc.a \
 		build/user/libwindow/libwindow.a \
@@ -260,7 +300,7 @@ build/user/apps/doom: \
 userapps: build/user/apps/sh build/user/apps/ls build/user/apps/lscpu \
 		  build/user/apps/doom build/user/apps/wintest build/user/apps/heaptest \
 		  build/user/apps/fstest build/user/apps/crashtest build/user/apps/de_setvar \
-		  build/user/apps/hwmon
+		  build/user/apps/hwmon build/user/apps/cat
 
 # --- Image ---
 image: build/BOOTX64.EFI build/kernel.elf

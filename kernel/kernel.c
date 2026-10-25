@@ -349,6 +349,15 @@ void launch_shell_task_entry(void* arg) {
         return;
     }
 
+    const char* const args[] = { { "xeterm" } };
+
+    result = process_setup_arguments(process, 1, args);
+    if (result < 0) {
+        printf("failed to start shell: %d\n", result);
+        process_destroy(process);
+        return;
+    }
+
     // set working directory, defaults to root
     strncpy(process->cwd, "/", PROCESS_CWD_MAX);
 
@@ -386,6 +395,15 @@ void launch_program_entry(void* arg) {
         return;
     }
 
+    const char* const args[] = { { path } };
+
+    result = process_setup_arguments(process, 1, args);
+    if (result < 0) {
+        printf("failed to start shell: %d\n", result);
+        process_destroy(process);
+        return;
+    }
+
     // set working directory, defaults to root
     strncpy(process->cwd, "/", PROCESS_CWD_MAX);
 
@@ -415,6 +433,8 @@ static b8 xenon_spawn_program(const char* absolute_path) {
     return false;
 }
 
+smp_cpu_init_result_t smp_result;
+
 static void kernel_main(void* arg) {
     if (!input_init()) {
         xassert(false, "");
@@ -422,6 +442,13 @@ static void kernel_main(void* arg) {
     kernel_setup_usb_drivers();
 
     printf("XenonOS v0.1\n");
+
+    if (smp_result == SMP_CPU_INIT_RESULT_OK) {
+        printf("Initialized SMP: %u/%u cores online.\n", smp_online_count(), smp_cpu_count());
+    }
+    else {
+        printf("Initializing SMP failed, using BSP only.\n");
+    }
 
     printf("Scanning for PCI devices...\n");
 
@@ -549,14 +576,7 @@ static void kernel_main(void* arg) {
         printf("Failed to init compositor!\n");
         for (;;);
     }
-
-#ifndef QEMU_DEBUG
-    if (!compositor_set_wallpaper("haimiya.png")) {
-        // TODO:
-        printf("Failed to load wallpaper image!\n");
-    }
-#endif
-
+    
     compositor_set_program_spawn_fn(xenon_spawn_program);
 
     // task_t* system_console_task = task_create(NULL, system_console_task_entry, NULL);
@@ -587,9 +607,7 @@ void ASMCALL kernel_main_trampoline(BootInfo* bootInfo) {
 
     lapic_init();
 
-    if (smp_init() != SMP_CPU_INIT_RESULT_OK) {
-        printf("Initializing SMP failed, using BSP only.\n");
-    }
+    smp_result = smp_init();
 
     u8 timer_irq_vector = irq_alloc_vector();
     irq_register_handler(timer_irq_vector, &timer_handler, NULL);

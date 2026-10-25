@@ -55,7 +55,8 @@ b8 compositor_set_wallpaper(const char* path);
 /**
  * @brief Queues a wallpaper change, calling `callback` when done.
  */
-void compositor_queue_set_wallpaper(const char* path);
+// TODO: this crashes and I don't know why
+// void compositor_queue_set_wallpaper(const char* path);
 
 typedef b8 (*compositor_program_spawn_fn)(const char* absolute_path);
 

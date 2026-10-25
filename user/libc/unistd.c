@@ -123,15 +123,17 @@ char* getcwd(char* buf, size_t size) {
     return buf;
 }
 
-pid_t spawn(const char *path) {
+pid_t spawn(const char* path, int argc, const char* const* argv) {
     long ret;
 
     asm volatile (
         "syscall"
         : "=a"(ret)
         : "a"(SYS_SPAWN),
-          "D"(path)
-        : "rcx", "r11", "r10", "memory"
+          "D"(path),
+          "S"((long)argc),
+          "d"(argv)
+        : "rcx", "r11", "memory"
     );
 
     return (pid_t)ret;

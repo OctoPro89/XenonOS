@@ -29,9 +29,13 @@ sudo cp build/user/apps/sh /mnt/usb/bin/
 sudo cp build/user/apps/doom /mnt/usb/bin/
 sudo cp build/user/apps/ls /mnt/usb/bin/
 sudo cp build/user/apps/lscpu /mnt/usb/bin/
+sudo cp build/user/apps/cat /mnt/usb/bin/
 sudo cp build/user/apps/heaptest /mnt/usb/bin/
 sudo cp build/user/apps/wintest /mnt/usb/bin/
 sudo cp build/user/apps/fstest /mnt/usb/bin/
+sudo cp build/user/apps/crashtest /mnt/usb/bin/
+sudo cp build/user/apps/de_setvar /mnt/usb/bin/
+sudo cp build/user/apps/hwmon /mnt/usb/bin/
 sudo cp hello /mnt/usb/bin/
 
 # Unmount

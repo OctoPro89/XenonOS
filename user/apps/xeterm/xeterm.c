@@ -7,6 +7,73 @@
 #include <unistd.h>
 #include <xlibc/stdio.h>
 
+#define SHELL_MAX_ARGS 32
+
+static int shell_tokenize(char* line, char** argv, int max_args) {
+    char* readp = line;
+    char* writep = line;
+    int argc = 0;
+
+    while (*readp) {
+        while (*readp == ' ' || *readp == '\t') {
+            ++readp;
+        }
+
+        if (*readp == '\0') {
+            break;
+        }
+
+        if (argc >= max_args) {
+            return -1;
+        }
+
+        argv[argc++] = writep;
+
+        char quote = '\0';
+
+        while (*readp) {
+            char c = *readp++;
+
+            if (quote) {
+                if (c == quote) {
+                    quote = '\0';
+                } else {
+                    *writep++ = c;
+                }
+                continue;
+            }
+
+            if (c == '\'' || c == '"') {
+                quote = c;
+                continue;
+            }
+
+            if (c == '\\') {
+                if (*readp == '\0') {
+                    return -1;
+                }
+                *writep++ = *readp++;
+                continue;
+            }
+
+            if (c == ' ' || c == '\t') {
+                break;
+            }
+
+            *writep++ = c;
+        }
+
+        if (quote) {
+            return -1;
+        }
+
+        *writep++ = '\0';
+    }
+
+    argv[argc] = NULL;
+    return argc;
+}
+
 int main(void) {
     // create window
     window_config_t wconfig = {
@@ -65,12 +132,24 @@ int main(void) {
             continue;
         }
 
-        if (strcmp(line, "exit") == 0) {
+        char *argv[SHELL_MAX_ARGS + 1];
+
+        int argc = shell_tokenize(line, argv, SHELL_MAX_ARGS);
+        if (argc < 0) {
+            printf("xeterm: invalid command line (too many arguments or unmatched quote)\n");
+            continue;
+        }
+
+        if (argc == 0) {
+            continue;
+        }
+
+        if (strcmp(argv[0], "exit") == 0) {
             window_destroy();
             return 0;
         }
 
-        if (strcmp(line, "pwd") == 0) {
+        if (strcmp(argv[0], "pwd") == 0) {
             if (getcwd(cwd, sizeof(cwd))) {
                 printf("%s\n", cwd);
             } else {
@@ -79,36 +158,47 @@ int main(void) {
             continue;
         }
 
-        if (strncmp(line, "cd", 2) == 0 && (line[2] == '\0' || line[2] == ' ' || line[2] == '\t')) {
-            char* target = line + 2;
-
-            while (*target == ' ' || *target == '\t') {
-                ++target;
-            }
-
-            if (*target == '\0') {
-                target = "/";
-            }
+        if (strcmp(argv[0], "cd") == 0) {
+            const char* target = (argc >= 2) ? argv[1] : "/";
 
             if (chdir(target) < 0) {
-                // printf("cd: cannot change directory to %s (errno %d)\n", target, errno);
                 printf("cd: cannot change directory to %s\n", target);
             }
             continue;
         }
 
-        if (strncmp(line, "clear", 5) == 0) {
+        if (strcmp(argv[0], "clear") == 0) {
             write(STDOUT_FILENO, "\033[2J", sizeof("\033[2J") - 1);
             continue;
         }
 
-        char path[256];
-        snprintf(path, sizeof(path), "/bin/%s", line);
+        int has_slash = 0;
+        for (const char* p = argv[0]; *p; ++p) {
+            if (*p == '/') {
+                has_slash = 1;
+                break;
+            }
+        }
 
-        pid_t pid = spawn(path);
+        char path[256];
+
+        if (has_slash) {
+            int n = snprintf(path, sizeof(path), "%s", argv[0]);
+            if (n < 0 || (size_t)n >= sizeof(path)) {
+                printf("xeterm: command path too long\n");
+                continue;
+            }
+        } else {
+            int n = snprintf(path, sizeof(path), "/bin/%s", argv[0]);
+            if (n < 0 || (size_t)n >= sizeof(path)) {
+                printf("xeterm: command path too long\n");
+                continue;
+            }
+        }
+
+        pid_t pid = spawn(path, argc, (const char* const*)argv);
 
         if ((i64)pid < 0) {
-            // printf("spawn failed (errno %d)\n", errno);
             printf("spawn failed: %lld\n", (long long)(i64)pid);
             continue;
         }

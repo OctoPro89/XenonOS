@@ -153,6 +153,17 @@ static void append_unsigned(char **dst, u32 value) {
     while (n) *(*dst)++ = digits[--n];
 }
 
+static void format_cpu_count(char *out, u32 online, u32 total) {
+    char *dst = out;
+
+    append_unsigned(&dst, online);
+    *dst++ = ' ';
+    *dst++ = '/';
+    *dst++ = ' ';
+    append_unsigned(&dst, total);
+    *dst = '\0';
+}
+
 static void format_temperature(char *out, i32 temp_mc) {
     i32 tenths = temp_mc >= 0 ? (temp_mc + 50) / 100 : (temp_mc - 50) / 100;
     u32 magnitude;
@@ -245,11 +256,33 @@ static void sleep_ms(u32 ms) {
     );
 }
 
+static u64 get_online_cpu_count() {
+    long ret;
+    asm volatile(
+        "syscall"
+        : "=a"(ret)
+        : "a"(SYS_HWMON_GET_ONLINE_CPUS)
+        : "rcx", "r11", "r10", "memory"
+    );
+    return (u64)ret;
+}
+
+static u64 get_total_cpu_count() {
+    long ret;
+    asm volatile(
+        "syscall"
+        : "=a"(ret)
+        : "a"(SYS_HWMON_GET_TOTAL_CPUS)
+        : "rcx", "r11", "r10", "memory"
+    );
+    return (u64)ret;
+}
+
 static void render_temperature_graph() {
     const i32 gx = 23;
-    const i32 gy = 188;
+    const i32 gy = 214;
     const i32 gw = 254;
-    const i32 gh = 60;
+    const i32 gh = 34;
     i32 min_mc = 150000;
     i32 max_mc = 0;
     i32 have_value = 0;
@@ -325,17 +358,21 @@ static void render_temperature_graph() {
 
 static void render_dashboard() {
     char temperature_text[24];
+    char cpu_count_text[24];
     const char *sensor_status;
+    u32 online_cpus;
+    u32 total_cpus;
 
     fill_rect(0, 0, CONTENT_W, CONTENT_H, C_BG);
 
-    draw_text("Hardware", 16, 12, C_TEXT, 2);
-    draw_text(cpu_brand, 17, 34, C_MUTED, 1);
-    fill_rect(270, 20, 7, 7, latest_sample_ok ? C_GREEN : C_RED);
+    draw_text("Hardware", 16, 10, C_TEXT, 2);
+    draw_text(cpu_brand, 17, 31, C_MUTED, 1);
+    fill_rect(270, 17, 7, 7, latest_sample_ok ? C_GREEN : C_RED);
 
-    draw_card(12, 54, 276, 82);
-    fill_rect(283, 64, 3, 62, C_ACCENT);
-    draw_text("CPU TEMPERATURE", 22, 63, C_MUTED, 1);
+    /* CPU temperature card */
+    draw_card(12, 49, 276, 75);
+    fill_rect(283, 59, 3, 55, C_ACCENT);
+    draw_text("CPU TEMPERATURE", 22, 57, C_MUTED, 1);
 
     if (latest_sample_ok) {
         format_temperature(temperature_text, latest_temp_mc);
@@ -344,19 +381,37 @@ static void render_dashboard() {
         strcpy(temperature_text, "--.- C");
         sensor_status = "SENSOR UNAVAILABLE";
     }
-    draw_text(temperature_text, 22, 79, C_TEXT, 2);
-    draw_text(sensor_status, 174, 108, latest_sample_ok ? C_ACCENT : C_RED, 1);
 
-    draw_card(12, 145, 276, 128);
-    draw_text("TEMPERATURE HISTORY", 22, 154, C_TEXT, 1);
-    draw_text("LAST 120 SECONDS", 22, 166, C_MUTED, 1);
+    draw_text(temperature_text, 22, 73, C_TEXT, 2);
+    draw_text(sensor_status, 174, 101,
+              latest_sample_ok ? C_ACCENT : C_RED, 1);
+
+    /* Symmetric multiprocessing status */
+    draw_card(12, 132, 276, 45);
+    draw_text("Symmetric Multiprocessing:", 22, 140, C_MUTED, 1);
+    draw_text("Enabled", 22, 152, C_GREEN, 1);
+
+    online_cpus = (u32)get_online_cpu_count();
+    total_cpus = (u32)get_total_cpu_count();
+
+    format_cpu_count(cpu_count_text, online_cpus, total_cpus);
+    draw_text("Online CPUs:", 155, 140, C_MUTED, 1);
+    draw_text(cpu_count_text, 155, 152, C_TEXT, 1);
+
+    /* Temperature history */
+    draw_card(12, 185, 276, 88);
+    draw_text("TEMPERATURE HISTORY", 22, 191, C_TEXT, 1);
+    draw_text("LAST 120 SECONDS", 22, 202, C_MUTED, 1);
+
     render_temperature_graph();
+
     draw_text("120s ago", 22, 254, C_MUTED, 1);
     draw_text("now", 248, 254, C_MUTED, 1);
 
     draw_hline(12, 280, 276, C_BORDER);
+
     if (latest_sample_ok) {
-        draw_text("LIVE  /  SMN  /  1 SEC", 16, 286, C_MUTED, 1);
+        draw_text("LIVE / SMN / 1 SEC", 16, 286, C_MUTED, 1);
     } else {
         draw_text("SENSOR READ FAILED", 16, 286, C_RED, 1);
     }

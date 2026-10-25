@@ -22,6 +22,7 @@
 #include <time/time.h>
 #include <drivers/hwmon/amd_smn.h>
 #include <drivers/hwmon/amd_zen_temp.h>
+#include <smp/smp.h>
 
 #define REG_EAX 0
 #define REG_EBX 1
@@ -34,7 +35,83 @@ u64 user_rsp_save;
 
 #define SYSCALL_IO_BUFFER_SIZE 512
 
-#define USER_PATH_MAX 256
+#define SPAWN_MAX_ARGS       32
+#define SPAWN_MAX_ARG_BYTES  1024
+
+/*
+ * Copy argv from userspace into kernel-owned storage.
+ *
+ * storage must point to SPAWN_MAX_ARG_BYTES bytes.
+ * kargv must have room for SPAWN_MAX_ARGS pointers.
+ *
+ * The copied strings are packed into storage, and kargv
+ * points into that storage.
+ */
+static int copy_spawn_arguments(
+    int argc,
+    const char* const* user_argv,
+    char* storage,
+    const char** kargv
+) {
+    if (argc < 0 || argc > SPAWN_MAX_ARGS) {
+        return -EINVAL;
+    }
+
+    if (argc > 0 && !user_argv) {
+        return -EFAULT;
+    }
+
+    size_t used = 0;
+
+    for (int i = 0; i < argc; ++i) {
+        const char* user_arg = NULL;
+
+        if (copy_from_user(
+                &user_arg,
+                &user_argv[i],
+                sizeof(user_arg)
+            ) < 0) {
+            return -EFAULT;
+        }
+
+        if (!user_arg) {
+            return -EFAULT;
+        }
+
+        if (used >= SPAWN_MAX_ARG_BYTES) {
+            return -E2BIG;
+        }
+
+        kargv[i] = storage + used;
+
+        size_t remaining = SPAWN_MAX_ARG_BYTES - used;
+        size_t copied = 0;
+
+        while (copied < remaining) {
+            char c;
+
+            if (copy_from_user(&c, user_arg + copied, 1) < 0) {
+                return -EFAULT;
+            }
+
+            storage[used + copied] = c;
+            ++copied;
+
+            if (c == '\0') {
+                break;
+            }
+        }
+
+        if (copied == remaining &&
+            storage[used + copied - 1] != '\0') {
+            return -E2BIG;
+        }
+
+        used += copied;
+    }
+
+    return 0;
+}
 
 static ssize_t directory_read(file_t* file, void* buffer, size_t size) {
     (void)file;
@@ -305,20 +382,45 @@ __attribute__((noreturn)) void sys_exit(int code) {
     __builtin_unreachable();
 }
 
-u64 sys_spawn(const char* user_path) {
+u64 sys_spawn(const char* user_path, int argc, const char* const* user_argv) {
     if (!user_path) {
         return (u64)(i64)-EFAULT;
     }
 
+    if (argc < 0 || argc > SPAWN_MAX_ARGS) {
+        return (u64)(i64)-EINVAL;
+    }
+
+    char* arg_storage = kmalloc(SPAWN_MAX_ARG_BYTES);
+    if (!arg_storage) {
+        return (u64)(i64)-ENOMEM;
+    }
+
+    const char* kargv[SPAWN_MAX_ARGS];
+
+    int result = copy_spawn_arguments(
+        argc,
+        user_argv,
+        arg_storage,
+        kargv
+    );
+
+    if (result < 0) {
+        kfree(arg_storage);
+        return (u64)(i64)result;
+    }
+
     char path[USER_PATH_MAX];
 
-    int result = copy_user_path(path, user_path);
+    result = copy_user_path(path, user_path);
     if (result < 0) {
+        kfree(arg_storage);
         return (u64)(i64)result;
     }
 
     process_t* parent = process_current();
     if (!parent) {
+        kfree(arg_storage);
         return (u64)(i64)-ESRCH;
     }
 
@@ -330,30 +432,46 @@ u64 sys_spawn(const char* user_path) {
         sizeof(resolved_path)
     );
     if (result < 0) {
+        kfree(arg_storage);
         return (u64)(i64)result;
     }
 
     process_t* process = process_create();
     if (!process) {
+        kfree(arg_storage);
         return (u64)(i64)-ENOMEM;
     }
 
-    process->parent = parent;
+        process->parent = parent;
+
     strncpy(process->cwd, parent->cwd, sizeof(process->cwd) - 1);
     process->cwd[sizeof(process->cwd) - 1] = '\0';
-    
-    // inherit stdin, stdout, stderr, and any other open descriptors for the child
+
     result = fd_table_clone(&process->fd_table, &parent->fd_table);
     if (result < 0) {
         process_destroy(process);
+        kfree(arg_storage);
         return (u64)(i64)result;
     }
 
     result = process_load_elf(process, resolved_path);
     if (result < 0) {
         process_destroy(process);
+        kfree(arg_storage);
         return (u64)(i64)result;
     }
+
+    // build the child's initial stack only after its ELF and stack pages have been loaded and mapped
+    result = process_setup_arguments(process, argc, kargv);
+    if (result < 0) {
+        process_destroy(process);
+        kfree(arg_storage);
+        return (u64)(i64)result;
+    }
+
+    // the child now owns copies of all argument strings, it no longer depends on arg_storage
+    kfree(arg_storage);
+    arg_storage = NULL;
 
     result = process_start(process);
     if (result < 0) {
@@ -1038,7 +1156,8 @@ ssize_t sys_set_desktop_env_var(desktop_env_var_t var, void* val, size_t length)
             if (length > USER_PATH_MAX) { return -ENAMETOOLONG; }
             char path[USER_PATH_MAX];
             copy_user_path(path, val);
-            compositor_queue_set_wallpaper(path);
+            return compositor_set_wallpaper(path) == true ? 0 : -EIO;
+            // compositor_queue_set_wallpaper(path);
             break;
         }
         default: {
@@ -1049,7 +1168,7 @@ ssize_t sys_set_desktop_env_var(desktop_env_var_t var, void* val, size_t length)
     return 0;
 }
 
-i32 sys_get_cpu_temp_mc() {
+i32 sys_hwmon_get_cpu_temp_mc() {
     if (amd_smn_initialized()) {
         i32 millidegrees_c = 0;
         if (!amd_zen_read_temperature(&millidegrees_c)) {
@@ -1059,6 +1178,14 @@ i32 sys_get_cpu_temp_mc() {
         return millidegrees_c;
     }
     return msr_read_cpu_temperature(); // TODO: return in millidegrees celcius
+}
+
+u64 sys_hwmon_get_online_cpus() {
+    return smp_online_count();
+}
+
+u64 sys_hwmon_get_total_cpus() {
+    return smp_cpu_count();
 }
 
 u64 syscall_dispatch(struct syscall_regs* r) {
@@ -1076,7 +1203,7 @@ u64 syscall_dispatch(struct syscall_regs* r) {
             sys_exit((int)r->rdi); // TODO: not sure if this returns something or no
         }
         case SYS_SPAWN: {
-            return sys_spawn((const char*)r->rdi);
+            return sys_spawn((const char*)r->rdi, (int)r->rsi, (const char* const*)r->rdx);
         }
         case SYS_WAIT: {
             return sys_wait(r->rdi);
@@ -1137,7 +1264,13 @@ u64 syscall_dispatch(struct syscall_regs* r) {
             return (u64)sys_set_desktop_env_var((desktop_env_var_t)r->rdi, (void*)r->rsi, (size_t)r->rdx);
         }
         case SYS_HWMON_GET_CPU_TEMP_MC: {
-            return (u64)(i64)sys_get_cpu_temp_mc();
+            return (u64)(i64)sys_hwmon_get_cpu_temp_mc();
+        }
+        case SYS_HWMON_GET_ONLINE_CPUS: {
+            return sys_hwmon_get_online_cpus();
+        }
+        case SYS_HWMON_GET_TOTAL_CPUS: {
+            return sys_hwmon_get_total_cpus();
         }
         default: {
             return (u64)-ENOSYS;
