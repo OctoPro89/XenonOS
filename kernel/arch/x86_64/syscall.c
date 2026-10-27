@@ -186,6 +186,14 @@ static ssize_t regular_read(file_t* file, void* buffer, size_t size) {
     return (ssize_t)vfs_read(vf, buffer, size);
 }
 
+static ssize_t regular_write(file_t* file, const void* buffer, size_t size) {
+    VFS_FILE* vf = (VFS_FILE*)file->private;
+
+    if (!vf) { return -EBADF; }
+
+    return (ssize_t)vfs_write(vf, buffer, size);
+}
+
 static ssize_t regular_seek(file_t* file, ssize_t offset, int whence) {
     VFS_FILE* vf = (VFS_FILE*)file->private;
 
@@ -240,7 +248,7 @@ static int regular_close(file_t* file) {
 
 static const file_ops_t regular_file_ops = {
     .read  = regular_read,
-    .write = NULL,
+    .write = regular_write,
     .seek  = regular_seek,
     .close = regular_close,
 };
@@ -1083,10 +1091,11 @@ ssize_t sys_get_cpu_info(cpu_info_t* info) {
 }
 
 ssize_t sys_open(const char* user_path, int flags) {
-    if (flags != O_RDONLY) {
+    if (!user_path) {
         return -EINVAL;
     }
 
+    // TODO: access modes
     char path[USER_PATH_MAX];
     char resolved[USER_PATH_MAX];
 
@@ -1104,7 +1113,14 @@ ssize_t sys_open(const char* user_path, int flags) {
 
     if (result < 0) return result;
 
-    VFS_FILE* vf = vfs_open(resolved);
+    VFS_FILE* vf = NULL;
+    if (flags & O_CREAT) {
+        vf = vfs_create(resolved); // opens the file as well
+    }
+    else {
+        vf = vfs_open(resolved);
+    }
+
     if (!vf) {
         return -ENOENT;
     }

@@ -298,7 +298,7 @@ __PRIVILEGED_CODE i32 arch_smp_boot_cpu(smp_cpu_info_t* cpu) {
     // abandon atomically: winning means the AP parks before using anything, losing means it is
     // alive and owns its memory.
     i32 abandon = SMP_CPU_BOOTING;
-    if (__atomic_compare_exchange_n(&cpu->state, &abandon, SMP_CPU_ABANDONED, false, __ATOMIC_ACQ_REL, __ATOMIC_ACQUIRE)) {
+    if (__atomic_compare_exchange_n(&cpu->state, (u32*)&abandon, SMP_CPU_ABANDONED, false, __ATOMIC_ACQ_REL, __ATOMIC_ACQUIRE)) {
         // the trampoline already ran on this stack, so both allocations are leaked rather
         // than handed out again under a CPU that may still run.
         return SMP_CPU_INIT_RESULT_ERR_BOOT_TIMEOUT;
@@ -337,4 +337,6 @@ __PRIVILEGED_CODE smp_ipi_result_t arch_smp_raise_ipi(const smp_cpu_info_t* targ
     mmio_write32(lapic_va + APIC_ICR_HI, apic_id << ICR_DEST_SHIFT);
     mmio_write32(lapic_va + APIC_ICR_LO, X86_VEC_IPI | ICR_DM_FIXED | ICR_LEVEL_ASSERT);
     irq_restore(flags);
+
+    return SMP_IPI_RESULT_OK;
 }

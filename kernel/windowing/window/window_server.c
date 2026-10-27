@@ -422,7 +422,7 @@ u32 window_server_snapshot(window_snapshot_t* out, u32 capacity) {
     return count;
 }
 
-b8 window_server_notify_keyboard_subscribers(input_keyboard_event_t* evt) {
+b8 window_server_notify_keyboard_subscribers(const input_keyboard_event_t* evt) {
     if (!evt) { return false; }
     u64 flags = 0;
     spin_lock_irqsave(&window_server_lock, &flags);

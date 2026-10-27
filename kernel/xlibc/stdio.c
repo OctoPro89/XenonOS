@@ -4,42 +4,155 @@
 #include <memory/heap.h>
 #include <arch/x86_64/io.h>
 
+static int parse_stdio_mode(const char* mode, char* primary, int* plus) {
+    if (!mode || !mode[0] || !primary || !plus) {
+        return 0;
+    }
+
+    if (mode[0] != 'r' && mode[0] != 'w' && mode[0] != 'a') {
+        return 0;
+    }
+
+    int seen_plus = 0;
+    int seen_binary = 0;
+
+    for (u32 i = 1; mode[i]; ++i) {
+        if (mode[i] == '+') {
+            if (seen_plus) {
+                return 0;
+            }
+            seen_plus = 1;
+        } else if (mode[i] == 'b') {
+            if (seen_binary) {
+                return 0;
+            }
+            seen_binary = 1;
+        } else {
+            return 0;
+        }
+    }
+
+    *primary = mode[0];
+    *plus = seen_plus;
+    return 1;
+}
+
 FILE* fopen(const char* path, const char* mode) {
-    if (!(strcmp(mode, "r") == 0 || strcmp(mode, "rb") == 0)) {
-        serial_write_str("fopen modes besides read (r / rb) are not currently implemented!\n");
+    if (!path || !mode) {
         return NULL;
     }
 
-    VFS_FILE* vf = vfs_open(path);
-    if (!vf) { return NULL; }
+    char primary;
+    int plus;
+
+    if (!parse_stdio_mode(mode, &primary, &plus)) {
+        return NULL;
+    }
+
+    VFS_FILE* vf = NULL;
+
+    switch (primary) {
+        case 'r':
+            // Existing file required.
+            vf = vfs_open(path);
+            break;
+
+        case 'w':
+            // TODO: for now create new files only.
+            // Existing-file truncation needs a VFS truncate operation.
+            vf = vfs_create(path);
+            break;
+
+        case 'a':
+            vf = vfs_open(path);
+
+            if (!vf) {
+                vf = vfs_create(path);
+            }
+            break;
+
+        default:
+            return NULL;
+    }
+
+    if (!vf) {
+        return NULL;
+    }
 
     FILE* f = kmalloc(sizeof(FILE));
+
+    if (!f) {
+        vfs_close(vf);
+        return NULL;
+    }
+
+    memset(f, 0, sizeof(*f));
+
     f->vfs_file = vf;
+    f->readable = (primary == 'r') || plus;
+    f->writable = (primary != 'r') || plus;
+    f->append = (primary == 'a');
 
     return f;
 }
 
 u32 fread(void* ptr, u32 size, u32 count, FILE* stream) {
-    if (!stream) { return 0; }
-    if (size == 0 || count == 0) { return 0; } // divide by zero
+    if (!stream) {
+        return 0;
+    }
+
+    if (size == 0 || count == 0) {
+        return 0;
+    }
+
+    if (!stream->vfs_file || !stream->readable || !ptr) {
+        stream->error = 1;
+        return 0;
+    }
 
     if (count > UINT32_MAX / size) {
+        stream->error = 1;
         return 0;
     }
 
     u32 total = size * count;
+    u32 bytes_read = 0;
+    VFS_FILE* vf = (VFS_FILE*)stream->vfs_file;
 
-    u32 bytes = vfs_read((VFS_FILE*)stream->vfs_file, ptr, total);
+    while (bytes_read < total) {
+        u32 n = vfs_read(
+            vf,
+            (u8*)ptr + bytes_read,
+            total - bytes_read
+        );
 
-    return bytes / size; // NOTE: return element count, libc
+        if (n == 0 || n > total - bytes_read) {
+            if (n > total - bytes_read) {
+                stream->error = 1;
+            } else if (vfs_tell(vf) >= vfs_get_size(vf)) {
+                stream->eof = 1;
+            } else {
+                stream->error = 1;
+            }
+            break;
+        }
+
+        bytes_read += n;
+    }
+
+    return bytes_read / size;
 }
 
 int fclose(FILE* stream) {
-    if (!stream) return -1;
+    if (!stream) {
+        return -1;
+    }
 
-    vfs_close((VFS_FILE*)stream->vfs_file);
+    if (stream->vfs_file) {
+        vfs_close((VFS_FILE*)stream->vfs_file);
+    }
+
     kfree(stream);
-
     return 0;
 }
 
@@ -52,7 +165,7 @@ int fgetc(FILE* f) {
 
 // TODO: check that this is correct
 long ftell(FILE* f) {
-    if (!f) { return 0; }
+    if (!f) { return -1; }
     VFS_FILE* vf = f->vfs_file;
     return (long)vfs_tell(vf);
 }
@@ -84,6 +197,106 @@ int fseek(FILE* stream, long offset, int whence) {
     if (new_pos < 0) new_pos = 0;
 
     return vfs_seek(vf, (u32)new_pos);
+}
+
+u32 fwrite(const void* ptr, u32 size, u32 count, FILE* stream) {
+    if (!stream) {
+        return 0;
+    }
+
+    if (!stream->vfs_file || !stream->writable ||
+        (!ptr && size != 0 && count != 0)) {
+        stream->error = 1;
+        return 0;
+    }
+
+    if (size == 0 || count == 0) {
+        return 0;
+    }
+
+    if (count > UINT32_MAX / size) {
+        stream->error = 1;
+        return 0;
+    }
+
+    u32 total = size * count;
+    u32 written = 0;
+    const u8* src = (const u8*)ptr;
+    VFS_FILE* vf = (VFS_FILE*)stream->vfs_file;
+
+    if (stream->append) {
+        if (vfs_seek(vf, vfs_get_size(vf)) < 0) {
+            stream->error = 1;
+            return 0;
+        }
+    }
+
+    while (written < total) {
+        u32 n = vfs_write(vf, (void*)(src + written), total - written);
+
+        if (n == 0 || n > total - written) {
+            stream->error = 1;
+            break;
+        }
+
+        written += n;
+    }
+
+    return written / size;
+}
+
+int fputc(int c, FILE* stream) {
+    unsigned char ch = (unsigned char)c;
+
+    if (fwrite(&ch, 1, 1, stream) != 1) {
+        return -1;
+    }
+
+    return (int)ch;
+}
+
+int fputs(const char* str, FILE* stream) {
+    if (!str || !stream) {
+        return -1;
+    }
+
+    size_t len = strlen(str);
+
+    if (len > UINT32_MAX ||
+        fwrite(str, 1, (u32)len, stream) != (u32)len) {
+        return -1;
+    }
+
+    return 0;
+}
+
+int ferror(FILE* stream) {
+    return stream ? stream->error : 1;
+}
+
+int feof(FILE* stream) {
+    return stream ? stream->eof : 0;
+}
+
+void clearerr(FILE* stream) {
+    if (stream) {
+        stream->error = 0;
+        stream->eof = 0;
+    }
+}
+
+int fflush(FILE* stream) {
+    if (!stream) {
+        // All-stream flushing needs a registry of open FILE objects.
+        return -1;
+    }
+
+    if (!stream->vfs_file) {
+        stream->error = 1;
+        return -1;
+    }
+
+    return 0;
 }
 
 // TODO: need a better solution

@@ -73,7 +73,7 @@ void window_clear_damage(window_t* window);
  * @brief Queues `evt` to all windows subscribed to keyboard events
  * @returns True if keyboard input should be consumed, false otherwise
  */
-b8 window_server_notify_keyboard_subscribers(input_keyboard_event_t* evt);
+b8 window_server_notify_keyboard_subscribers(const input_keyboard_event_t* evt);
 
 /**
  * @brief Subscribes `window` to keyboard events

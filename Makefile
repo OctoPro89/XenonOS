@@ -157,6 +157,23 @@ build/user/apps/cat: \
 		build/user/libc/libc.a \
 		-o $@
 
+# touch
+build/user/apps/touch.o: user/apps/touch/touch.c
+	mkdir -p $(dir $@)
+	clang $(USERCFLAGS) $< -o $@ -I"kernel/" -I"user/"
+
+build/user/apps/touch: \
+	build/user/start_c.o \
+	build/user/start_asm.o \
+	build/user/apps/touch.o \
+	build/user/libc/libc.a
+	ld.lld -T user/user.ld \
+		build/user/apps/touch.o \
+		build/user/start_c.o \
+		build/user/start_asm.o \
+		build/user/libc/libc.a \
+		-o $@
+
 # lscpu
 build/user/apps/lscpu.o: user/apps/lscpu/lscpu.c
 	mkdir -p $(dir $@)
@@ -300,7 +317,7 @@ build/user/apps/doom: \
 userapps: build/user/apps/sh build/user/apps/ls build/user/apps/lscpu \
 		  build/user/apps/doom build/user/apps/wintest build/user/apps/heaptest \
 		  build/user/apps/fstest build/user/apps/crashtest build/user/apps/de_setvar \
-		  build/user/apps/hwmon build/user/apps/cat
+		  build/user/apps/hwmon build/user/apps/cat build/user/apps/touch
 
 # --- Image ---
 image: build/BOOTX64.EFI build/kernel.elf

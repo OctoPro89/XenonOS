@@ -8,14 +8,18 @@
 #define SEEK_END 2
 
 typedef struct FILE {
-    // TODO: remove
 #ifdef XENON_KERNEL
-    void* vfs_file;   // VFS_FILE*
+    void* vfs_file;     // VFS_FILE*
 #else
     int fd;
+#endif
+
     int error;
     int eof;
-#endif
+
+    int readable;
+    int writable;
+    int append;
 } FILE;
 
 FILE* fopen(const char* path, const char* mode);
@@ -24,6 +28,17 @@ int fclose(FILE* stream);
 int fgetc(FILE* f);
 long ftell(FILE* f); // NOTE: maybe look at return type
 int fseek(FILE* stream, long offset, int whence);
+
+u32 fwrite(const void* ptr, u32 size, u32 count, FILE* stream);
+
+int fputc(int c, FILE* stream);
+int fputs(const char* str, FILE* stream);
+
+int fflush(FILE* stream);
+
+int ferror(FILE* stream);
+int feof(FILE* stream);
+void clearerr(FILE* stream);
 
 void putc(char c);
 void puts(const char* str);

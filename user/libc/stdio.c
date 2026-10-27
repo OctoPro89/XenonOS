@@ -5,17 +5,72 @@
 #include <fcntl.h>
 #include <io/fd.h>
 
+static int parse_stdio_mode(const char* mode, char* primary, int* plus) {
+    if (!mode || !mode[0] || !primary || !plus) {
+        return 0;
+    }
+
+    if (mode[0] != 'r' && mode[0] != 'w' && mode[0] != 'a') {
+        return 0;
+    }
+
+    int seen_plus = 0;
+    int seen_binary = 0;
+
+    for (u32 i = 1; mode[i]; ++i) {
+        if (mode[i] == '+') {
+            if (seen_plus) {
+                return 0;
+            }
+            seen_plus = 1;
+        } else if (mode[i] == 'b') {
+            if (seen_binary) {
+                return 0;
+            }
+            seen_binary = 1;
+        } else {
+            return 0;
+        }
+    }
+
+    *primary = mode[0];
+    *plus = seen_plus;
+    return 1;
+}
+
 FILE* fopen(const char* path, const char* mode) {
     if (!path || !mode) {
         return NULL;
     }
 
-    if (strcmp(mode, "r") != 0 &&
-        strcmp(mode, "rb") != 0) {
+    char primary;
+    int plus;
+
+    if (!parse_stdio_mode(mode, &primary, &plus)) {
         return NULL;
     }
 
-    ssize_t fd = open(path, O_RDONLY);
+    int flags;
+
+    switch (primary) {
+        case 'r': {
+            flags = plus ? O_RDWR : O_RDONLY;
+            break;
+        }
+        case 'w': {
+            flags = (plus ? O_RDWR : O_WRONLY) | O_CREAT | O_TRUNC;
+            break;
+        }
+        case 'a': {
+            flags = (plus ? O_RDWR : O_WRONLY) | O_CREAT | O_APPEND;
+            break;
+        }
+        default: {
+            return NULL;
+        }
+    }
+
+    ssize_t fd = open(path, flags);
 
     if (fd < 0) {
         return NULL;
@@ -28,23 +83,32 @@ FILE* fopen(const char* path, const char* mode) {
         return NULL;
     }
 
+    memset(f, 0, sizeof(*f));
+
     f->fd = (int)fd;
-    f->error = 0;
-    f->eof = 0;
+    f->readable = (primary == 'r') || plus;
+    f->writable = (primary != 'r') || plus;
+    f->append = (primary == 'a');
 
     return f;
 }
 
 u32 fread(void* ptr, u32 size, u32 count, FILE* stream) {
-    if (!stream || size == 0 || count == 0) {
+    if (!stream) {
         return 0;
     }
 
-    if (!ptr) {
+    // A zero-sized request performs no I/O.
+    if (size == 0 || count == 0) {
+        return 0;
+    }
+
+    if (!ptr || stream->fd < 0 || !stream->readable) {
         stream->error = 1;
         return 0;
     }
 
+    // Prevent size * count from overflowing.
     if (count > UINT32_MAX / size) {
         stream->error = 1;
         return 0;
@@ -52,9 +116,12 @@ u32 fread(void* ptr, u32 size, u32 count, FILE* stream) {
 
     u32 total = size * count;
     u32 bytes_read = 0;
+    u8* dst = (u8*)ptr;
 
     while (bytes_read < total) {
-        ssize_t result = read((fd_t)stream->fd, (u8*)ptr + bytes_read, total - bytes_read);
+        u32 remaining = total - bytes_read;
+
+        ssize_t result = read((fd_t)stream->fd, dst + bytes_read, remaining);
 
         if (result < 0) {
             stream->error = 1;
@@ -63,6 +130,11 @@ u32 fread(void* ptr, u32 size, u32 count, FILE* stream) {
 
         if (result == 0) {
             stream->eof = 1;
+            break;
+        }
+
+        if ((u32)result > remaining) {
+            stream->error = 1;
             break;
         }
 
@@ -116,6 +188,110 @@ int fseek(FILE* stream, long offset, int whence) {
     }
 
     stream->eof = 0;
+
+    return 0;
+}
+
+u32 fwrite(const void* ptr, u32 size, u32 count, FILE* stream) {
+    if (!stream) {
+        return 0;
+    }
+
+    if (size == 0 || count == 0) {
+        return 0;
+    }
+
+    if (!ptr || stream->fd < 0 || !stream->writable) {
+        stream->error = 1;
+        return 0;
+    }
+
+    if (count > UINT32_MAX / size) {
+        stream->error = 1;
+        return 0;
+    }
+
+    u32 total = size * count;
+    u32 written = 0;
+    const u8* src = (const u8*)ptr;
+
+    while (written < total) {
+        // TODO: O_APPEND should also be enforced by the kernel descriptor; seeking here provides basic append behavior with the current userspace API, but isn't atomic across concurrent writers
+        if (stream->append) {
+            ssize_t pos = lseek((fd_t)stream->fd, 0, SEEK_END);
+
+            if (pos < 0) {
+                stream->error = 1;
+                break;
+            }
+        }
+
+        ssize_t n = write((fd_t)stream->fd, src + written, total - written);
+
+        if (n < 0) {
+            stream->error = 1;
+            break;
+        }
+
+        if (n == 0) {
+            stream->error = 1;
+            break;
+        }
+
+        if ((u32)n > total - written) {
+            stream->error = 1;
+            break;
+        }
+
+        written += (u32)n;
+    }
+
+    return written / size;
+}
+
+int fputc(int c, FILE* stream) {
+    unsigned char ch = (unsigned char)c;
+
+    if (fwrite(&ch, 1, 1, stream) != 1) {
+        return -1;
+    }
+
+    return (int)ch;
+}
+
+int fputs(const char* str, FILE* stream) {
+    if (!str || !stream) {
+        return -1;
+    }
+
+    size_t len = strlen(str);
+
+    if (len > UINT32_MAX || fwrite(str, 1, (u32)len, stream) != (u32)len) {
+        return -1;
+    }
+
+    return 0;
+}
+
+int ferror(FILE* stream) {
+    return stream ? stream->error : 1;
+}
+
+int feof(FILE* stream) {
+    return stream ? stream->eof : 0;
+}
+
+void clearerr(FILE* stream) {
+    if (stream) {
+        stream->error = 0;
+        stream->eof = 0;
+    }
+}
+
+int fflush(FILE* stream) {
+    if (!stream || stream->fd < 0) {
+        return -1;
+    }
 
     return 0;
 }

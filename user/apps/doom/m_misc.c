@@ -111,7 +111,6 @@ long M_FileLength(FILE *handle)
 
 boolean M_WriteFile(char *name, void *source, int length)
 {
-    return false; // TODO: fwrite
     FILE *handle;
     int	count;
 	
@@ -120,7 +119,7 @@ boolean M_WriteFile(char *name, void *source, int length)
     if (handle == NULL)
 	return false;
 
-    // count = fwrite(source, 1, length, handle);
+    count = fwrite(source, 1, length, handle);
     fclose(handle);
 	
     if (count < length)

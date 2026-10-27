@@ -571,8 +571,6 @@ static void kernel_main(void* arg) {
 #endif
 
     // boot USB plugged in and set up
-    vfs_fat32_test();
-    while(1);
 
     window_server_init();
     xenon_surface_t framebuffer_surface;
