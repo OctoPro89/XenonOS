@@ -7,12 +7,12 @@ void vfs_fat32_test() {
     static const char message[] = "Hello from XenonOS!\n";
     char readback[sizeof(message)] = {0};
 
-    printf("[fat32-test] Creating /HELLO.TXT\n");
+    printf("[fat32-test] Creating /hellolongfilename.txt\n");
 
-    VFS_FILE* file = vfs_create("/HELLO.TXT");
+    VFS_FILE* file = vfs_create("/hellolongfilename.txt");
 
     if (!file) {
-        printf("[fat32-test] FAIL: create failed (check that HELLO.TXT does not already exist)\n");
+        printf("[fat32-test] FAIL: create failed (check that hellolongfilename.txt does not already exist)\n");
         return;
     }
 
@@ -47,7 +47,7 @@ void vfs_fat32_test() {
 
     vfs_close(file);
 
-    file = vfs_open("/HELLO.TXT");
+    file = vfs_open("/hellolongfilename.txt");
 
     if (!file) {
         printf("[fat32-test] FAIL: reopen failed\n");

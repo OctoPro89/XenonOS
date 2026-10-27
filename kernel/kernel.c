@@ -239,7 +239,8 @@ void usb_drive_init(msc_driver_t* drv) {
     boot_usb = (block_device){
         .driver_data = (void*)drv,
         .read = msc_block_read,
-        .write = msc_block_write
+        .write = msc_block_write,
+        .flush = NULL
     };
     
     printf("Finding FAT32 partition\n");

@@ -475,19 +475,16 @@ int msc_block_write(void* driver_data, u64 lba, u32 count, const void* buffer) {
     msc_driver_t* msc = (msc_driver_t*)driver_data;
 
     if (!msc || !msc->initialized || msc->disconnected || !msc->dev || msc->dev->disconnect_pending || !buffer || count == 0 || msc->block_size == 0) {
-        printf("fuck\n");
         return 0;
     }
 
     // validate the entire request before issuing any writes
     if (lba >= msc->block_count || (u64)count > msc->block_count - lba) {
-        printf("fuck2\n");
         return 0;
     }
 
     // WRITE (10) supports only 32-bit LBAs
     if (lba > 0xFFFFFFFFULL || (u64)count - 1 > 0xFFFFFFFFULL - lba) {
-        printf("fuck3\n");
         return 0;
     }
 
