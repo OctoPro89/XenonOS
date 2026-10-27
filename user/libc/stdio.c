@@ -203,7 +203,6 @@ static void printf_emit_count(void* ctx, char c) {
     p->written++;
 }
 
-
 static void printf_string(printf_emit_fn emit, void* ctx, const char* str) {
     if (!str) {
         str = "(null)";
@@ -244,319 +243,202 @@ static void printf_signed(printf_emit_fn emit, void* ctx, long long number, int 
     }
 }
 
-static void printf_repeat(printf_emit_fn emit, void* ctx, char c, int count) {
-    while (count-- > 0) {
-        emit(ctx, c);
-    }
-}
-
-static void printf_integer_formatted(
-    printf_emit_fn emit,
-    void* ctx,
-    unsigned long long value,
-    b8 negative,
-    int radix,
-    b8 uppercase,
-    int width,
-    int precision,
-    b8 precision_set,
-    b8 left_align,
-    b8 zero_pad) {
-    char digits[32];
-    int digit_count = 0;
-
-    const char* alphabet = uppercase ? "0123456789ABCDEF" : "0123456789abcdef";
-
-    // precision zero with value zero produces no digits
-    if (value != 0 || !precision_set || precision != 0) {
-        do {
-            digits[digit_count++] = alphabet[value % radix];
-            value /= radix;
-        } while (value != 0);
-    }
-
-    int zeros = precision_set && precision > digit_count ? precision - digit_count : 0;
-
-    int sign_chars = negative ? 1 : 0;
-    int content_width = sign_chars + zeros + digit_count;
-    int padding = width > content_width ? width - content_width : 0;
-
-    // zero-padding from the width flag applies after the sign, but only when integer precision wasn't explicitly specified
-    if (zero_pad && !left_align && !precision_set) {
-        zeros += padding;
-        padding = 0;
-    }
-
-    if (!left_align) {
-        printf_repeat(emit, ctx, ' ', padding);
-    }
-
-    if (negative) {
-        emit(ctx, '-');
-    }
-
-    printf_repeat(emit, ctx, '0', zeros);
-
-    while (digit_count > 0) {
-        emit(ctx, digits[--digit_count]);
-    }
-
-    if (left_align) {
-        printf_repeat(emit, ctx, ' ', padding);
-    }
-}
-
 static int vprintf_internal(printf_emit_fn emit_fn, void* emit_ctx, const char* fmt, va_list args) {
-    printf_context_t out = {
-        .emit = emit_fn,
-        .emit_ctx = emit_ctx,
-        .written = 0
-    };
+    printf_context_t out;
+    out.emit = emit_fn;
+    out.emit_ctx = emit_ctx;
+    out.written = 0;
+
+    int state = PRINTF_STATE_NORMAL;
+    int length = PRINTF_LENGTH_DEFAULT;
+
+    int radix = 10;
+    b8 sign = false;
+    b8 number = false;
 
     while (*fmt) {
-        if (*fmt != '%') {
-            printf_emit_count(&out, *fmt++);
-            continue;
-        }
-
-        ++fmt;
-
-        if (*fmt == '%') {
-            printf_emit_count(&out, '%');
-            ++fmt;
-            continue;
-        }
-
-        // flags
-        b8 left_align = false;
-        b8 zero_pad = false;
-
-        for (;;) {
-            if (*fmt == '-') {
-                left_align = true;
-                ++fmt;
-            } else if (*fmt == '0') {
-                zero_pad = true;
-                ++fmt;
-            } else {
-                break;
-            }
-        }
-
-        // field width
-        int width = 0;
-
-        if (*fmt == '*') {
-            width = va_arg(args, int);
-            ++fmt;
-
-            if (width < 0) {
-                left_align = true;
-                width = -width;
-            }
-        } else {
-            while (*fmt >= '0' && *fmt <= '9') {
-                if (width < 100000) {
-                    width = width * 10 + (*fmt - '0');
-                }
-                ++fmt;
-            }
-        }
-
-        // integer/string precision
-        int precision = 0;
-        b8 precision_set = false;
-
-        if (*fmt == '.') {
-            precision_set = true;
-            ++fmt;
-
-            if (*fmt == '*') {
-                precision = va_arg(args, int);
-                ++fmt;
-
-                if (precision < 0) {
-                    precision_set = false;
-                    precision = 0;
-                }
-            } else {
-                while (*fmt >= '0' && *fmt <= '9') {
-                    if (precision < 100000) {
-                        precision = precision * 10 + (*fmt - '0');
-                    }
-                    ++fmt;
-                }
-            }
-        }
-
-        // length modifier
-        enum {
-            LEN_DEFAULT,
-            LEN_HH,
-            LEN_H,
-            LEN_L,
-            LEN_LL
-        } length = LEN_DEFAULT;
-
-        if (fmt[0] == 'h' && fmt[1] == 'h') {
-            length = LEN_HH;
-            fmt += 2;
-        } else if (*fmt == 'h') {
-            length = LEN_H;
-            ++fmt;
-        } else if (fmt[0] == 'l' && fmt[1] == 'l') {
-            length = LEN_LL;
-            fmt += 2;
-        } else if (*fmt == 'l') {
-            length = LEN_L;
-            ++fmt;
-        }
-
-        char spec = *fmt;
-        if (spec == '\0') {
-            break;
-        }
-        ++fmt;
-
-        switch (spec) {
-            case 'c': {
-                char c = (char)va_arg(args, int);
-                int padding = width > 1 ? width - 1 : 0;
-
-                if (!left_align) {
-                    printf_repeat(printf_emit_count, &out, ' ', padding);
-                }
-
-                printf_emit_count(&out, c);
-
-                if (left_align) {
-                    printf_repeat(printf_emit_count, &out, ' ', padding);
-                }
-                break;
-            }
-
-            case 's': {
-                const char* s = va_arg(args, const char*);
-                if (!s) {
-                    s = "(null)";
-                }
-
-                int len = 0;
-                while (s[len] &&
-                       (!precision_set || len < precision)) {
-                    ++len;
-                }
-
-                int padding = width > len ? width - len : 0;
-
-                if (!left_align) {
-                    printf_repeat(printf_emit_count, &out, ' ', padding);
-                }
-
-                for (int i = 0; i < len; ++i) {
-                    printf_emit_count(&out, s[i]);
-                }
-
-                if (left_align) {
-                    printf_repeat(printf_emit_count, &out, ' ', padding);
-                }
-                break;
-            }
-
-            case 'd':
-            case 'i': {
-                long long value;
-
-                switch (length) {
-                    case LEN_HH:
-                        value = (signed char)va_arg(args, int);
+        switch (state) {
+            case PRINTF_STATE_NORMAL: {
+                switch (*fmt) {
+                    case '%':
+                        state = PRINTF_STATE_LENGTH;
                         break;
-                    case LEN_H:
-                        value = (short)va_arg(args, int);
-                        break;
-                    case LEN_L:
-                        value = va_arg(args, long);
-                        break;
-                    case LEN_LL:
-                        value = va_arg(args, long long);
-                        break;
+
                     default:
-                        value = va_arg(args, int);
+                        printf_emit_count(&out, *fmt);
                         break;
                 }
 
-                b8 negative = value < 0;
-                unsigned long long magnitude = negative ? (unsigned long long)(-(value + 1)) + 1 : (unsigned long long)value;
-
-                printf_integer_formatted(
-                    printf_emit_count, &out, magnitude, negative,
-                    10, false, width, precision, precision_set,
-                    left_align, zero_pad
-                );
                 break;
             }
 
-            case 'u':
-            case 'x':
-            case 'X':
-            case 'o':
-            case 'p': {
-                unsigned long long value;
+            case PRINTF_STATE_LENGTH: {
+                switch (*fmt) {
+                    case 'h':
+                        length = PRINTF_LENGTH_SHORT;
+                        state = PRINTF_STATE_LENGTH_SHORT;
+                        break;
 
-                if (spec == 'p') {
-                    value = (unsigned long long)(uintptr_t)va_arg(args, void*);
-                } else {
-                    switch (length) {
-                        case LEN_HH:
-                            value = (unsigned char)va_arg(args, unsigned int);
-                            break;
-                        case LEN_H:
-                            value = (unsigned short)va_arg(args, unsigned int);
-                            break;
-                        case LEN_L:
-                            value = va_arg(args, unsigned long);
-                            break;
-                        case LEN_LL:
-                            value = va_arg(args, unsigned long long);
-                            break;
-                        default:
-                            value = va_arg(args, unsigned int);
-                            break;
-                    }
+                    case 'l':
+                        length = PRINTF_LENGTH_LONG;
+                        state = PRINTF_STATE_LENGTH_LONG;
+                        break;
+
+                    default:
+                        goto PRINTF_STATE_SPEC_;
                 }
 
-                int radix = 10;
-                if (spec == 'x' || spec == 'X' || spec == 'p') {
-                    radix = 16;
-                } else if (spec == 'o') {
-                    radix = 8;
-                }
-
-                if (spec == 'p') {
-                    printf_string(printf_emit_count, &out, "0x");
-                    if (width >= 2) {
-                        width -= 2;
-                    }
-                }
-
-                printf_integer_formatted(
-                    printf_emit_count, &out, value, false,
-                    radix, spec == 'X', width, precision,
-                    precision_set, left_align, zero_pad
-                );
                 break;
             }
 
-            default:
-                // preserve unsupported conversions literally
-                printf_emit_count(&out, '%');
-                printf_emit_count(&out, spec);
+            case PRINTF_STATE_LENGTH_SHORT: {
+                if (*fmt == 'h') {
+                    length = PRINTF_LENGTH_SHORT_SHORT;
+                    state = PRINTF_STATE_SPEC;
+                }
+                else {
+                    goto PRINTF_STATE_SPEC_;
+                }
+
                 break;
+            }
+
+            case PRINTF_STATE_LENGTH_LONG: {
+                if (*fmt == 'l') {
+                    length = PRINTF_LENGTH_LONG_LONG;
+                    state = PRINTF_STATE_SPEC;
+                }
+                else {
+                    goto PRINTF_STATE_SPEC_;
+                }
+
+                break;
+            }
+
+            case PRINTF_STATE_SPEC:
+            PRINTF_STATE_SPEC_: {
+                switch (*fmt) {
+                    case 'c': {
+                        printf_emit_count(&out, (char)va_arg(args, int));
+                        break;
+                    }
+
+                    case 's': {
+                        const char* str = va_arg(args, const char*);
+
+                        printf_string(printf_emit_count, &out, str);
+                        break;
+                    }
+
+                    case '%': {
+                        printf_emit_count(&out, '%');
+                        break;
+                    }
+
+                    case 'd':
+                    case 'i': {
+                        radix = 10;
+                        sign = true;
+                        number = true;
+                        break;
+                    }
+
+                    case 'u': {
+                        radix = 10;
+                        sign = false;
+                        number = true;
+                        break;
+                    }
+
+                    case 'x':
+                    case 'X': {
+                        radix = 16;
+                        sign = false;
+                        number = true;
+                        break;
+                    }
+
+                    case 'o': {
+                        radix = 8;
+                        sign = false;
+                        number = true;
+                        break;
+                    }
+
+                    case 'p': {
+                        unsigned long long ptr = (unsigned long long)va_arg(args, void*);
+
+                        printf_string(printf_emit_count, &out, "0x");
+                        printf_unsigned(printf_emit_count, &out, ptr, 16);
+                        break;
+                    }
+
+                    default:
+                        break;
+                }
+
+                if (number) {
+                    if (sign) {
+                        switch (length) {
+                            case PRINTF_LENGTH_SHORT_SHORT:
+                            case PRINTF_LENGTH_SHORT:
+                            case PRINTF_LENGTH_DEFAULT: {
+                                printf_signed(printf_emit_count, &out, va_arg(args, int), radix);
+                                break;
+                            }
+
+                            case PRINTF_LENGTH_LONG: {
+                                printf_signed(printf_emit_count, &out, va_arg(args, long), radix);
+                                break;
+                            }
+
+                            case PRINTF_LENGTH_LONG_LONG: {
+                                printf_signed(printf_emit_count, &out, va_arg(args, long long), radix);
+                                break;
+                            }
+                        }
+                    }
+                    else
+                    {
+                        switch (length)
+                        {
+                            case PRINTF_LENGTH_SHORT_SHORT:
+                            case PRINTF_LENGTH_SHORT:
+                            case PRINTF_LENGTH_DEFAULT: {
+                                printf_unsigned(printf_emit_count, &out, va_arg(args, unsigned int), radix);
+                                break;
+                            }
+
+                            case PRINTF_LENGTH_LONG: {
+                                printf_unsigned(printf_emit_count, &out, va_arg(args, unsigned long), radix);
+                                break;
+                            }
+
+                            case PRINTF_LENGTH_LONG_LONG: {
+                                printf_unsigned(printf_emit_count, &out, va_arg(args, unsigned long long), radix);
+                                break;
+                            }
+                        }
+                    }
+                }
+
+                state = PRINTF_STATE_NORMAL;
+                length = PRINTF_LENGTH_DEFAULT;
+
+                radix = 10;
+                sign = false;
+                number = false;
+
+                break;
+            }
         }
+
+        fmt++;
     }
 
     return out.written;
 }
+
 
 int vprintf(const char* fmt, va_list args) {
     return vprintf_internal(printf_console_emit, NULL, fmt, args);

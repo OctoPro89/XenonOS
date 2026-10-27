@@ -25,6 +25,8 @@ typedef struct {
     VFS_FILE* (*open)(void* fs_data, const char* path);
     void (*close)(VFS_FILE* file);
     u32 (*read)(VFS_FILE* file, void* buffer, u32 size);
+    VFS_FILE* (*create)(void* fs_data, const char* path);
+    u32 (*write)(VFS_FILE* file, const void* buffer, u32 size);
     u32 (*get_size)(VFS_FILE* file);
 
     int (*seek)(VFS_FILE* file, u32 offset);
@@ -56,6 +58,8 @@ void vfs_mount_root(VFS_FILESYSTEM* ops, void* fs_data);
 VFS_FILE* vfs_open(const char* path);
 void vfs_close(VFS_FILE* file);
 u32 vfs_read(VFS_FILE* file, void* buffer, u32 size);
+VFS_FILE* vfs_create(const char* path);
+u32 vfs_write(VFS_FILE* file, const void* buffer, u32 size);
 u32 vfs_get_size(VFS_FILE* file);
 int vfs_seek(VFS_FILE* file, u32 offset);
 u32 vfs_tell(VFS_FILE* file);

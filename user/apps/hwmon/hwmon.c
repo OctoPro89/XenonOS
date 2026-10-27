@@ -383,12 +383,11 @@ static void render_dashboard() {
     }
 
     draw_text(temperature_text, 22, 73, C_TEXT, 2);
-    draw_text(sensor_status, 174, 101,
-              latest_sample_ok ? C_ACCENT : C_RED, 1);
+    draw_text(sensor_status, 174, 101, latest_sample_ok ? C_ACCENT : C_RED, 1);
 
     /* Symmetric multiprocessing status */
     draw_card(12, 132, 276, 45);
-    draw_text("Symmetric Multiprocessing:", 22, 140, C_MUTED, 1);
+    draw_text("SMP", 22, 140, C_MUTED, 1);
     draw_text("Enabled", 22, 152, C_GREEN, 1);
 
     online_cpus = (u32)get_online_cpu_count();

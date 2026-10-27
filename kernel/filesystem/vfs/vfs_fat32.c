@@ -8,13 +8,15 @@
 VFS_FILESYSTEM fat32_ops = {
     .fs_data = NULL, // not used here
     .open = fat32_vfs_open,
+    .create = fat32_vfs_create,
     .close = fat32_vfs_close,
     .read = fat32_vfs_read,
+    .write = fat32_vfs_write,
     .get_size = fat32_vfs_get_size,
     .seek = fat32_vfs_seek,
     .tell = fat32_vfs_tell,
-    .opendir  = fat32_vfs_opendir,
-    .readdir  = fat32_vfs_readdir,
+    .opendir = fat32_vfs_opendir,
+    .readdir = fat32_vfs_readdir,
     .closedir = fat32_vfs_closedir,
 };
 
@@ -44,9 +46,43 @@ void fat32_vfs_close(VFS_FILE* file) {
     kfree(file);
 }
 
+VFS_FILE* fat32_vfs_create(void* fs_data, const char* path) {
+    FAT32_FS* fs = (FAT32_FS*)fs_data;
+
+    if (!fs || !path) {
+        return NULL;
+    }
+
+    FAT32_FILE* f = fat32_create(fs, path);
+
+    if (!f) {
+        return NULL;
+    }
+
+    VFS_FILE* vf = kmalloc(sizeof(VFS_FILE));
+
+    if (!vf) {
+        fat32_close(f);
+        return NULL;
+    }
+
+    vf->internal = f;
+    vf->fs = &fat32_ops;
+
+    return vf;
+}
+
 u32 fat32_vfs_read(VFS_FILE* file, void* buffer, u32 size) {
     FAT32_FILE* f = (FAT32_FILE*)file->internal;
     return fat32_read(f, buffer, size);
+}
+
+u32 fat32_vfs_write(VFS_FILE* file, const void* buffer, u32 size) {
+    if (!file || !file->internal || !buffer || size == 0) {
+        return 0;
+    }
+
+    return fat32_write((FAT32_FILE*)file->internal, buffer, size);
 }
 
 u32 fat32_vfs_get_size(VFS_FILE* file) {

@@ -60,6 +60,8 @@
 
 #include <time/time.h>
 
+#include <tests/vfs_test.h>
+
 #include "kernel.h"
 
 #define KERNEL_VMA 0xFFFFFFFF80000000ULL
@@ -237,6 +239,7 @@ void usb_drive_init(msc_driver_t* drv) {
     boot_usb = (block_device){
         .driver_data = (void*)drv,
         .read = msc_block_read,
+        .write = msc_block_write
     };
     
     printf("Finding FAT32 partition\n");
@@ -349,7 +352,7 @@ void launch_shell_task_entry(void* arg) {
         return;
     }
 
-    const char* const args[] = { { "xeterm" } };
+    const char* const args[] = { "xeterm" };
 
     result = process_setup_arguments(process, 1, args);
     if (result < 0) {
@@ -395,7 +398,7 @@ void launch_program_entry(void* arg) {
         return;
     }
 
-    const char* const args[] = { { path } };
+    const char* const args[] = { path };
 
     result = process_setup_arguments(process, 1, args);
     if (result < 0) {
@@ -567,6 +570,9 @@ static void kernel_main(void* arg) {
 #endif
 
     // boot USB plugged in and set up
+    vfs_fat32_test();
+    while(1);
+
     window_server_init();
     xenon_surface_t framebuffer_surface;
     framebuffer_surface.height = graphics_get_framebuffer_height();

@@ -101,6 +101,22 @@ u32 vfs_read(VFS_FILE* file, void* buffer, u32 size) {
     return file->fs->read(file, buffer, size);
 }
 
+VFS_FILE* vfs_create(const char* path) {
+    if (!path || !root_mount.ops || !root_mount.ops->create) {
+        return NULL;
+    }
+
+    return root_mount.ops->create(root_mount.fs_data, path);
+}
+
+u32 vfs_write(VFS_FILE* file, const void* buffer, u32 size) {
+    if (!file || !file->fs || !file->fs->write || !buffer || size == 0) {
+        return 0;
+    }
+
+    return file->fs->write(file, buffer, size);
+}
+
 u32 vfs_get_size(VFS_FILE* file) {
     if (!file || !file->fs || !file->fs->get_size || !root_mount.ops) { return 0; }
 

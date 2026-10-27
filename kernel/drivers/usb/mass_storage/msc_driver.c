@@ -12,6 +12,7 @@
 #include <drivers/usb/usb_descriptors.h>
 
 // TODO: multiple readers causes issues
+// TODO: bot reset recovery
 
 #define MSC_BOT_RESET          0xFF
 
@@ -20,6 +21,7 @@
 #define SCSI_INQUIRY           0x12
 #define SCSI_READ_CAPACITY_10  0x25
 #define SCSI_READ_10           0x28
+#define SCSI_WRITE_10          0x2A
 
 #define USB_TRANSFER_TYPE_BULK 0x02
 
@@ -240,6 +242,39 @@ static b8 msc_scsi_read10(msc_driver_t* self, u32 lba, u16 block_count, void* bu
     return msc_bot_command(self, cdb, sizeof(cdb), buffer, (u32)bytes64, true);
 }
 
+static b8 msc_scsi_write10(msc_driver_t* self, u32 lba, u16 block_count, const void* buffer) {
+    if (!self || !self->initialized || !buffer || block_count == 0 || self->block_size == 0) {
+        return false;
+    }
+
+    // ensure the requested range fits on the device
+    if ((u64)lba >= self->block_count || (u64)block_count > self->block_count - (u64)lba) {
+        return false;
+    }
+
+    // WRITE (10) has a 32-bit starting LBA
+    u64 bytes64 = (u64)block_count * self->block_size;
+
+    if (bytes64 > 0xFFFFFFFFULL) {
+        return false;
+    }
+
+    u8 cdb[10];
+    memset(cdb, 0, sizeof(cdb));
+
+    cdb[0] = SCSI_WRITE_10;
+
+    // starting LBA big-endian
+    msc_put_be32(&cdb[2], lba);
+
+    // transfer length in logical blocks (big-endian)
+    cdb[7] = (u8)(block_count >> 8);
+    cdb[8] = (u8)block_count;
+
+    // WRITE (10) transfers data from host to device
+    return msc_bot_command(self, cdb, sizeof(cdb), (void*)buffer, (u32)bytes64, false);
+}
+
 static const usb_endpoint_t* msc_find_endpoint(const usb_interface_t* iface, u8 transfer_type, b8 direction_in) {
     if (!iface) { return NULL; }
 
@@ -396,11 +431,7 @@ int msc_block_read(void* driver_data, u64 lba, u32 count, void* buffer) {
         return 0;
     }
 
-    /*
-     * READ (10) uses a 32-bit LBA. Your XHCI normal-transfer
-     * implementation also currently limits each transfer to PAGE_SIZE.
-     * Split larger reads into smaller commands.
-     */
+    // READ (10) uses a 32-bit LBA. current XHCI normal-transfer implementation also currently limits each transfer to PAGE_SIZE
     if (lba > 0xFFFFFFFFULL) {
         return 0;
     }
@@ -433,6 +464,63 @@ int msc_block_read(void* driver_data, u64 lba, u32 count, void* buffer) {
 
         u64 bytes = (u64)chunk * msc->block_size;
         dst += bytes;
+        lba += chunk;
+        count -= chunk;
+    }
+
+    return 1;
+}
+
+int msc_block_write(void* driver_data, u64 lba, u32 count, const void* buffer) {
+    msc_driver_t* msc = (msc_driver_t*)driver_data;
+
+    if (!msc || !msc->initialized || msc->disconnected || !msc->dev || msc->dev->disconnect_pending || !buffer || count == 0 || msc->block_size == 0) {
+        printf("fuck\n");
+        return 0;
+    }
+
+    // validate the entire request before issuing any writes
+    if (lba >= msc->block_count || (u64)count > msc->block_count - lba) {
+        printf("fuck2\n");
+        return 0;
+    }
+
+    // WRITE (10) supports only 32-bit LBAs
+    if (lba > 0xFFFFFFFFULL || (u64)count - 1 > 0xFFFFFFFFULL - lba) {
+        printf("fuck3\n");
+        return 0;
+    }
+
+    // keep each transfer within the existing transfer-size limit
+    u32 max_blocks = PAGE_SIZE / msc->block_size;
+
+    if (max_blocks == 0) {
+        printf("fuck4\n");
+        return 0;
+    }
+
+    if (max_blocks > 65535) {
+        max_blocks = 65535;
+    }
+
+    const u8* src = (const u8*)buffer;
+
+    while (count > 0) {
+        u32 chunk = count;
+
+        if (chunk > max_blocks) {
+            chunk = max_blocks;
+        }
+
+        if (!msc_scsi_write10(msc, (u32)lba, (u16)chunk, src)) {
+            printf("[USB-MSC]: Write failed at LBA %llu\n", (unsigned long long)lba);
+
+            return 0;
+        }
+
+        u64 bytes = (u64)chunk * msc->block_size;
+
+        src += bytes;
         lba += chunk;
         count -= chunk;
     }

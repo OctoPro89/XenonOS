@@ -28,6 +28,7 @@ typedef struct msc_driver {
 } msc_driver_t;
 
 int msc_block_read(void* driver_data, u64 lba, u32 count, void* buffer);
+int msc_block_write(void* driver_data, u64 lba, u32 count, const void* buffer);
 
 // TODO: find better solution
 typedef void (*msc_driver_initalize_notify_t)(msc_driver_t* drv);

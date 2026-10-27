@@ -1,6 +1,6 @@
 /*
     FAT32 Disk Operations driver for XenonOS
-    TODO: Add caching (every read triggers a full FAT cluster read atm)
+    TODO: better caching
 */
 
 #pragma once
@@ -64,6 +64,10 @@ typedef struct {
     u32 fat_cache_lba;
     u8 fat_cache[512];
     b8 fat_cache_valid;
+
+    u32 fat_size_sectors;
+    u32 cluster_count;
+    u8 fat_count;
 } FAT32_FS;
 
 typedef struct __packed__ {
@@ -108,6 +112,10 @@ typedef struct {
 
     u32 loaded_cluster;
     b8 cluster_buffer_valid;
+
+    // location of the file's short directory entry on disk
+    u32 dir_entry_lba;
+    u16 dir_entry_offset;
 } FAT32_FILE;
 
 typedef struct {
@@ -129,13 +137,22 @@ int fat32_init(FAT32_FS* fs, block_device* dev, u32 part_lba);
 u32 fat32_cluster_to_lba(FAT32_FS* fs, u32 cluster);
 b8 fat32_read_fat_entry(FAT32_FS* fs, u32 cluster, u32* out_cluster);
 b8 fat32_read_cluster(FAT32_FS* fs, u32 cluster, void* buffer);
+b8 fat32_write_cluster(FAT32_FS* fs, u32 cluster, const void* buffer);
 u32 fat32_entry_cluster(FAT32_DIRECTORY_ENTRY* ent);
 void fat32_format_8_3(u8* name, char* out);
 int fat32_name_match_8_3(const char* input, u8* name);
 FAT32_FILE* fat32_open(FAT32_FS* fs, const char* name);
 void fat32_close(FAT32_FILE* f);
+
+/**
+ * @brief Create a new empty short-name file and return it open.
+ * @note Existing files are not overwritten.
+ */
+FAT32_FILE* fat32_create(FAT32_FS* fs, const char* path);
+
 u32 fat32_read(FAT32_FILE* f, void* buffer, u32 size);
-int fat32_find_in_dir(FAT32_FS* fs, u32 start_cluster, const char* name, FAT32_DIRECTORY_ENTRY* out);
+u32 fat32_write(FAT32_FILE* f, const void* buffer, u32 size);
+int fat32_find_in_dir(FAT32_FS* fs, u32 start_cluster, const char* name, FAT32_DIRECTORY_ENTRY* out, u32* out_lba, u16* out_offset);
 void fat32_lfn_extract(FAT32_LFN_ENTRY* lfn, char* out);
 u32 fat32_get_size(FAT32_FILE* file);
 int fat32_seek(FAT32_FILE* f, u32 offset);

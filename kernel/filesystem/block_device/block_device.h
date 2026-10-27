@@ -7,4 +7,5 @@ typedef struct {
 
     int (*read)(void* driver_data, uint64_t lba, uint32_t count, void* buffer);
     int (*write)(void* driver_data, uint64_t lba, uint32_t count, const void* buffer);
+    int (*flush)(void* driver_data);
 } block_device;

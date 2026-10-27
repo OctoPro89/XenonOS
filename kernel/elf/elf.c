@@ -210,7 +210,7 @@ int process_load_elf(process_t* process, const char* path) {
         int result = elf_load_segment(file, process, &ph);
         if (result < 0) {
             #if XENONOS_DEBUG
-                    printf("process_load_elf(): failed to load segment!\n", path);
+                printf("process_load_elf(): failed to load segment!\n", path);
             #endif
             fclose(file);
             return result;
@@ -222,7 +222,7 @@ int process_load_elf(process_t* process, const char* path) {
     process->entry = header.e_entry;
 
     // stack
-    for (int i = 0; i < 8; ++i) {
+    for (int i = 0; i < PROCESS_STACK_PAGES; ++i) {
         paddr_t phys = pmm_alloc_page();
         if (!phys) {
             return -ENOMEM;
@@ -239,7 +239,7 @@ int process_load_elf(process_t* process, const char* path) {
 
     process->user_stack_top = USER_STACK_TOP;
 
-    vaddr_t stack_bottom = USER_STACK_TOP - (8 * PAGE_SIZE);
+    vaddr_t stack_bottom = USER_STACK_TOP - (PROCESS_STACK_PAGES * PAGE_SIZE);
 
     // leave at least one unmapped page below the stack
     vaddr_t heap_limit = stack_bottom - PAGE_SIZE;

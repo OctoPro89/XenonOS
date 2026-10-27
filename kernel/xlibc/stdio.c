@@ -179,7 +179,6 @@ typedef struct {
     int written;
 } printf_context_t;
 
-
 static void printf_console_emit(void* ctx, char c) {
     (void)ctx;
     putc(c);
@@ -202,7 +201,6 @@ static void printf_emit_count(void* ctx, char c) {
     p->emit(p->emit_ctx, c);
     p->written++;
 }
-
 
 static void printf_string(printf_emit_fn emit, void* ctx, const char* str) {
     if (!str) {
