@@ -40,6 +40,9 @@ FILE *save_stream;
 int savegamelength;
 boolean savegame_error;
 
+char* __savebuffer;
+uint64_t __savebuffer_pos;
+
 // Get the filename of a temporary file to write the savegame to.  After
 // the file has been successfully saved, it will be renamed to the 
 // real file.
@@ -98,9 +101,8 @@ static byte saveg_read8(void)
 
 static void saveg_write8(byte value)
 {
-    // TODO:
-    savegame_error = true;
-    return;
+    __savebuffer[__savebuffer_pos] = value;
+    ++__savebuffer_pos;
     /*
     if (fwrite(&value, 1, 1, save_stream) < 1)
     {
@@ -1494,6 +1496,7 @@ void P_ArchiveWorld (void)
     line_t*		li;
     side_t*		si;
     
+    printf("P_ArchiveWorld\n");
     // do sectors
     for (i=0, sec = sectors ; i<numsectors ; i++,sec++)
     {
@@ -1506,6 +1509,7 @@ void P_ArchiveWorld (void)
 	saveg_write16(sec->tag);		// needed?
     }
 
+    printf("Did sectors\n");
     
     // do lines
     for (i=0, li = lines ; i<numlines ; i++,li++)
@@ -1527,6 +1531,8 @@ void P_ArchiveWorld (void)
 	    saveg_write16(si->midtexture);	
 	}
     }
+
+    printf("Did lines\n");
 }
 
 

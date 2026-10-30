@@ -9,6 +9,7 @@ VFS_FILE* fat32_vfs_create(void* fs_data, const char* path);
 u32 fat32_vfs_read(VFS_FILE* file, void* buffer, u32 size);
 u32 fat32_vfs_write(VFS_FILE* file, const void* buffer, u32 size);
 u32 fat32_vfs_get_size(VFS_FILE* file);
+int fat32_vfs_truncate(VFS_FILE* file, u32 size);
 int fat32_vfs_seek(VFS_FILE* file, u32 offset);
 u32 fat32_vfs_tell(VFS_FILE* file);
 

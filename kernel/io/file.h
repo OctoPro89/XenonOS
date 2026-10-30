@@ -18,7 +18,7 @@ typedef struct {
 typedef struct file {
     const file_ops_t *ops;
     void* private;
-
+    int open_flags;
     u32 flags;
     u32 refcount;
 } file_t;

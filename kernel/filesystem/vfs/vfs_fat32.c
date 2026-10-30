@@ -13,6 +13,7 @@ VFS_FILESYSTEM fat32_ops = {
     .read = fat32_vfs_read,
     .write = fat32_vfs_write,
     .get_size = fat32_vfs_get_size,
+    .truncate = fat32_vfs_truncate,
     .seek = fat32_vfs_seek,
     .tell = fat32_vfs_tell,
     .opendir = fat32_vfs_opendir,
@@ -88,6 +89,14 @@ u32 fat32_vfs_write(VFS_FILE* file, const void* buffer, u32 size) {
 u32 fat32_vfs_get_size(VFS_FILE* file) {
     FAT32_FILE* f = (FAT32_FILE*)file->internal;
     return fat32_get_size(f);
+}
+
+int fat32_vfs_truncate(VFS_FILE* file, u32 size) {
+    if (!file || !file->internal) {
+        return -1;
+    }
+
+    return fat32_truncate((FAT32_FILE*)file->internal, size);
 }
 
 int fat32_vfs_seek(VFS_FILE* file, u32 offset) {

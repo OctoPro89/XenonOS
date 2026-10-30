@@ -2,7 +2,7 @@
 
 #include <xlibc/xstdint.h>
 
-typedef struct {
+typedef struct xenon_surface {
     u32 width;
     u32 height;
     u32 stride;

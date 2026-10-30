@@ -117,6 +117,14 @@ u32 vfs_write(VFS_FILE* file, const void* buffer, u32 size) {
     return file->fs->write(file, buffer, size);
 }
 
+int vfs_truncate(VFS_FILE* file, u32 size) {
+    if (!file || !file->fs || !file->fs->truncate) {
+        return -1;
+    }
+
+    return file->fs->truncate(file, size);
+}
+
 u32 vfs_get_size(VFS_FILE* file) {
     if (!file || !file->fs || !file->fs->get_size || !root_mount.ops) { return 0; }
 

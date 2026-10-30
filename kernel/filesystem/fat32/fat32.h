@@ -155,6 +155,14 @@ u32 fat32_write(FAT32_FILE* f, const void* buffer, u32 size);
 int fat32_find_in_dir(FAT32_FS* fs, u32 start_cluster, const char* name, FAT32_DIRECTORY_ENTRY* out, u32* out_lba, u16* out_offset);
 void fat32_lfn_extract(FAT32_LFN_ENTRY* lfn, char* out);
 u32 fat32_get_size(FAT32_FILE* file);
+
+/**
+ * @brief Truncates a file
+ * @note ***IMPORTANT*** Only truncates to zero bytes for now.
+ * @returns -1 on error, else zero
+ */
+int fat32_truncate(FAT32_FILE* file, u32 size);
+
 int fat32_seek(FAT32_FILE* f, u32 offset);
 u32 fat32_tell(FAT32_FILE* f);
 

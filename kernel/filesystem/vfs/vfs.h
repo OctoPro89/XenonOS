@@ -28,6 +28,7 @@ typedef struct {
     VFS_FILE* (*create)(void* fs_data, const char* path);
     u32 (*write)(VFS_FILE* file, const void* buffer, u32 size);
     u32 (*get_size)(VFS_FILE* file);
+    int (*truncate)(VFS_FILE* file, u32 size);
 
     int (*seek)(VFS_FILE* file, u32 offset);
     u32 (*tell)(VFS_FILE* file);
@@ -61,6 +62,7 @@ u32 vfs_read(VFS_FILE* file, void* buffer, u32 size);
 VFS_FILE* vfs_create(const char* path);
 u32 vfs_write(VFS_FILE* file, const void* buffer, u32 size);
 u32 vfs_get_size(VFS_FILE* file);
+int vfs_truncate(VFS_FILE* file, u32 size);
 int vfs_seek(VFS_FILE* file, u32 offset);
 u32 vfs_tell(VFS_FILE* file);
 

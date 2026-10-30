@@ -1462,6 +1462,95 @@ u32 fat32_get_size(FAT32_FILE* file) {
     return file->size;
 }
 
+int fat32_truncate(FAT32_FILE* f, u32 size) {
+    if (!f || !f->fs || !f->fs->dev || !f->fs->dev->write || !f->fs->dev->read) {
+        return -1;
+    }
+
+    // initial implementation supports truncate-to-zero only
+    if (size != 0) {
+        return -1;
+    }
+
+    FAT32_FS* fs = f->fs;
+    u32 old_first_cluster = f->first_cluster;
+
+    // Validate the current chain's starting cluster.
+    if (old_first_cluster != 0 && (old_first_cluster < 2 || old_first_cluster >= fs->cluster_count + 2)) {
+        return -1;
+    }
+
+    u32 old_size = f->size;
+    u32 old_pos = f->pos;
+
+    // make the file appear empty in memory and on disk; do this before freeing the old clusters so that a failure during freeing cannot leave the directory pointing at freed clusters
+    f->first_cluster = 0;
+    f->size = 0;
+    f->pos = 0;
+
+    if (!fat32_update_file_entry(f)) {
+        // the directory update failed; restore the in-memory fields
+        f->first_cluster = old_first_cluster;
+        f->size = old_size;
+        f->pos = old_pos;
+        return -1;
+    }
+
+    // if a flush operation is available, synchronize the metadata before freeing the old data chain.
+    if (fs->dev->flush && !fs->dev->flush(fs->dev->driver_data)) {
+        // leave the old chain allocated, the on-disk state is uncertain
+        f->cluster_buffer_valid = false;
+        f->cluster_cursor_valid = false;
+        return -1;
+    }
+
+    // reset the per-file cluster cache
+    f->current_cluster = 0;
+    f->current_cluster_index = 0;
+    f->cluster_cursor_valid = false;
+    f->cluster_buffer_valid = false;
+
+    // free the old cluster chain, read each link before clearing the current FAT entry
+    u32 cluster = old_first_cluster;
+    u32 freed = 0;
+
+    while (cluster != 0) {
+        if (freed >= fs->cluster_count || cluster < 2 || cluster >= fs->cluster_count + 2) {
+            // TODO:
+            // corrupt/cyclic chain, the file is empty, but clusters may leak
+            return -1;
+        }
+
+        u32 next;
+
+        if (!fat32_read_fat_entry(fs, cluster, &next)) {
+            return -1;
+        }
+
+        if (fat32_is_eoc(next)) {
+            next = 0;
+        }
+        else if (!fat32_is_data_cluster(next) || next >= fs->cluster_count + 2) {
+            // don't follow an invalid FAT link
+            return -1;
+        }
+
+        if (!fat32_write_fat_entry(fs, cluster, 0)) {
+            return -1;
+        }
+
+        cluster = next;
+        ++freed;
+    }
+
+    // flush freed FAT entries when supported
+    if (fs->dev->flush && !fs->dev->flush(fs->dev->driver_data)) {
+        return -1;
+    }
+
+    return 0;
+}
+
 int fat32_seek(FAT32_FILE* f, u32 offset) {
     if (!f) return -1;
 

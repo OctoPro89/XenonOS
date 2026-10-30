@@ -14,11 +14,11 @@
 #include <arch/x86_64/io.h>
 #include <unistd.h>
 #include <errno.h>
+#include <fcntl.h>
 
 static process_t* process_list;
 static spinlock_t process_list_lock;
 static pid_t next_pid = 1;
-
 
 static u64 align_down_16(u64 value) {
     return value & ~0xFULL;
@@ -348,12 +348,17 @@ int process_setup_stdio(process_t* process, terminal_t* terminal) {
     file_t* stderr_file = terminal_file_create(terminal);
 
     if (!stdin_file || !stdout_file || !stderr_file) {
-        if (stdin_file)  file_put(stdin_file);
+        if (stdin_file) file_put(stdin_file);
         if (stdout_file) file_put(stdout_file);
         if (stderr_file) file_put(stderr_file);
 
         return -ENOMEM;
     }
+
+    // stdin is read-only; stdout and stderr are write-only
+    stdin_file->open_flags  = O_RDONLY;
+    stdout_file->open_flags = O_WRONLY;
+    stderr_file->open_flags = O_WRONLY;
 
     // this process must have an empty FD table, standard descriptors are in 0, 1, and 2
     fd_t in_fd = fd_table_alloc(&process->fd_table, stdin_file);

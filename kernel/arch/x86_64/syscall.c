@@ -267,6 +267,11 @@ ssize_t sys_read(fd_t fd, void* user_buffer, size_t size) {
         return -EBADF;
     }
 
+    if ((file->open_flags & O_ACCMODE) == O_WRONLY) {
+        file_put(file);
+        return -EBADF;
+    }
+
     if (!file->ops || !file->ops->read) {
         file_put(file);
         return -EINVAL;
@@ -325,6 +330,11 @@ ssize_t sys_write(fd_t fd, const void* user_buffer, size_t size) {
     file_t* file = fd_get(fd);
 
     if (!file) {
+        return -EBADF;
+    }
+
+    if ((file->open_flags & O_ACCMODE) == O_RDONLY) {
+        file_put(file);
         return -EBADF;
     }
 
@@ -1095,13 +1105,25 @@ ssize_t sys_open(const char* user_path, int flags) {
         return -EINVAL;
     }
 
-    // TODO: access modes
+    int access_mode = flags & O_ACCMODE;
+
+    if (access_mode != O_RDONLY &&
+        access_mode != O_WRONLY &&
+        access_mode != O_RDWR) {
+        return -EINVAL;
+    }
+
     char path[USER_PATH_MAX];
     char resolved[USER_PATH_MAX];
 
     int result = copy_user_path(path, user_path);
     if (result < 0) {
         return result;
+    }
+
+    // no truncating a read-only open
+    if ((flags & O_TRUNC) && access_mode == O_RDONLY) {
+        return -EINVAL;
     }
 
     process_t* process = process_current();
@@ -1113,18 +1135,42 @@ ssize_t sys_open(const char* user_path, int flags) {
 
     if (result < 0) return result;
 
-    VFS_FILE* vf = NULL;
-    if (flags & O_CREAT) {
-        vf = vfs_create(resolved); // opens the file as well
-    }
-    else {
-        vf = vfs_open(resolved);
+    VFS_FILE* vf = vfs_open(resolved);
+    b8 existed = (vf != NULL);
+
+    // O_CREAT | O_EXCL must fail if the file already exists.
+    if (existed && (flags & O_CREAT) && (flags & O_EXCL)) {
+        vfs_close(vf);
+        return -EEXIST;
     }
 
+    // if the file does not exist, create it only when O_CREAT is specified
     if (!vf) {
-        return -ENOENT;
+        if (!(flags & O_CREAT)) {
+            return -ENOENT;
+        }
+
+        vf = vfs_create(resolved);
+
+        if (!vf) {
+            // TODO: distinguish error
+            return -EIO;
+        }
     }
 
+    // O_TRUNC empties an existing file; a newly created file is already empty, so truncating it again is harmless
+    if (flags & O_TRUNC) {
+        if (vfs_truncate(vf, 0) != 0) {
+            vfs_close(vf);
+            return -EIO;
+        }
+
+        if (vfs_seek(vf, 0) != 0) {
+            vfs_close(vf);
+            return -EIO;
+        }
+    }
+    
     file_t* file = kmalloc(sizeof(file_t));
     if (!file) {
         vfs_close(vf);
@@ -1132,6 +1178,9 @@ ssize_t sys_open(const char* user_path, int flags) {
     }
 
     file_init(file, &regular_file_ops, vf);
+
+    // store the open flags on the open-file object
+    file->open_flags = flags;
 
     fd_t fd = fd_alloc(file);
 

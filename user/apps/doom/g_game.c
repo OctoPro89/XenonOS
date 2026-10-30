@@ -1607,6 +1607,8 @@ G_SaveGame
     sendsave = true;
 }
 
+extern char* __savebuffer;
+
 void G_DoSaveGame (void) 
 { 
     char *savegame_file;
@@ -1638,14 +1640,28 @@ void G_DoSaveGame (void)
 
     savegame_error = false;
 
+    __savebuffer = malloc(0x2c000);
+    memset(__savebuffer, 0, 0x2c000);
+
     P_WriteSaveGameHeader(savedescription);
- 
+    printf("P_WriteSaveGameHeader");
     P_ArchivePlayers (); 
+    printf("P_ArchivePlayers");
     P_ArchiveWorld (); 
+    printf("P_ArchiveWorld");
     P_ArchiveThinkers (); 
+    printf("P_ArchiveThinkers");
     P_ArchiveSpecials (); 
+    printf("P_ArchiveSpecials");
 	 
     P_WriteSaveGameEOF();
+    printf("P_WriteSaveGameEOF");
+
+    if (fwrite(__savebuffer, 0x2c000, 1, save_stream) < 0) {
+        printf("Failed to save!\n");
+    }
+
+    free(__savebuffer);
 	 
     // Enforce the same savegame size limit as in Vanilla Doom, 
     // except if the vanilla_savegame_limit setting is turned off.
