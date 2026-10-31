@@ -28,6 +28,7 @@ int main(void) {
 
     window_config_t wconfig = {
         .title = "wintest",
+        .icon_path = NULL,
         .rect = { .x = 200, .y = 200, .width = 200 + 2, .height = 200 + 31 },
         .type = WINDOW_TYPE_NORMAL,
         .flags = 0

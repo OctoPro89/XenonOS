@@ -286,6 +286,7 @@ void system_console_task_entry(void* arg) {
 
     window_config_t wconfig = {
         .title = "System Console",
+        .icon_path = NULL,
         .rect = {
             .x = 780,
             .y = 120,
@@ -375,7 +376,6 @@ void launch_shell_task_entry(void* arg) {
     }
 
     int exit_code = process_wait(process);
-    printf("shell exited with code %d\n", exit_code);
     process_reap(process);
     task_exit();
 }

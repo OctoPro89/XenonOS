@@ -16,28 +16,36 @@
 #include <de/mouse_cursor.h>
 #include <power/power.h>
 
-#define TASKBAR_HEIGHT       52
-#define TASKBAR_BOTTOM       12
-#define TASKBAR_MAX_WIDTH    460
-#define TASKBAR_MIN_WIDTH    180
-#define TASKBAR_RADIUS       15
-#define TASKBAR_BORDER       0xFF465164
-#define TASKBAR_BACKGROUND   0xFF202938
-#define TASKBAR_SEPARATOR    0xFF465164
+#define TASKBAR_HEIGHT              52
+#define TASKBAR_BOTTOM              12
+#define TASKBAR_MAX_WIDTH           460
+#define TASKBAR_MIN_WIDTH           180
+#define TASKBAR_RADIUS              15
+#define TASKBAR_BORDER              0xFF465164
+#define TASKBAR_BACKGROUND          0xFF202938
+#define TASKBAR_SEPARATOR           0xFF465164
 
-#define POWER_BUTTON_SIZE       32
-#define POWER_BUTTON_MARGIN     10
-#define POWER_MENU_WIDTH        176
-#define POWER_MENU_ROW_HEIGHT   34
-#define POWER_MENU_PADDING      6
-#define POWER_MENU_HEIGHT       (POWER_MENU_PADDING * 2 + POWER_MENU_ROW_HEIGHT * 2)
+#define TASKBAR_ICON_SIZE           32
+#define TASKBAR_ICON_SPACING        8
+#define TASKBAR_ICON_START          16
+#define TASKBAR_ICON_RADIUS         8
 
-#define POWER_BUTTON_HOVER      0xFF35445C
-#define POWER_MENU_BACKGROUND   0xFF202938
-#define POWER_MENU_BORDER       0xFF465164
-#define POWER_MENU_HOVER        0xFF35445C
-#define POWER_MENU_DANGER       0xFFF87171
-#define POWER_MENU_DANGER_BG    0xFF3B2932
+#define TASKBAR_ACTIVE_DOT_SIZE     5
+#define TASKBAR_ACTIVE_DOT_SPACING  2
+
+#define POWER_BUTTON_SIZE           32
+#define POWER_BUTTON_MARGIN         10
+#define POWER_MENU_WIDTH            176
+#define POWER_MENU_ROW_HEIGHT       34
+#define POWER_MENU_PADDING          6
+#define POWER_MENU_HEIGHT           (POWER_MENU_PADDING * 2 + POWER_MENU_ROW_HEIGHT * 2)
+
+#define POWER_BUTTON_HOVER          0xFF35445C
+#define POWER_MENU_BACKGROUND       0xFF202938
+#define POWER_MENU_BORDER           0xFF465164
+#define POWER_MENU_HOVER            0xFF35445C
+#define POWER_MENU_DANGER           0xFFF87171
+#define POWER_MENU_DANGER_BG        0xFF3B2932
 
 typedef enum {
     POWER_ACTION_NONE = 0,
@@ -48,6 +56,24 @@ typedef enum {
 static b8 power_menu_open;
 static b8 power_button_hovered;
 static power_action_t power_action_hovered;
+
+#define TASKBAR_MAX_ICONS 6
+
+typedef struct {
+    window_t* window;
+    compositor_image_t image;
+} taskbar_icon_t;
+
+static taskbar_icon_t current_icons[TASKBAR_MAX_ICONS];
+static u8 current_icon_count = 0;
+static mutex_t current_icon_mutex;
+static window_id_t active_icon_id = 0;
+static spinlock_t active_icon_lock;
+
+void taskbar_init() {
+    mutex_init(&current_icon_mutex);
+    spin_lock_init(&active_icon_lock);
+}
 
 static b8 get_taskbar_rect(const xenon_surface_t* s, i32* out_x, i32* out_y, i32* out_width, i32* out_height) {
     if (!s || !out_x || !out_y || !out_width || !out_height || s->height < TASKBAR_HEIGHT + TASKBAR_BOTTOM) {
@@ -233,20 +259,10 @@ static void render_taskbar_body(xenon_surface_t* s) {
 
     round_rect(s, x + 1, y + 1, width - 2, height - 2, TASKBAR_RADIUS - 1, TASKBAR_BACKGROUND);
 
-    // temporary placeholder until app icons are implemented
-    const i32 center_y = y + (height - 8) / 2;
-
-    xenon_surface_str(s, x + 18, center_y, "Xenon", TEXT_WHITE);
-
-    // subtle divider between the desktop identity and future dock items
-    const i32 separator_x = x + 100;
-    const i32 separator_x2 = x + width - 50;
+    // subtle divider
+    const i32 separator_x = x + width - 50;
 
     xenon_surface_rect(s, (u32)separator_x, (u32)(y + 12), 1, (u32)(height - 24), TASKBAR_SEPARATOR);
-
-    xenon_surface_str(s, separator_x + 14, center_y, "Desktop", TEXT_MUTED);
-
-    xenon_surface_rect(s, (u32)separator_x2, (u32)(y + 12), 1, (u32)(height - 24), TASKBAR_SEPARATOR);
 
     render_power_button(s);
 }
@@ -321,21 +337,98 @@ static b8 handle_power_click(xenon_surface_t* s, i32 px, i32 py) {
 }
 
 void taskbar_render(xenon_surface_t* s) {
+    if (!s || s->width < 1 || s->height < TASKBAR_HEIGHT + TASKBAR_BOTTOM) {
+        return;
+    }
+
+    i32 x, y, width, height;
+
+    if (!get_taskbar_rect(s, &x, &y, &width, &height)) {
+        return;
+    }
+
     render_taskbar_body(s);
+
+    mutex_lock(&current_icon_mutex);
+
+    u64 flags = 0;
+    spin_lock_irqsave(&active_icon_lock, &flags);
+    window_id_t active_id = active_icon_id;
+    spin_unlock_irqrestore(&active_icon_lock, flags);
+    
+    for (u8 i = 0; i < current_icon_count; ++i) {
+        i32 icon_x = x + TASKBAR_ICON_START + (i * (TASKBAR_ICON_SIZE + TASKBAR_ICON_SPACING));
+        i32 icon_y = y + (height - TASKBAR_ICON_SIZE) / 2;
+
+        if (current_icons[i].image.pixels && current_icons[i].image.width && current_icons[i].image.height) {
+            compositor_image_draw(s, &current_icons[i].image, icon_x, icon_y, true);
+        }
+        else {
+            round_rect(s, icon_x, icon_y, 32, 32, 10, 0xFFF0F0F0);
+        }
+
+        if (active_id == current_icons[i].window->id) {
+            round_rect(s,
+                       icon_x + ((TASKBAR_ICON_SIZE - TASKBAR_ICON_SPACING + TASKBAR_ACTIVE_DOT_SIZE) / 2),
+                       icon_y + TASKBAR_ICON_SIZE + TASKBAR_ACTIVE_DOT_SPACING, TASKBAR_ACTIVE_DOT_SIZE, TASKBAR_ACTIVE_DOT_SIZE, 1, 0xFFFFFFFF
+            );
+        }
+    }
+    
+    mutex_unlock(&current_icon_mutex);
 }
 
-b8 taskbar_handle_click(xenon_surface_t* s, i32 x, i32 y) {
-    return handle_power_click(s, x, y);
+
+b8 taskbar_handle_click(xenon_surface_t* s, i32 mouse_x, i32 mouse_y) {
+    if (!s || s->width < 1 ||
+        s->height < TASKBAR_HEIGHT + TASKBAR_BOTTOM) {
+        return false;
+    }
+
+    i32 x, y, width, height;
+
+    if (!get_taskbar_rect(s, &x, &y, &width, &height)) {
+        return false;
+    }
+
+    window_t* clicked_window = NULL;
+
+    mutex_lock(&current_icon_mutex);
+
+    for (u8 i = 0; i < current_icon_count; ++i) {
+        i32 icon_x = x + TASKBAR_ICON_START + (i * (TASKBAR_ICON_SIZE + TASKBAR_ICON_SPACING));
+
+        i32 icon_y = y + (height - TASKBAR_ICON_SIZE) / 2;
+
+        if (point_in_rect(mouse_x, mouse_y, icon_x, icon_y, TASKBAR_ICON_SIZE, TASKBAR_ICON_SIZE)) {
+            clicked_window = current_icons[i].window;
+            break;
+        }
+    }
+
+    mutex_unlock(&current_icon_mutex);
+
+    if (clicked_window) {
+        window_server_raise(clicked_window);
+        window_server_set_focused(clicked_window);
+        return true;
+    }
+
+    return handle_power_click(s, mouse_x, mouse_y);
 }
 
-void taskbar_process_mouse_events(xenon_surface_t* s, i32 x, i32 y) {
+void taskbar_process_mouse_events(xenon_surface_t* s, i32 mouse_x, i32 mouse_y) {
+    if (!s || s->width < 1 || s->height < TASKBAR_HEIGHT + TASKBAR_BOTTOM) {
+        return;
+    }
+
     b8 old_button_hovered = power_button_hovered;
-    power_button_hovered = power_button_hit_test(s, x, y);
+    power_button_hovered = power_button_hit_test(s, mouse_x, mouse_y);
 
     power_action_t old_action_hovered = power_action_hovered;
 
     if (power_menu_open) {
-        power_action_hovered = power_menu_hit_test(s, x, y);
+        power_action_hovered = power_menu_hit_test(s, mouse_x, mouse_y);
     } else {
         power_action_hovered = POWER_ACTION_NONE;
     }
@@ -348,4 +441,88 @@ void taskbar_process_mouse_events(xenon_surface_t* s, i32 x, i32 y) {
 
 void taskbar_render_top_level(xenon_surface_t* s) {
     render_power_menu(s);
+}
+
+b8 taskbar_create_icon_for_window(window_t* window, const char* path) {
+    if (!path) {
+        return false;
+    }
+
+    compositor_image_t source = { 0 };
+    compositor_image_t scaled = { 0 };
+
+    if (!compositor_image_load_file(path, &source)) {
+        return false;
+    }
+
+    if (!compositor_image_scale_linear(&source, TASKBAR_ICON_SIZE, TASKBAR_ICON_SIZE, &scaled)) {
+        compositor_image_destroy(&source);
+        return false;
+    }
+
+    compositor_image_destroy(&source);
+
+    compositor_image_apply_rounded_corners(&scaled, TASKBAR_ICON_RADIUS);
+
+    mutex_lock(&current_icon_mutex);
+
+    if (current_icon_count >= TASKBAR_MAX_ICONS) {
+        mutex_unlock(&current_icon_mutex);
+        compositor_image_destroy(&scaled);
+        return false;
+    }
+
+    current_icons[current_icon_count].window = window;
+    current_icons[current_icon_count].image = scaled;
+
+    ++current_icon_count;
+
+    mutex_unlock(&current_icon_mutex);
+
+    compositor_invalidate();
+
+    return true;
+}
+
+void taskbar_remove_icon_for_window(window_t* window) {
+    compositor_image_t removed = { 0 };
+    b8 found = false;
+
+    mutex_lock(&current_icon_mutex);
+
+    for (u8 i = 0; i < current_icon_count; ++i) {
+        if (current_icons[i].window->id != window->id) {
+            continue;
+        }
+
+        removed = current_icons[i].image;
+        found = true;
+
+        for (u8 j = i; j + 1 < current_icon_count; ++j) {
+            current_icons[j] = current_icons[j + 1];
+        }
+
+        --current_icon_count;
+
+        memset(&current_icons[current_icon_count], 0, sizeof(taskbar_icon_t));
+
+        break;
+    }
+
+    mutex_unlock(&current_icon_mutex);
+
+    if (found) {
+        compositor_image_destroy(&removed);
+        compositor_invalidate();
+    }
+}
+
+void taskbar_set_active(window_t* window) {
+    u64 flags = 0;
+    spin_lock_irqsave(&active_icon_lock, &flags);
+
+    active_icon_id = window->id;
+
+    spin_unlock_irqrestore(&active_icon_lock, flags);
+    compositor_invalidate();
 }

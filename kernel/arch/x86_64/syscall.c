@@ -679,6 +679,33 @@ ssize_t sys_window_setup_terminal_io() {
     return process_setup_stdio(crnt, terminal);
 }
 
+ssize_t sys_window_set_title(const char* user_title) {
+    if (!user_title) {
+        return -EINVAL;
+    }
+    
+    process_t* crnt = process_current();
+
+    if (!crnt) {
+        return -ESRCH;
+    }
+
+    if (!crnt->window) {
+        return -EFAULT;
+    }
+
+    char title[USER_PATH_MAX];
+    memset(title, 0, USER_PATH_MAX);
+
+    int result = copy_user_path(title, user_title);
+    if (result < 0) {
+        return result;
+    }
+
+    window_server_set_title(crnt->window, title);
+    return 0;
+}
+
 ssize_t sys_window_subscribe_keyboard() {
     process_t* crnt = process_current();
 

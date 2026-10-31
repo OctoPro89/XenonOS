@@ -3,6 +3,8 @@
 #include <acpi/fadt.h>
 #include <xlibc/stdio.h>
 
+static rtc_datetime_t g_rtc_datetime;
+
 static u64 g_boot_unix_ns;
 
 static const u64 NS_PER_SEC         = 1000000000ULL;
@@ -161,9 +163,25 @@ __PRIVILEGED_CODE b8 rtc_init() {
         (u32)(sec), epoch_sec
     );
 
+    g_rtc_datetime.year = full_year;
+    g_rtc_datetime.month = mon;
+    g_rtc_datetime.day = day;
+
+    g_rtc_datetime.hour = hr;
+    g_rtc_datetime.minute = min;
+    g_rtc_datetime.second = sec;
+
     return true;
 }
 
 u64 rtc_boot_unix_ns() {
     return g_boot_unix_ns;
+}
+
+void rtc_get_datetime(rtc_datetime_t* out) {
+    if (!out) {
+        return;
+    }
+
+    *out = g_rtc_datetime;
 }

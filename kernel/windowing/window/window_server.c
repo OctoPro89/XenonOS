@@ -1,8 +1,10 @@
 #include <windowing/window/window.h>
 #include <windowing/window/events.h>
 #include <windowing/window/internal.h>
+#include <windowing/compositor/views/taskbar.h>
 #include <windowing/compositor/compositor.h>
 #include <arch/x86_64/sync/sync.h>
+#include <filesystem/vfs/vfs.h>
 #include <xlibc/string.h>
 #include <memory/heap.h>
 #include <kernel.h>
@@ -20,6 +22,11 @@ static window_id_t next_id = 1;
 static spinlock_t window_server_lock;
 
 static window_invalidate_callback_t invalidate_callback;
+
+const char* get_last_component(const char *path) {
+    const char *last_slash = strrchr(path, '/');
+    return (last_slash != NULL) ? (last_slash + 1) : path;
+}
 
 static void copy_title(char* dst, const char* src) {
     u32 i = 0;
@@ -115,7 +122,28 @@ window_t* window_server_create_window(const window_config_t* config) {
     // lock to be used is the compositor's
     w->surface = compositor_create_surface_for_window(w);
 
+    // TODO: not sure if this is the best place to do this but whatever
+    // TODO: vfs_exists()
+    if (!config->icon_path) {
+        // TODO: load default icon
+    }
+    else {
+        VFS_FILE* vf = vfs_open(config->icon_path);
+        
+        if (!vf) {
+            // TODO: load default icon
+        }
+        else {
+            taskbar_create_icon_for_window(w, config->icon_path);
+        }
+
+        vfs_close(vf);
+    }
+
+
     window_server_damage(w, 0, 0, (i32)w->rect.width, (i32)w->rect.height);
+
+    window_server_set_focused(w);
 
     notify_compositor();
 
@@ -142,10 +170,13 @@ void window_server_destroy_window(window_t* window) {
     window->alive = false;
     window->focused = false;
     window->surface = NULL;
-    ring_buffer_destroy(window->events); // TODO: ensure readers and writeers can't retain references while destruction occurs
+    ring_buffer_destroy(window->events); // TODO: ensure readers and writers can't retain references while destruction occurs
     window->events = NULL;
 
     spin_unlock_irqrestore(&window_server_lock, flags);
+
+    // TODO: not sure if this is the best place to do this but whatever
+    taskbar_remove_icon_for_window(window);
 
     notify_compositor();
 }
@@ -229,7 +260,10 @@ void window_server_raise(window_t* window) {
         }
     }
 
-    if (index == active_count) { return; }
+    if (index == active_count) {
+        spin_unlock_irqrestore(&window_server_lock, flags);
+        return;
+    }
 
     for (u32 i = index; i + 1 < active_count; ++i) {
         z_order[i] = z_order[i + 1];
@@ -455,15 +489,38 @@ void window_server_subscribe_to_keyboard(window_t* window) {
     spin_unlock_irqrestore(&window_server_lock, flags);
 }
 
+
 void window_server_set_focused(window_t* window) {
+    if (!window) {
+        return;
+    }
+
+    u64 flags = 0;
+    spin_lock_irqsave(&window_server_lock, &flags);
+
+    // verify that the requested window is alive and registered
+    b8 found = false;
+
     for (u32 i = 0; i < active_count; ++i) {
-        if (window_slots[i].e_flags & WINDOW_EVENT_FLAGS_KEYBOARD) {
-            if (valid_window(&window_slots[i]) && (&window_slots[i]) == window) {
-                window->focused = true;
-            }
-            else {
-                window->focused = false;
-            }
+        if (z_order[i] == window && valid_window(window)) {
+            found = true;
+            break;
         }
     }
+
+    if (!found) {
+        spin_unlock_irqrestore(&window_server_lock, flags);
+        return;
+    }
+
+    for (u32 i = 0; i < active_count; ++i) {
+        if (z_order[i]) {
+            z_order[i]->focused = (z_order[i] == window);
+        }
+    }
+
+    spin_unlock_irqrestore(&window_server_lock, flags);
+
+    taskbar_set_active(window); // TODO: not sure if this is the best place to do this
+    notify_compositor();
 }

@@ -28,6 +28,20 @@ ssize_t window_destroy() {
     return (ssize_t)ret;
 }
 
+ssize_t window_set_title(const char* title) {
+    long ret;
+
+    asm volatile (
+        "syscall"
+        : "=a"(ret)
+        : "a"(SYS_WINDOW_SET_TITLE),
+          "D"(title)
+        : "rcx", "r11", "r10", "memory"
+    );
+
+    return (ssize_t)ret;
+}
+
 ssize_t window_damage(const window_rect_t* rect) {
     long ret;
 

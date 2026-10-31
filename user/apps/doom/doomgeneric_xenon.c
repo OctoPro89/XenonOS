@@ -134,6 +134,7 @@ void DG_Init() {
     // create window
     window_config_t wconfig = {
         .title = "DOOM",
+        .icon_path = "icons/doom.png",
         .rect = {
             .x = 200,
             .y = 200,
@@ -312,7 +313,9 @@ int DG_GetKey(int* pressed, unsigned char* doomKey) {
 }
 
 void DG_SetWindowTitle(const char* title) {
-    // TODO:
+    if (window_set_title(title) < 0) {
+        printf("Failed to set window title.\n");
+    }
 }
 
 int main(int argc, char** argv) {

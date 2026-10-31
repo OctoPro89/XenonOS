@@ -15,3 +15,18 @@ __PRIVILEGED_CODE b8 rtc_init();
  * @returns 0 if rtc_init() has not been called, otherwise boot Unix ns
  */
 u64 rtc_boot_unix_ns();
+
+typedef struct {
+    u16 year;
+    u8 month;
+    u8 day;
+
+    u8 hour;
+    u8 minute;
+    u8 second;
+} rtc_datetime_t;
+
+/**
+ * @brief Gets the wall time from boot through cached RTC
+ */
+void rtc_get_datetime(rtc_datetime_t* out);

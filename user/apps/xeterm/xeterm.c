@@ -78,6 +78,7 @@ int main(void) {
     // create window
     window_config_t wconfig = {
         .title = "xeterm",
+        .icon_path = "icons/sh.png",
         .rect = {
             .x = 180,
             .y = 120,

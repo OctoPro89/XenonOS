@@ -168,8 +168,7 @@ void graphics_draw_image_data(uint32_t x, uint32_t y, const uint32_t* data, uint
 
     if (!zero_is_transparent) {
         for (uint32_t row = 0; row < copy_height; ++row) {
-            uint32_t* dst =
-                backbuffer + (y + row) * pixels_per_line + x;
+            uint32_t* dst = backbuffer + (y + row) * pixels_per_line + x;
 
             const uint32_t* src = data + row * width;
 
@@ -181,8 +180,7 @@ void graphics_draw_image_data(uint32_t x, uint32_t y, const uint32_t* data, uint
     }
 
     for (uint32_t row = 0; row < copy_height; ++row) {
-        uint32_t* dst =
-            backbuffer + (y + row) * pixels_per_line + x;
+        uint32_t* dst = backbuffer + (y + row) * pixels_per_line + x;
 
         const uint32_t* src = data + row * width;
 

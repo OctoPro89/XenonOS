@@ -294,3 +294,62 @@ void compositor_image_draw(xenon_surface_t* dst, const compositor_image_t* image
         xenon_surface_image_data(dst, (u32)left,  (u32)(top + row), pixels, draw_width, 1, zero_is_transparent);
     }
 }
+
+void compositor_image_apply_rounded_corners(compositor_image_t* image, u32 radius) {
+    if (!image || !image->pixels || !image->width || !image->height) {
+        return;
+    }
+
+    if (radius == 0) {
+        return;
+    }
+
+    if (radius > image->width / 2) {
+        radius = image->width / 2;
+    }
+
+    if (radius > image->height / 2) {
+        radius = image->height / 2;
+    }
+
+    i64 r2 = (i64)radius * radius;
+
+    for (u32 y = 0; y < image->height; ++y) {
+        for (u32 x = 0; x < image->width; ++x) {
+            i32 cx = -1;
+            i32 cy = -1;
+
+            // top-left corner
+            if (x < radius && y < radius) {
+                cx = radius;
+                cy = radius;
+            }
+            // top-right corner
+            else if (x >= image->width - radius && y < radius) {
+                cx = image->width - radius - 1;
+                cy = radius;
+            }
+            // nottom-left corner
+            else if (x < radius && y >= image->height - radius) {
+                cx = radius;
+                cy = image->height - radius - 1;
+            }
+            // bottom-right corner
+            else if (x >= image->width - radius && y >= image->height - radius) {
+                cx = image->width - radius - 1;
+                cy = image->height - radius - 1;
+            }
+
+            if (cx < 0 || cy < 0) {
+                continue;
+            }
+
+            i32 dx = (i32)x - cx;
+            i32 dy = (i32)y - cy;
+
+            if ((i64)dx * dx + (i64)dy * dy > r2) {
+                image->pixels[(size_t)y * image->width + x] = 0;
+            }
+        }
+    }
+}

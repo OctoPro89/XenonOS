@@ -1,6 +1,7 @@
 #include <windowing/compositor/compositor.h>
 #include <windowing/compositor/compositor_image.h>
 #include <windowing/compositor/views/taskbar.h>
+#include <windowing/compositor/views/topbar.h>
 #include <windowing/compositor/helpers.h>
 #include <windowing/compositor/colors.h>
 #include <windowing/window/window.h>
@@ -80,8 +81,8 @@ typedef b8 (*compositor_program_spawn_fn)(const char* absolute_path);
 static compositor_program_spawn_fn launcher_spawn_callback;
 
 static compositor_image_t desktop_wallpaper;
-static u32 wallpaper_queued = 0;
-char g_new_wallpaper_path[256];
+// static u32 wallpaper_queued = 0;
+// char g_new_wallpaper_path[256];
 
 static mutex_t wallpaper_mutex;
 
@@ -713,13 +714,14 @@ static void render_desktop_background() {
     }
     else {
         xenon_surface_rect(target, 0, 0, target->width, target->height, DESKTOP_BG);
-        xenon_surface_str(target, 20, 20, "Xenon Desktop", TEXT_WHITE);
-        xenon_surface_str(target, 20, 40, "Development build", TEXT_MUTED);
+        xenon_surface_str(target, 20, 25, "Xenon Desktop", TEXT_WHITE);
+        xenon_surface_str(target, 20, 45, "Development build", TEXT_MUTED);
     }
 
     mutex_unlock(&wallpaper_mutex);
 
     taskbar_render(target);
+    topbar_render(target);
 }
 
 b8 compositor_init(xenon_surface_t* surface) {
@@ -739,9 +741,11 @@ b8 compositor_init(xenon_surface_t* surface) {
     clamp_cursor();
     __atomic_store_n(&frame_invalidated, 1, __ATOMIC_RELEASE);
 
+#ifndef QEMU_DEBUG
     if (!launcher_scan_bin()) {
         return false;
     }
+#endif
 
     return true;
 }
@@ -750,9 +754,11 @@ b8 compositor_init(xenon_surface_t* surface) {
 void compositor_invalidate() { __atomic_store_n(&frame_invalidated, 1, __ATOMIC_RELEASE); }
 
 void compositor_render() {
+    /*
     if (__atomic_exchange_n(&wallpaper_queued, 0, __ATOMIC_ACQUIRE)) {
         compositor_set_wallpaper(g_new_wallpaper_path);
     }
+    */
 
     // also sets frame_invalidated to false
     if (!target || !__atomic_exchange_n(&frame_invalidated, 0, __ATOMIC_ACQUIRE)) { return; }
@@ -911,6 +917,7 @@ static void process_mouse_event(const input_mouse_event_t* evt) {
                         dragging_id = (i32)hit->id;
                         drag_offset_x = cursor_x - wx;
                         drag_offset_y = cursor_y - wy;
+                        taskbar_set_active(hit->handle); // TODO: move
                         window_server_set_focused(hit->handle);
                     }
                 }
@@ -1064,12 +1071,14 @@ b8 compositor_set_wallpaper(const char* path) {
     return true;
 }
 
+/*
 void compositor_queue_set_wallpaper(const char* path) {
     if (!path) { return; }
 
     strncpy(g_new_wallpaper_path, path, sizeof(g_new_wallpaper_path));
     __atomic_store_n(&wallpaper_queued, 1, __ATOMIC_RELEASE);
 }
+*/
 
 static b8 launcher_super_down() {
     return launcher_left_super_down || launcher_right_super_down;

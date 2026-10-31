@@ -19,6 +19,7 @@ typedef enum {
 
 typedef struct window_config {
     const char* title;
+    const char* icon_path;
     window_rect_t rect;
     window_type_t type;
     u32 flags;

@@ -38,3 +38,8 @@ b8 compositor_image_scale_linear(const compositor_image_t* src, u32 width, u32 h
  * @brief Renders `image` into `dst` starting at `x`,`y` with `zero_is_transparent` making completely zeroed colors not rendered
  */
 void compositor_image_draw(xenon_surface_t* dst, const compositor_image_t* image, i32 x, i32 y, b8 zero_is_transparent);
+
+/**
+ * @brief Permanently applies roundedd corners to icons by setting color to zero.
+ */
+void compositor_image_apply_rounded_corners(compositor_image_t* image, u32 radius);
