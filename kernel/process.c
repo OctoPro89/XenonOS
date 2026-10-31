@@ -1,6 +1,5 @@
 #include <process.h>
 #include <task.h>
-#include <errno.h>
 #include <memory/heap.h>
 #include <memory/pmm.h>
 #include <memory/paging.h>
@@ -12,9 +11,9 @@
 #include <arch/x86_64/sync/sync.h>
 #include <arch/x86_64/irq.h>
 #include <arch/x86_64/io.h>
-#include <unistd.h>
-#include <errno.h>
-#include <fcntl.h>
+#include <xlibc/unistd.h>
+#include <xlibc/errno.h>
+#include <xlibc/fcntl.h>
 
 static process_t* process_list;
 static spinlock_t process_list_lock;

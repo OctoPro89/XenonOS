@@ -103,9 +103,9 @@ static xhci_command_completion_trb_t* xhci_driver_send_command_trb(xhci_driver_t
 
     if (!driver->command_irq_completed) {
         const u64 CMD_TIMEOUT_MS = 5000;
-        u64 deadline = ktimer_get_unscheduled_ns() + CMD_TIMEOUT_MS * 1000000ULL;
+        u64 deadline = ktimer_get_fast_ns() + CMD_TIMEOUT_MS * 1000000ULL;
 
-        while (!driver->command_irq_completed && ktimer_get_unscheduled_ns() < deadline) {
+        while (!driver->command_irq_completed && ktimer_get_fast_ns() < deadline) {
             // sleep until IRQ handler wakes us up
             task_block_on(&driver->event_wait_queue);
             xhci_driver_process_events(driver);
@@ -617,13 +617,13 @@ static b8 xhci_driver_send_control_transfer(xhci_driver_t* driver, xhci_device_t
 
     // wait for transfer completion
     const u64 TRANSFER_TIMEOUT_MS = 5000;
-    u64 deadline = ktimer_get_system_time_in_nanoseconds() + TRANSFER_TIMEOUT_MS * 1000000ULL;
+    u64 deadline = ktimer_get_system_time_in_nanoseconds() + TRANSFER_TIMEOUT_MS * 1000000ULL; // TODO: maybe use ktimer_get_fast_ns
 
     // TODO: look over functions
     xhci_driver_process_events(driver);
     xhci_event_ring_finish_procecssing(&driver->event_ring);
 
-    while (!device->ctrl_completed && ktimer_get_system_time_in_nanoseconds() < deadline) {
+    while (!device->ctrl_completed && ktimer_get_system_time_in_nanoseconds() < deadline) { // TODO: maybe use ktimer_get_fast_ns
         // sleep until IRQ handler wakes us up
         task_block_on(&driver->event_wait_queue);
         xhci_driver_process_events(driver);
@@ -1353,7 +1353,7 @@ static void xhci_driver_complete_interrupt_in_stream(xhci_driver_t* driver, xhci
             (const u8*)(ep->dma_buffer.virt),
             actual,
             (u16)(xhci_driver_read_mfindex(driver)),
-            ktimer_get_system_time_in_nanoseconds() / 1000,
+            ktimer_get_system_time_in_nanoseconds() / 1000, // TODO: maybe use ktimer_get_fast_ns
             NULL
         );
     }
@@ -1605,7 +1605,10 @@ b8 xhci_driver_init_driver(xhci_driver_t* driver) {
     driver->irq_vector = irq_alloc_vector();
     irq_register_handler(driver->irq_vector, &xhci_driver_irq_handler, driver); // do this first to avoid race condition
     if (!pci_enable_msix(driver->pci_device, driver->irq_vector)) {
-        pci_enable_msi(driver->pci_device, driver->irq_vector);
+        if (!pci_enable_msi(driver->pci_device, driver->irq_vector)) {
+            printf("[XHCI DRIVER]: Failed to enable MSI-X and MSI\n");
+            return false;
+        }
     }
 
     driver->command_irq_completed = 0;

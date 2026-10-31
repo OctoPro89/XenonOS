@@ -4,7 +4,7 @@
 #include <memory/paging.h>
 #include <xlibc/string.h>
 #include <xlibc/stdio.h>
-#include <errno.h>
+#include <xlibc/errno.h>
 #include <process.h>
 
 // TODO: this loader is NOT perfect by any means.

@@ -1,10 +1,10 @@
 #include "vmm.h"
 #include <xlibc/xassert.h>
 #include <xlibc/string.h>
+#include <xlibc/errno.h>
 #include <memory/heap.h>
 #include <memory/paging.h>
 #include <limits.h>
-#include <errno.h>
 
 #define VMM_ALLOC_BASE  0xFFFFE00000000000ULL
 #define VMM_ALLOC_SIZE  (1024ULL * 1024ULL * 1024ULL) // 1 GiB

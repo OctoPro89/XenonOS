@@ -1,4 +1,5 @@
 #include <unistd.h>
+#include <errno.h>
 #include <arch/x86_64/syscall.h>
 
 ssize_t read(int fd, void *buf, size_t count) {
@@ -75,7 +76,7 @@ void* sbrk(ssize_t increment) {
     );
 
     if (ret < 0) {
-        // errno = (int)ret;
+        errno = (int)ret;
         return (void*)-1;
     }
 
@@ -95,7 +96,7 @@ int chdir(const char* path) {
 
     // POSIX compatiblity
     if (ret < 0) {
-        // errno = (int)ret;
+        errno = (int)ret;
         return -1;
     }
 
@@ -116,7 +117,7 @@ char* getcwd(char* buf, size_t size) {
 
     // POSIX compatiblity
     if (ret < 0) {
-        // errno = (int)ret;
+        errno = (int)ret;
         return (char*)-1;
     }
 

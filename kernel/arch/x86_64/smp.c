@@ -9,6 +9,7 @@
 #include <memory/paging.h>
 #include <xlibc/xassert.h>
 #include <xlibc/string.h>
+#include <xlibc/errno.h>
 #include <arch/x86_64/msr.h>
 #include <arch/x86_64/idt.h>
 #include <arch/x86_64/gdt.h>
@@ -172,8 +173,6 @@ __PRIVILEGED_CODE u32 arch_smp_enumerate(smp_cpu_info_t* cpus, u32 max) {
 struct phys_range arch_smp_fixed_boot_frames() {
     return (struct phys_range){ AP_TRAMPOLINE_PHYS, AP_STARTUP_DATA_PHYS + PAGE_SIZE };
 }
-
-#include <errno.h>
 
 __PRIVILEGED_CODE i32 arch_smp_prepare(void) {
     paddr_t pt_root = paging_get_kernel_pt_root();

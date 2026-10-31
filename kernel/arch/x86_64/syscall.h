@@ -9,10 +9,13 @@
 #include <windowing/window/events.h>
 #include <filesystem/sys_dirent.h>
 #include <arch/x86_64/uapi_cpuid.h>
+#include <xlibc/time.h>
 
 #define USER_PATH_MAX 256
 
+// TODO: remove time related stuff that's not POSIX
 // TODO: maybe align to linux
+// NOTE: userspace should just use SYS_CLOSE on directories it'll work fine
 // VERY IMPORTANT: IF THESE ARE CHANGED THEY MUST BE UPDATED IN unistd and libwindow
 #define SYS_READ                        0
 #define SYS_WRITE                       1
@@ -36,12 +39,13 @@
 #define SYS_GET_CPU_INFO                19
 #define SYS_OPEN                        20
 #define SYS_SEEK                        21
-#define SYS_SLEEP_NS                    22
-#define SYS_SET_DESKTOP_ENV_VAR         23
-#define SYS_HWMON_GET_CPU_TEMP_MC       24
-#define SYS_HWMON_GET_ONLINE_CPUS       25
-#define SYS_HWMON_GET_TOTAL_CPUS        26
-// NOTE: userspace should just use SYS_CLOSE on directories it'll work fine
+#define SYS_SET_DESKTOP_ENV_VAR         22
+#define SYS_HWMON_GET_CPU_TEMP_MC       23
+#define SYS_HWMON_GET_ONLINE_CPUS       24
+#define SYS_HWMON_GET_TOTAL_CPUS        25
+#define SYS_CLOCK_GETTIME               26
+#define SYS_CLOCK_GETRES                27
+#define SYS_CLOCK_NANOSLEEP             28
 
 // NOTE: Must match stack pushes in arch/x86_64/syscall.asm
 struct syscall_regs {
@@ -65,6 +69,14 @@ typedef struct window_config window_config_t;
 typedef enum {
     DESKTOP_ENV_VAR_WALLPAPER_IMAGE_PATH = 0
 } desktop_env_var_t;
+
+// TODO: four arguments in registers
+struct sys_nanosleep_args {
+    clockid_t clk_id;
+    int flags;
+    const struct timespec* user_req;
+    struct timespec* user_rem;
+};
 
 ssize_t sys_read(fd_t fd, void* buffer, size_t size);
 ssize_t sys_write(fd_t fd, const void* buffer, size_t size);
@@ -92,6 +104,9 @@ ssize_t sys_set_desktop_env_var(desktop_env_var_t var, void* val, size_t length)
 i32 sys_hwmon_get_cpu_temp_c();
 u64 sys_hwmon_get_online_cpus();
 u64 sys_hwmon_get_total_cpus();
+ssize_t sys_clock_gettime(clockid_t clk_id, struct timespec* user_tp);
+ssize_t sys_clock_getres(clockid_t clk_id, struct timespec* user_res);
+ssize_t sys_clock_nanosleep(clockid_t clk_id, int flags, const struct timespec* user_req, struct timespec* user_rem);
 
 u64 syscall_dispatch(struct syscall_regs* r);
 void syscall_handler(struct syscall_regs* r);

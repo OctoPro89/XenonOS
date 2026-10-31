@@ -10,6 +10,7 @@
 #include <windowing/window/windefs.h>
 #include <graphics/font8x8.h>
 #include <arch/x86_64/syscall.h>
+#include <time.h>
 
 #define CONTENT_W       300u
 #define CONTENT_H       300u
@@ -38,6 +39,7 @@ static i32 latest_temp_mc;
 static i32 latest_sample_ok;
 static i32 running = 1;
 static char cpu_brand[64] = "CPU name unavailable";
+static struct timespec s_start_time;
 
 static void fill_rect(i32 x, i32 y, i32 w, i32 h, u32 color) {
     i32 x0 = x, y0 = y, x1 = x + w, y1 = y + h;
@@ -236,24 +238,20 @@ static int read_cpu_brand(char *out, size_t out_size) {
 }
 
 static u32 get_ticks_ms() {
-    long ret;
-    asm volatile(
-        "syscall"
-        : "=a"(ret)
-        : "a"(SYS_GET_TIME_MS)
-        : "rcx", "r11", "r10", "memory"
-    );
-    return (u32)ret;
+    struct timespec now;
+    clock_gettime(CLOCK_MONOTONIC, &now);
+
+    u64 start_ms = (u64)s_start_time.tv_sec * 1000ULL + (u64)s_start_time.tv_nsec / 1000000ULL;
+    u64 now_ms = (u64)now.tv_sec * 1000ULL + (u64)now.tv_nsec / 1000000ULL;
+
+    return (u32)(now_ms - start_ms);
 }
 
 static void sleep_ms(u32 ms) {
-    u64 ns = (u64)ms * 1000000ULL;
-    asm volatile (
-        "syscall"
-        :
-        : "a"(SYS_SLEEP_NS), "D"(ns)
-        : "rcx", "r11", "r10", "memory"
-    );
+    struct timespec ts;
+    ts.tv_sec = (time_t)(ms / 1000);
+    ts.tv_nsec = (long)((ms % 1000) * 1000000L);
+    nanosleep(&ts, NULL);
 }
 
 static u64 get_online_cpu_count() {
@@ -452,6 +450,11 @@ int main(void) {
     if (rc < 0) {
         printf("Hardware Monitor: window_create failed (rc=%d)\n", (i32)rc);
         return 1;
+    }
+
+    if (clock_gettime(CLOCK_MONOTONIC, &s_start_time) != 0) {
+        printf("Failed to initialize monotonic clock\n");
+        while (1);
     }
 
     history_count = 0;

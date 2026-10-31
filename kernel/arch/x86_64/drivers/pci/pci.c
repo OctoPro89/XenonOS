@@ -264,10 +264,16 @@ static void pci_probe_bar(PCI_Device* dev, u8 bar_index) {
     // A 64-bit BAR consumes the following BAR slot the caller must skip that slot
 }
 
-void pci_enable_msi(PCI_Device* dev, u8 vector) {
+b8 pci_enable_msi(PCI_Device* dev, u8 vector) {
+    if (!dev) {
+        return false;
+    }
+    
     u8 cap = pci_find_capability(dev, 0x05); // MSI
 
-    if (!cap) return;
+    if (!cap) {
+        return false;
+    }
 
     // Read control
     u32 ctrl = pci_config_read32(dev->bus, dev->device, dev->function, cap + MSI_CONTROL);
@@ -284,9 +290,15 @@ void pci_enable_msi(PCI_Device* dev, u8 vector) {
 
     // Vector goes into low byte
     pci_config_write32(dev->bus, dev->device, dev->function, cap + MSI_DATA_32, vector);
+
+    return true;
 }
 
 b8 pci_enable_msix(PCI_Device* dev, u8 vector) {
+    if (!dev) {
+        return false;
+    }
+    
     u8 cap = pci_find_capability(dev, PCI_CAP_ID_MSIX);
 
     if (!cap) {

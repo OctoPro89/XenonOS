@@ -782,7 +782,7 @@ void compositor_render() {
 
     render_launcher(target);
     render_crash_dialog(target);
-    taskbar_render_top_level();
+    taskbar_render_top_level(target);
 
     xenon_surface_image_data(target, (u32)cursor_x, (u32)cursor_y, mouse_cursor_data, CURSOR_W, CURSOR_H, true);
 

@@ -4,7 +4,7 @@
 #include <process.h>
 
 #include <xlibc/string.h>
-#include <errno.h>
+#include <xlibc/errno.h>
 
 int copy_to_user(void* user_dst, void* kernel_src, size_t size) {
     process_t* process = process_current();

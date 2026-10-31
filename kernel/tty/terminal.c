@@ -7,7 +7,7 @@
 #include <memory/heap.h>
 #include <xlibc/string.h>
 #include <xlibc/stdio.h>
-#include <errno.h>
+#include <xlibc/errno.h>
 
 #define HID_KEY_BACKSPACE 0x2A
 #define HID_KEY_LEFT_SHIFT 0xE1

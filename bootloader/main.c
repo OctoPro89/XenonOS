@@ -213,7 +213,7 @@ EFI_STATUS efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable)
         while(1);
     }
 
-        /*
+    /*
      * -------------------------------------------------------------------------
      * Load ELF PT_LOAD segments
      *

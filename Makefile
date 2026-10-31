@@ -14,7 +14,8 @@ KERNCFLAGS = -I$(EFI_INCLUDE) -I$(EFI_INCLUDE)/$(EFI_ARCH) \
          -fshort-wchar \
          -mno-red-zone \
          -c -g -O3 -D XENONOS_DEBUG=1 \
-		 -D XENON_KERNEL
+		 -D XENON_KERNEL -D KERNEL_LOG_DEBUG -D KERNEL_LOG_INFO \
+ 		 -D KERNEL_LOG_WARN -D KERNEL_LOG_ERROR \
 		 -Werror=return-type \
 		 -Werror=incompatible-pointer-types \
 		 -Wall

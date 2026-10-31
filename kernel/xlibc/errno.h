@@ -23,3 +23,6 @@
 #define	ERANGE		    34 // Math result not representable
 #define ENAMETOOLONG    36 // File name too long
 #define ENOSYS          38 // Invalid syscall number
+
+// TODO: thread-local errno
+extern int errno;

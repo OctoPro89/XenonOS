@@ -1,6 +1,6 @@
 #include <filesystem/vfs/vfs.h>
 #include <xlibc/string.h>
-#include <errno.h>
+#include <xlibc/errno.h>
 
 #define VFS_PATH_MAX 255
 

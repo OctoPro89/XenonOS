@@ -110,15 +110,12 @@ STATIC_ASSERT(__builtin_offsetof(fadt_table_t, x_dsdt) == 140);
 __PRIVILEGED_CODE void fadt_init(acpi_sdt_header_t* acpi_fadt_table);
 
 /**
- * @brief Reboots the system using the ACPI reset register.
+ * @brief Gets the current FADT
+ * @returns NULL if uninitialized, else the global fadt_data
  */
-// __PRIVILEGED_CODE void fadt_reboot();
+__PRIVILEGED_CODE fadt_table_t* fadt_get();
 
-/**
- * @brief Shuts down the system using ACPI S5 sleep state.
- */
-// __PRIVILEGED_CODE void fadt_shutdown();
-
+// TODO: remove
 extern fadt_table_t fadt_data;
 
 static __hint_inline__ b8 fadt_is_ps2_controller_present() { return !(fadt_data.iapc_boot_arch_flags & (1 << 1)); } 

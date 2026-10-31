@@ -434,8 +434,7 @@ void task_sleep_ns(u64 ns) {
     u64 flags = irq_save();
     xassert(irq_was_enabled(flags), "task_sleep_ns with interrupts disabled");
 
-    // u64 now = ktimer_get_system_time_in_nanoseconds();
-    u64 now = ktimer_get_unscheduled_ns();
+    u64 now = ktimer_get_fast_ns();
 
     task->wake_deadline_ns = now + ns;
     task->state = TASK_SLEEPING;

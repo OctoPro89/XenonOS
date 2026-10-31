@@ -15,24 +15,28 @@ u64 ktimer_get_system_time_in_milliseconds();
 u64 ktimer_get_system_time_in_seconds();
 
 /**
- * @brief Gets absolute time regardless of how often
- * ktimer_sched_irq_global_tick() runs.
- * 
+ * @brief Gets absolute time with HPET.
+ * @note ***IMPORTANT*** SLOW, use ktimer_get_fast_ns.
  * @returns nanoseconds
  */
 u64 ktimer_get_unscheduled_ns();
 
 /**
- * @brief Gets absolute time regardless of how often
- * ktimer_sched_irq_global_tick() runs.
- * 
+ * @brief Gets absolute time with HPET.
+ * @note ***IMPORTANT*** SLOW, use ktimer_get_fast_ns.
  * @returns milliseconds
  */
 u64 ktimer_get_unscheduled_ms();
+
+/**
+ * @brief Use TSC to read current time in nanoseconds, calibrated every tick by ktimer_sched_irq_global_tick.
+ * @returns Current time in nanoseconds.
+ */
+u64 ktimer_get_fast_ns();
 
 void ktimer_sched_irq_global_tick();
 
 void sleep(u32 seconds);
 void msleep(u32 milliseconds);
 void usleep(u32 microseconds);
-void nanosleep(u32 nanoseconds);
+void nsleep(u32 nanoseconds);

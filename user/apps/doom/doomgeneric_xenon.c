@@ -4,15 +4,17 @@
 #include <xlibc/stdio.h>
 #include <xlibc/string.h>
 #include <unistd.h>
-#include <time/time.h>
 #include <libwindow/window_client.h>
 #include <windowing/window/windefs.h>
+#include <arch/x86_64/syscall.h>
+#include <time.h>
 
-#define KEYQUEUE_SIZE 16
+#define KEYQUEUE_SIZE 32
 
 static unsigned short s_KeyQueue[KEYQUEUE_SIZE];
 static unsigned int s_KeyQueueWriteIndex = 0;
 static unsigned int s_KeyQueueReadIndex = 0;
+static struct timespec s_start_time;
 
 #define HID_KEY_ENTER 0x28
 #define HID_KEY_ESCAPE 0x29
@@ -117,11 +119,15 @@ static char keycode_to_ascii(u16 usage, b8 shift) {
 }
 
 static void addKeyToQueue(int pressed, unsigned char key) {
-	unsigned short keyData = (pressed << 8) | key;
+	unsigned int nextWrite = (s_KeyQueueWriteIndex + 1) % KEYQUEUE_SIZE;
+    
+    if (nextWrite == s_KeyQueueReadIndex) {
+        return;
+    }
 
-	s_KeyQueue[s_KeyQueueWriteIndex] = keyData;
-	s_KeyQueueWriteIndex++;
-	s_KeyQueueWriteIndex %= KEYQUEUE_SIZE;
+    unsigned short keyData = (pressed << 8) | key;
+    s_KeyQueue[s_KeyQueueWriteIndex] = keyData;
+    s_KeyQueueWriteIndex = nextWrite;
 }
 
 void DG_Init() {
@@ -151,6 +157,11 @@ void DG_Init() {
     }
 
 	memset(s_KeyQueue, 0, KEYQUEUE_SIZE * sizeof(unsigned short));
+
+    if (clock_gettime(CLOCK_MONOTONIC, &s_start_time) != 0) {
+        printf("Failed to initialize monotonic clock\n");
+        while (1);
+    }
 }
 
 int quit = 0;
@@ -255,7 +266,6 @@ void DG_DrawFrame() {
                         addKeyToQueue(0, tolower(keycode_to_ascii(evt.keycode, false)));
                         break;
                     }
-                    break;
                 }
                 break;
             }
@@ -268,34 +278,21 @@ void DG_DrawFrame() {
     window_damage(&rect);
 }
 
-// TODO: real clock monotic sleep
-#include <arch/x86_64/syscall.h>
-
-void DG_SleepMs(uint32_t ms) {
-    uint32_t ns = ms * 1000000;
-    
-    asm volatile (
-        "syscall"
-        :
-        : "a"(SYS_SLEEP_NS),
-          "D"(ns)
-        : "rcx", "r11", "r10", "memory"
-    );
+void DG_SleepMs(u32 ms) {
+    struct timespec ts;
+    ts.tv_sec = (time_t)(ms / 1000);
+    ts.tv_nsec = (long)((ms % 1000) * 1000000L);
+    nanosleep(&ts, NULL);
 }
 
-#include <arch/x86_64/syscall.h>
+u32 DG_GetTicksMs() {
+    struct timespec now;
+    clock_gettime(CLOCK_MONOTONIC, &now);
 
-uint32_t DG_GetTicksMs() {
-    // TODO: clock monotic etc
-    long ret;
-    asm volatile (
-        "syscall"
-        : "=a"(ret)
-        : "a"(SYS_GET_TIME_MS)
-        : "rcx", "r11", "r10", "memory"
-    );
+    u64 start_ms = (u64)s_start_time.tv_sec * 1000ULL + (u64)s_start_time.tv_nsec / 1000000ULL;
+    u64 now_ms = (u64)now.tv_sec * 1000ULL + (u64)now.tv_nsec / 1000000ULL;
 
-    return (u32)ret;
+    return (u32)(now_ms - start_ms);
 }
 
 int DG_GetKey(int* pressed, unsigned char* doomKey) {

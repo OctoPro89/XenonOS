@@ -30,6 +30,28 @@ i32 syscall_get_cpu_temp_c() {
     return (i32)ret;
 }
 
+static u64 get_online_cpu_count() {
+    long ret;
+    asm volatile(
+        "syscall"
+        : "=a"(ret)
+        : "a"(SYS_HWMON_GET_ONLINE_CPUS)
+        : "rcx", "r11", "r10", "memory"
+    );
+    return (u64)ret;
+}
+
+static u64 get_total_cpu_count() {
+    long ret;
+    asm volatile(
+        "syscall"
+        : "=a"(ret)
+        : "a"(SYS_HWMON_GET_TOTAL_CPUS)
+        : "rcx", "r11", "r10", "memory"
+    );
+    return (u64)ret;
+}
+
 int main() {
     cpu_info_t info;
     
@@ -72,6 +94,8 @@ int main() {
     if (fraction < 0) {
         fraction = -fraction;
     }
+
+    printf("SMP: Enabled | Cores online: %u/%u\n", get_online_cpu_count(), get_total_cpu_count());
 
     printf("Temperature: %d.%d C\n", whole, fraction);
 

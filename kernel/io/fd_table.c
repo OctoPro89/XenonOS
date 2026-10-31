@@ -1,5 +1,5 @@
 #include <io/fd_table.h>
-#include <errno.h>
+#include <xlibc/errno.h>
 #include <xlibc/string.h>
 
 void fd_table_init(fd_table_t* table) {

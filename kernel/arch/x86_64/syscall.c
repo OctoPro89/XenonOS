@@ -5,7 +5,6 @@
 #include <arch/x86_64/uapi_cpuid.h>
 #include <io/fd_table.h>
 #include <io/fd.h>
-#include <errno.h>
 #include <process.h>
 #include <elf/elf.h>
 #include <windowing/window/window.h>
@@ -13,7 +12,8 @@
 #include <windowing/compositor/compositor.h>
 #include <xlibc/string.h>
 #include <xlibc/stdio.h>
-#include <fcntl.h>
+#include <xlibc/errno.h>
+#include <xlibc/fcntl.h>
 #include <tty/terminal.h>
 #include <filesystem/vfs/vfs.h>
 #include <memory/user.h>
@@ -23,6 +23,8 @@
 #include <drivers/hwmon/amd_smn.h>
 #include <drivers/hwmon/amd_zen_temp.h>
 #include <smp/smp.h>
+#include <time/time.h>
+#include <hw/rtc.h>
 
 #define REG_EAX 0
 #define REG_EBX 1
@@ -38,21 +40,12 @@ u64 user_rsp_save;
 #define SPAWN_MAX_ARGS       32
 #define SPAWN_MAX_ARG_BYTES  1024
 
-/*
- * Copy argv from userspace into kernel-owned storage.
+/**
+ * @brief Copy argv from userspace into kernel-owned storage.
  *
- * storage must point to SPAWN_MAX_ARG_BYTES bytes.
- * kargv must have room for SPAWN_MAX_ARGS pointers.
- *
- * The copied strings are packed into storage, and kargv
- * points into that storage.
+ * @note Storage must point to SPAWN_MAX_ARG_BYTES bytes, kargv must have room for SPAWN_MAX_ARGS pointers. The copied strings are packed into storage, and kargv points into that storage.
  */
-static int copy_spawn_arguments(
-    int argc,
-    const char* const* user_argv,
-    char* storage,
-    const char** kargv
-) {
+static int copy_spawn_arguments(int argc, const char* const* user_argv, char* storage, const char** kargv) {
     if (argc < 0 || argc > SPAWN_MAX_ARGS) {
         return -EINVAL;
     }
@@ -66,11 +59,7 @@ static int copy_spawn_arguments(
     for (int i = 0; i < argc; ++i) {
         const char* user_arg = NULL;
 
-        if (copy_from_user(
-                &user_arg,
-                &user_argv[i],
-                sizeof(user_arg)
-            ) < 0) {
+        if (copy_from_user( &user_arg, &user_argv[i], sizeof(user_arg)) < 0) {
             return -EFAULT;
         }
 
@@ -111,6 +100,21 @@ static int copy_spawn_arguments(
     }
 
     return 0;
+}
+
+/**
+ * @brief Converts internal u64 time into the timespec struct
+ */
+static __hint_inline__ void ns_to_timespec(u64 ns, struct timespec* ts) {
+    ts->tv_sec = ns / 1000000000ULL;
+    ts->tv_nsec = ns % 1000000000ULL;
+}
+
+/**
+ * @brief Converts timespec struct into internal u64 time
+ */
+static inline u64 timespec_to_ns(const struct timespec* ts) {
+    return ((u64)ts->tv_sec * 1000000000ULL) + ts->tv_nsec;
 }
 
 static ssize_t directory_read(file_t* file, void* buffer, size_t size) {
@@ -1049,8 +1053,7 @@ ssize_t sys_chdir(const char *user_path) {
 }
 
 u64 sys_get_time_ms() {
-    return ktimer_get_unscheduled_ms();
-    // return ktimer_get_system_time_in_milliseconds();
+    return ktimer_get_fast_ns();
 }
 
 ssize_t sys_get_cpu_info(cpu_info_t* info) {
@@ -1107,9 +1110,7 @@ ssize_t sys_open(const char* user_path, int flags) {
 
     int access_mode = flags & O_ACCMODE;
 
-    if (access_mode != O_RDONLY &&
-        access_mode != O_WRONLY &&
-        access_mode != O_RDWR) {
+    if (access_mode != O_RDONLY && access_mode != O_WRONLY && access_mode != O_RDWR) {
         return -EINVAL;
     }
 
@@ -1209,10 +1210,6 @@ ssize_t sys_seek(fd_t fd, ssize_t offset, int whence) {
     return result;
 }
 
-void sys_sleep_ns(u32 ns) {
-    task_sleep_ns(ns);
-}
-
 ssize_t sys_set_desktop_env_var(desktop_env_var_t var, void* val, size_t length) {
     if (!val || length == 0) { return -EINVAL; }
     
@@ -1253,6 +1250,129 @@ u64 sys_hwmon_get_total_cpus() {
     return smp_cpu_count();
 }
 
+ssize_t sys_clock_gettime(clockid_t clk_id, struct timespec *user_tp) {
+    if (!user_tp) {
+        return -EFAULT;
+    }
+
+    u64 ns = 0;
+    switch (clk_id) {
+        case CLOCK_MONOTONIC: {
+            // absolute nanoseconds elapsed since timer initialization
+            ns = ktimer_get_fast_ns();
+            break;
+        }
+        // TODO: CLOCK_MONOTONIC_RAW
+        case CLOCK_REALTIME: {
+            // Boot Epoch timestamp + high-precision elapsed uptime
+            ns = rtc_boot_unix_ns() + ktimer_get_fast_ns();
+            break;
+        }
+        default: {
+            return -EINVAL;
+        }
+    }
+
+    struct timespec kernel_ts;
+    ns_to_timespec(ns, &kernel_ts);
+
+    // secure memory copy down to user space container
+    if (copy_to_user(user_tp, &kernel_ts, sizeof(struct timespec)) < 0) {
+        return -EFAULT;
+    }
+
+    return 0;
+}
+
+ssize_t sys_clock_getres(clockid_t clk_id, struct timespec *user_res) {
+    if (!user_res) {
+        return -EFAULT;
+    }
+
+    switch (clk_id) {
+        case CLOCK_MONOTONIC:
+        case CLOCK_REALTIME: {
+            break;
+        }
+        default: {
+            return -EINVAL;
+        }
+    }
+
+    struct timespec res_ts;
+    res_ts.tv_sec = 0;
+    res_ts.tv_nsec = 1; // 1 nanosecond granularity matched to the fast TSC math path
+
+    if (copy_to_user(user_res, &res_ts, sizeof(struct timespec)) < 0) {
+        return -EFAULT;
+    }
+
+    return 0;
+}
+
+ssize_t sys_clock_nanosleep(clockid_t clk_id, int flags, const struct timespec* user_req, struct timespec* user_rem) {
+    if (clk_id != CLOCK_MONOTONIC && clk_id != CLOCK_REALTIME) {
+        return -EINVAL;
+    }
+
+    if (!user_req) {
+        return -EFAULT;
+    }
+
+    struct timespec req;
+    if (copy_from_user(&req, user_req, sizeof(struct timespec)) < 0) {
+        return -EFAULT;
+    }
+
+    // validate standard POSIX constraints
+    if (req.tv_nsec < 0 || req.tv_nsec >= 1000000000L || req.tv_sec < 0) {
+        return -EINVAL;
+    }
+
+    u64 target_ns = timespec_to_ns(&req);
+
+    if ((flags & TIMER_ABSTIME) == 0) {
+        // relative sleep is uniform across both clock domains
+        task_sleep_ns(target_ns);
+    } else {
+        // absolute sleep calculation
+        u64 current_ns = 0;
+        
+        if (clk_id == CLOCK_MONOTONIC) {
+            current_ns = ktimer_get_fast_ns();
+        } else {
+            current_ns = rtc_boot_unix_ns() + ktimer_get_fast_ns();
+        }
+
+        // only sleep if the absolute target time is in the future
+        if (target_ns > current_ns) {
+            task_sleep_ns(target_ns - current_ns);
+        }
+    }
+
+    // zero out the remaining duration block for user space
+    if (user_rem) {
+        struct timespec rem_ts = {0, 0};
+        if (copy_to_user(user_rem, &rem_ts, sizeof(struct timespec)) < 0) {
+            return -EFAULT;
+        }
+    }
+
+    return 0;
+}
+
+static ssize_t sys_clock_nanosleep_packed(const struct sys_nanosleep_args* user_args) {
+    if (!user_args) return -EFAULT;
+
+    // unpack values
+    struct sys_nanosleep_args args;
+    if (copy_from_user(&args, user_args, sizeof(struct sys_nanosleep_args)) < 0) {
+        return -EFAULT;
+    }
+
+    return sys_clock_nanosleep(args.clk_id, args.flags, args.user_req, args.user_rem);
+}
+
 u64 syscall_dispatch(struct syscall_regs* r) {
     switch (r->rax) {
         case SYS_READ: {
@@ -1266,6 +1386,7 @@ u64 syscall_dispatch(struct syscall_regs* r) {
         }
         case SYS_EXIT: {
             sys_exit((int)r->rdi); // TODO: not sure if this returns something or no
+            return 0;
         }
         case SYS_SPAWN: {
             return sys_spawn((const char*)r->rdi, (int)r->rsi, (const char* const*)r->rdx);
@@ -1321,10 +1442,6 @@ u64 syscall_dispatch(struct syscall_regs* r) {
         case SYS_SEEK: {
             return (u64)sys_seek((fd_t)r->rdi, (ssize_t)r->rsi, (int)r->rdx);
         }
-        case SYS_SLEEP_NS: {
-            sys_sleep_ns((u32)r->rdi);
-            return 0;
-        }
         case SYS_SET_DESKTOP_ENV_VAR: {
             return (u64)sys_set_desktop_env_var((desktop_env_var_t)r->rdi, (void*)r->rsi, (size_t)r->rdx);
         }
@@ -1336,6 +1453,15 @@ u64 syscall_dispatch(struct syscall_regs* r) {
         }
         case SYS_HWMON_GET_TOTAL_CPUS: {
             return sys_hwmon_get_total_cpus();
+        }
+        case SYS_CLOCK_GETTIME: {
+            return sys_clock_gettime((clockid_t)r->rdi, (struct timespec*)r->rsi);
+        }
+        case SYS_CLOCK_GETRES: {
+            return sys_clock_getres((clockid_t)r->rdi, (struct timespec*)r->rsi);
+        }
+        case SYS_CLOCK_NANOSLEEP: {
+            return (u64)sys_clock_nanosleep_packed((const struct sys_nanosleep_args*)r->rdi);
         }
         default: {
             return (u64)-ENOSYS;

@@ -1,15 +1,11 @@
 #include <drivers/usb/mass_storage/msc_driver.h>
-
+#include <drivers/usb/usb_descriptors.h>
 #include <xlibc/stdio.h>
 #include <memory/heap.h>
 #include <xlibc/string.h>
 #include <xlibc/xassert.h>
-
 #include <memory/paging.h>
-
 #include <kernel.h>
-
-#include <drivers/usb/usb_descriptors.h>
 
 // TODO: multiple readers causes issues
 // TODO: bot reset recovery
@@ -431,7 +427,11 @@ int msc_block_read(void* driver_data, u64 lba, u32 count, void* buffer) {
         return 0;
     }
 
-    // READ (10) uses a 32-bit LBA. current XHCI normal-transfer implementation also currently limits each transfer to PAGE_SIZE
+     /*
+      * READ (10) uses a 32-bit LBA. Your XHCI normal-transfer
+      * implementation also currently limits each transfer to PAGE_SIZE.
+      * Split larger reads into smaller commands.
+      */
     if (lba > 0xFFFFFFFFULL) {
         return 0;
     }
@@ -492,7 +492,6 @@ int msc_block_write(void* driver_data, u64 lba, u32 count, const void* buffer) {
     u32 max_blocks = PAGE_SIZE / msc->block_size;
 
     if (max_blocks == 0) {
-        printf("fuck4\n");
         return 0;
     }
 

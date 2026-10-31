@@ -42,20 +42,20 @@ struct __dirstream {
 
 DIR* opendir(const char* name) {
     if (!name) {
-        // errno = EINVAL;
+        errno = EINVAL;
         return NULL;
     }
 
     long result = __sys_opendir(name);
     if (result < 0) {
-        // errno = (int)-result;
+        errno = (int)-result;
         return NULL;
     }
 
     DIR* dir = malloc(sizeof(DIR));
     if (!dir) {
         close((int)result);
-        // errno = ENOMEM;
+        errno = ENOMEM;
         return NULL;
     }
 
@@ -66,7 +66,7 @@ DIR* opendir(const char* name) {
 
 struct dirent* readdir(DIR* dirp) {
     if (!dirp) {
-        // errno = EINVAL;
+        errno = EINVAL;
         return NULL;
     }
 
@@ -78,7 +78,7 @@ struct dirent* readdir(DIR* dirp) {
     }
 
     if (result < 0) {
-        // errno = (int)-result;
+        errno = (int)-result;
         return NULL;
     }
 
@@ -93,17 +93,17 @@ struct dirent* readdir(DIR* dirp) {
 
 int closedir(DIR* dirp) {
     if (!dirp) {
-        // errno = EINVAL;
+        errno = EINVAL;
         return -1;
     }
 
     int result = close(dirp->fd);
-    // int saved_errno = errno;
+    int saved_errno = errno;
 
     free(dirp);
 
     if (result < 0) {
-        // errno = saved_errno;
+        errno = saved_errno;
         return -1;
     }
 

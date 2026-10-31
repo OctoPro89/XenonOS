@@ -13,29 +13,10 @@ __PRIVILEGED_CODE void fadt_init(acpi_sdt_header_t* acpi_fadt_table) {
     fadt_initialized = true;
 }
 
-/*
-__PRIVILEGED_CODE void fadt_reboot() {
-    if (!fadt_initialized) { return; }
-
-    serial_write_str("[REBOOT] Initiating reboot through FADT ACPI table.\n");
-
-    u16 reset_port = (u16)(fadt_data.reset_reg.address);
-    u8 reset_value = fadt_data.reset_value;
-
-    x64_outb(reset_port, reset_value);
-}
-
-__PRIVILEGED_CODE void fadt_shutdown() {
-    if (!fadt_initialized) { return; }
-    
-    serial_write_str("[SHUTDOWN] Initiating shutdown through a FADT ACPI table.\n");
-
-    u16 SLP_EN = (1 << 13); // sleep enable bit
-
-    x64_outw(fadt_data.pm1a_control_block, SLP_EN);
-    
-    if (fadt_data.pm1b_control_block) {
-        x64_outw(fadt_data.pm1b_control_block, SLP_EN);
+__PRIVILEGED_CODE fadt_table_t* fadt_get() {
+    if (!fadt_initialized) {
+        return NULL;
     }
+
+    return &fadt_data;
 }
-*/

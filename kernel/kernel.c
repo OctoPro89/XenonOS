@@ -58,6 +58,8 @@
 #include <memory/vmm.h>
 #include <memory/heap.h>
 
+#include <hw/rtc.h>
+
 #include <time/time.h>
 
 #include <tests/vfs_test.h>
@@ -225,7 +227,7 @@ extern u64 hardware_frequency;
 
 void timer_handler(struct regs* r, void* _) {
     ktimer_sched_irq_global_tick();
-    scheduler_wake_sleepers(/* ktimer_get_system_time_in_nanoseconds() */ktimer_get_unscheduled_ns());
+    scheduler_wake_sleepers(/* ktimer_get_system_time_in_nanoseconds() */ktimer_get_fast_ns());
 } 
 
 static b8 boot_usb_ready = false;
@@ -446,6 +448,10 @@ static void kernel_main(void* arg) {
     kernel_setup_usb_drivers();
 
     printf("XenonOS v0.1\n");
+
+    if (!rtc_init()) {
+        printf("RTC Unavailable.\n");
+    }
 
     if (smp_result == SMP_CPU_INIT_RESULT_OK) {
         printf("Initialized SMP: %u/%u cores online.\n", smp_online_count(), smp_cpu_count());

@@ -7,16 +7,11 @@
 #define HID_KEY_BACKSPACE 0x2A
 #define HID_KEY_SPACE 0x2C
 
-void sleep(u32 ms) {
-    uint32_t ns = ms * 1000000;
-    
-    asm volatile (
-        "syscall"
-        :
-        : "a"(SYS_SLEEP_NS),
-          "D"(ns)
-        : "rcx", "r11", "r10", "memory"
-    );
+static void sleep(u32 ms) {
+    struct timespec ts;
+    ts.tv_sec = (time_t)(ms / 1000);
+    ts.tv_nsec = (long)((ms % 1000) * 1000000L);
+    nanosleep(&ts, NULL);
 }
 
 int main(void) {
