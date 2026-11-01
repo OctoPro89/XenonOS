@@ -38,7 +38,10 @@ int gpt_find_fat32(block_device* dev, uint64_t* out_lba) {
         uint64_t lba = entries_lba + (i * entry_size) / 512;
         uint32_t off = (i * entry_size) % 512;
 
-        dev->read(dev->driver_data, lba, 1, sector);
+        if (!dev->read(dev->driver_data, lba, 1, sector)) {
+            kfree(sector);
+            return 0;
+        }
 
         gpt_entry* ent = (gpt_entry*)(sector + off);
 

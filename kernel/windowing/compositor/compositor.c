@@ -965,13 +965,13 @@ const window_surface_t* compositor_create_surface_for_window(window_t* window) {
     
     window_rect_t rect = window->rect; // DON'T DOUBLE LOCK | window_server_get_rect(window);
 
-    if (rect.width <= 2 || rect.height <= 31) {
+    if (rect.width <= WINDOW_BORDER_TOTAL_SIZE || rect.height <= WINDOW_TITLE_BAR_HEIGHT) {
         return NULL;
     }
 
     // TODO: change if needed
-    u32 width = (u32)rect.width - 2;
-    u32 height = (u32)rect.height - 31;
+    u32 width = (u32)rect.width - WINDOW_BORDER_TOTAL_SIZE;
+    u32 height = (u32)rect.height - WINDOW_TITLE_BAR_HEIGHT;
 
     size_t stride = (size_t)width * sizeof(u32);
     size_t bytes = stride * height;

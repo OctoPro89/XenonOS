@@ -412,19 +412,19 @@ static void msc_driver_destroy(void* _self) {
 
 // --- BLOCK DEVICE DRIVER --- //
 
-int msc_block_read(void* driver_data, u64 lba, u32 count, void* buffer) {
+b8 msc_block_read(void* driver_data, u64 lba, u32 count, void* buffer) {
     msc_driver_t* msc = (msc_driver_t*)driver_data;
 
     if (!msc || !msc->initialized || !buffer || count == 0) {
-        return 0;
+        return false;
     }
 
     if (msc->block_size == 0 || lba >= msc->block_count) {
-        return 0;
+        return false;
     }
 
     if ((u64)count > msc->block_count - lba) {
-        return 0;
+        return false;
     }
 
      /*
@@ -433,12 +433,12 @@ int msc_block_read(void* driver_data, u64 lba, u32 count, void* buffer) {
       * Split larger reads into smaller commands.
       */
     if (lba > 0xFFFFFFFFULL) {
-        return 0;
+        return false;
     }
 
     u32 max_blocks = PAGE_SIZE / msc->block_size;
     if (max_blocks == 0) {
-        return 0;
+        return false;
     }
 
     if (max_blocks > 65535) {
@@ -454,7 +454,7 @@ int msc_block_read(void* driver_data, u64 lba, u32 count, void* buffer) {
         }
 
         if (lba > 0xFFFFFFFFULL) {
-            return 0;
+            return false;
         }
 
         if (!msc_scsi_read10(msc, (u32)lba, (u16)chunk, dst)) {
@@ -468,24 +468,24 @@ int msc_block_read(void* driver_data, u64 lba, u32 count, void* buffer) {
         count -= chunk;
     }
 
-    return 1;
+    return true;
 }
 
-int msc_block_write(void* driver_data, u64 lba, u32 count, const void* buffer) {
+b8 msc_block_write(void* driver_data, u64 lba, u32 count, const void* buffer) {
     msc_driver_t* msc = (msc_driver_t*)driver_data;
 
     if (!msc || !msc->initialized || msc->disconnected || !msc->dev || msc->dev->disconnect_pending || !buffer || count == 0 || msc->block_size == 0) {
-        return 0;
+        return false;
     }
 
     // validate the entire request before issuing any writes
     if (lba >= msc->block_count || (u64)count > msc->block_count - lba) {
-        return 0;
+        return false;
     }
 
     // WRITE (10) supports only 32-bit LBAs
     if (lba > 0xFFFFFFFFULL || (u64)count - 1 > 0xFFFFFFFFULL - lba) {
-        return 0;
+        return false;
     }
 
     // keep each transfer within the existing transfer-size limit
@@ -511,7 +511,7 @@ int msc_block_write(void* driver_data, u64 lba, u32 count, const void* buffer) {
         if (!msc_scsi_write10(msc, (u32)lba, (u16)chunk, src)) {
             printf("[USB-MSC]: Write failed at LBA %llu\n", (unsigned long long)lba);
 
-            return 0;
+            return false;
         }
 
         u64 bytes = (u64)chunk * msc->block_size;
@@ -521,7 +521,7 @@ int msc_block_write(void* driver_data, u64 lba, u32 count, const void* buffer) {
         count -= chunk;
     }
 
-    return 1;
+    return true;
 }
 
 // --- BLOCK DEVICE DRIVER --- //

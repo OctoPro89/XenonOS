@@ -17,7 +17,8 @@
 #define TASK_SLEEP_VECTOR 0xF3
 
 typedef enum {
-    TASK_UNUSED = 0,
+    TASK_UNUSED,
+    TASK_SUSPENDED,
     TASK_RUNNABLE,
     TASK_RUNNING,
     TASK_BLOCKED,
@@ -125,7 +126,7 @@ void scheduler_wake_sleepers(u64 now_ns);
 void scheduler_request_reschedule();
 
 /**
- * @brief Creates a new process
+ * @brief Creates a new process that runs immediately
  * 
  * @param process NULL for a kernel task, the parent userspace process otherwise
  * @param entry Entry function for the task to start executing
@@ -134,6 +135,31 @@ void scheduler_request_reschedule();
  * @returns A pointer to the created task
  */
 task_t* task_create(process_t* process, task_entry_t entry, void* arg);
+
+/**
+ * @brief Creates a new process that is suspended / doesn't run immediately
+ * 
+ * @param process NULL for a kernel task, the parent userspace process otherwise
+ * @param entry Entry function for the task to start executing
+ * @param arg Pointer to an argument to call `entry` with
+ * 
+ * @returns A pointer to the created task
+ */
+task_t* task_create_suspended(process_t* process, task_entry_t entry, void* arg);
+
+/**
+ * @brief Resumes a suspended task
+ * @returns True on success, false if the task is already running or is invalid
+ */
+b8 task_resume(task_t* task);
+
+/**
+ * @brief Cleans up a suspended task if it has not been started yet
+ * @note Should only be used on tasks with the TASK_SUSPENDED state
+ * @returns True on success, false if the task is not suspended or on failure
+ */
+b8 task_cleanup_failed(task_t* task);
+
 void task_yield();
 __attribute__((noreturn)) void task_exit();
 

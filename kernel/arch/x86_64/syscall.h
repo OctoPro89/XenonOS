@@ -31,22 +31,23 @@
 #define SYS_WINDOW_SETUP_TERMINAL_IO    11
 #define SYS_WINDOW_SUBSCRIBE_KEYBOARD   12
 #define SYS_WINDOW_SET_TITLE            13
-#define SYS_OPENDIR                     14
-#define SYS_READDIR                     15
-#define SYS_SBRK                        16
-#define SYS_CHDIR                       17
-#define SYS_GETCWD                      18
-#define SYS_GET_TIME_MS                 19
-#define SYS_GET_CPU_INFO                20
-#define SYS_OPEN                        21
-#define SYS_SEEK                        22
-#define SYS_SET_DESKTOP_ENV_VAR         23
-#define SYS_HWMON_GET_CPU_TEMP_MC       24
-#define SYS_HWMON_GET_ONLINE_CPUS       25
-#define SYS_HWMON_GET_TOTAL_CPUS        26
-#define SYS_CLOCK_GETTIME               27
-#define SYS_CLOCK_GETRES                28
-#define SYS_CLOCK_NANOSLEEP             29
+#define SYS_WINDOW_GET_RECT             14
+#define SYS_OPENDIR                     15
+#define SYS_READDIR                     16
+#define SYS_SBRK                        17
+#define SYS_CHDIR                       18
+#define SYS_GETCWD                      19
+#define SYS_GET_TIME_MS                 20
+#define SYS_GET_CPU_INFO                21
+#define SYS_OPEN                        22
+#define SYS_SEEK                        23
+#define SYS_SET_DESKTOP_ENV_VAR         24
+#define SYS_HWMON_GET_CPU_TEMP_MC       25
+#define SYS_HWMON_GET_ONLINE_CPUS       26
+#define SYS_HWMON_GET_TOTAL_CPUS        27
+#define SYS_CLOCK_GETTIME               28
+#define SYS_CLOCK_GETRES                29
+#define SYS_CLOCK_NANOSLEEP             30
 
 // NOTE: Must match stack pushes in arch/x86_64/syscall.asm
 struct syscall_regs {
@@ -92,6 +93,7 @@ ssize_t sys_window_memcpy_frame(const void* user_buffer, size_t size);
 ssize_t sys_window_pop_event(window_event_t* evt);
 ssize_t sys_window_setup_terminal_io();
 ssize_t sys_window_set_title(const char* title);
+ssize_t sys_window_get_rect(window_rect_t* user_rect);
 ssize_t sys_opendir(const char* user_path);
 ssize_t sys_readdir(fd_t fd, sys_dirent_t* user_entry);
 ssize_t sys_sbrk(ssize_t increment);

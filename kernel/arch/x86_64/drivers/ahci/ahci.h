@@ -113,5 +113,15 @@ void ahci_start_port(HBA_PORT* port);
 void ahci_port_init(HBA_PORT* port);
 int ahci_port_has_device(HBA_PORT* port);
 int ahci_find_cmdslot(HBA_PORT* port);
-int ahci_read_sector(HBA_PORT* port, uint64_t lba, PHYSICAL_CONTIGUOUS_BUFFER buffer);
-int ahci_block_read(void* drv, uint64_t lba, uint32_t count, void* buffer);
+
+/**
+ * @brief Reads a sector from an AHCI device.
+ * @returns True on success else false.
+ */
+b8 ahci_read_sector(HBA_PORT* port, uint64_t lba, PHYSICAL_CONTIGUOUS_BUFFER buffer);
+
+/**
+ * @brief Reads from an AHCI device.
+ * @returns True on success else false.
+ */
+b8 ahci_block_read(void* drv, uint64_t lba, uint32_t count, void* buffer);

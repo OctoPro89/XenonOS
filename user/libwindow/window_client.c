@@ -1,5 +1,7 @@
 #include <libwindow/window_client.h>
+#include <windowing/window/window.h>
 #include <arch/x86_64/syscall.h>
+#include <errno.h>
 
 ssize_t window_create(const window_config_t* config) {
     long ret;
@@ -99,7 +101,7 @@ ssize_t window_setup_terminal_io() {
 }
 
 ssize_t window_subscribe_keyboard_events() {
-        long ret;
+    long ret;
 
     asm volatile (
         "syscall"
@@ -109,4 +111,56 @@ ssize_t window_subscribe_keyboard_events() {
     );
 
     return (ssize_t)ret;
+}
+
+ssize_t window_get_total_rect(window_rect_t* rect) {
+    long ret;
+
+    asm volatile (
+        "syscall"
+        : "=a"(ret)
+        : "a"(SYS_WINDOW_GET_RECT),
+          "D"(rect)
+        : "rcx", "r11", "r10", "memory"
+    );
+
+    return (ssize_t)ret;
+}
+
+ssize_t window_get_surface_rect(window_rect_t* rect) {
+    long ret;
+
+    asm volatile (
+        "syscall"
+        : "=a"(ret)
+        : "a"(SYS_WINDOW_GET_RECT),
+          "D"(rect)
+        : "rcx", "r11", "r10", "memory"
+    );
+
+    // NOTE: this must match compositor.c
+    if (rect->width > WINDOW_BORDER_TOTAL_SIZE) {
+        rect->width -= WINDOW_BORDER_TOTAL_SIZE;
+    }
+    else {
+        return -EINVAL;
+    }
+
+    if (rect->height > WINDOW_TITLE_BAR_HEIGHT) {
+        rect->height -= WINDOW_TITLE_BAR_HEIGHT;
+    }
+    else {
+        return -EINVAL;
+    }
+
+    return (ssize_t)ret;
+}
+
+window_rect_t window_make_surface_rect(int x, int y, int width, int height) {
+    return (window_rect_t){
+        .x = x,
+        .y = y,
+        .width = width + WINDOW_BORDER_TOTAL_SIZE,
+        .height = height + WINDOW_TITLE_BAR_HEIGHT
+    };
 }

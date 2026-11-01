@@ -20,7 +20,11 @@ typedef enum {
 typedef struct window_config {
     const char* title;
     const char* icon_path;
+
+    // NOTE: This is the TOTAL size of the window INCLUDING the border and title bar.
+    // Use window_create_surface_rect() for creating a window with a certain surface size
     window_rect_t rect;
+    
     window_type_t type;
     u32 flags;
 } window_config_t;

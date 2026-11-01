@@ -395,6 +395,12 @@ int sys_close(fd_t fd) {
 
 __attribute__((noreturn)) void sys_exit(int code) {
     process_t* process = process_current();
+    if (process->window && process->window->alive) { // TODO: this ***should*** be fine because as far as I know application cannot call window_destroy() whilst exiting. check tho
+        // TODO: not sure if this is the best place for this
+        compositor_release_surface(process->window->surface->handle);
+        window_server_destroy_window(process->window);
+    }
+    
     if (process) {
         process_exit(process, code);
     }
@@ -703,6 +709,29 @@ ssize_t sys_window_set_title(const char* user_title) {
     }
 
     window_server_set_title(crnt->window, title);
+    return 0;
+}
+
+ssize_t sys_window_get_rect(window_rect_t* user_rect) {
+    if (!user_rect) {
+        return -EINVAL;
+    }
+
+    process_t* crnt = process_current();
+
+    if (!crnt) {
+        return -ESRCH;
+    }
+
+    if (!crnt->window) {
+        return -EFAULT;
+    }
+
+    int result = copy_to_user(user_rect, &crnt->window->rect, sizeof(window_rect_t));
+    if (result < 0) {
+        return result;
+    }
+
     return 0;
 }
 
@@ -1441,6 +1470,12 @@ u64 syscall_dispatch(struct syscall_regs* r) {
         }
         case SYS_WINDOW_SUBSCRIBE_KEYBOARD: {
             return sys_window_subscribe_keyboard();
+        }
+        case SYS_WINDOW_SET_TITLE: {
+            return sys_window_set_title((const char*)r->rdi);
+        }
+        case SYS_WINDOW_GET_RECT: {
+            return sys_window_get_rect((window_rect_t*)r->rdi);
         }
         case SYS_OPENDIR: {
             return (u64)sys_opendir((const char*)r->rdi);

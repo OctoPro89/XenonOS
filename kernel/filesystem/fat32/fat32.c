@@ -872,7 +872,7 @@ b8 fat32_read_fat_entry(FAT32_FS* fs, u32 cluster, u32* out_cluster) {
 
 b8 fat32_read_cluster(FAT32_FS* fs, u32 cluster, void* buffer) {
     u32 lba = fat32_cluster_to_lba(fs, cluster);
-    return (b8)fs->dev->read(fs->dev->driver_data, lba, fs->sectors_per_cluster, buffer);
+    return fs->dev->read(fs->dev->driver_data, lba, fs->sectors_per_cluster, buffer);
 }
 
 b8 fat32_write_cluster(FAT32_FS* fs, u32 cluster, const void* buffer) {

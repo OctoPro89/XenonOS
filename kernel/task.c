@@ -352,7 +352,7 @@ void scheduler_request_reschedule() {
     need_reschedule = true;
 }
 
-task_t* task_create(process_t* process, task_entry_t entry, void* arg) {
+static task_t* task_create_internal(process_t* process, task_entry_t entry, void* arg, task_state_t initial_state) {
     if (entry == NULL) {
         return NULL;
     }
@@ -369,17 +369,15 @@ task_t* task_create(process_t* process, task_entry_t entry, void* arg) {
     }
 
     if (task == NULL) {
+        irq_restore(flags);
         return NULL;
     }
 
     u64 index = (u64)(task - tasks);
 
     task->id = next_task_id++;
-    task->state = TASK_RUNNABLE;
+    task->state = initial_state;
 
-    task->stack = task_stacks[index];
-    task->stack_size = TASK_STACK_SIZE;
-    
     task->stack = task_stacks[index];
     task->stack_size = TASK_STACK_SIZE;
     task->kernel_stack_top = (u64)task->stack + task->stack_size;
@@ -392,11 +390,44 @@ task_t* task_create(process_t* process, task_entry_t entry, void* arg) {
     task->process = process;
 
     task_build_initial_stack(task);
-    run_queue_add(task);
+
+    if (initial_state != TASK_SUSPENDED) {
+        run_queue_add(task);
+    }
 
     irq_restore(flags);
 
     return task;
+}
+
+task_t* task_create(process_t* process, task_entry_t entry, void* arg) {
+    return task_create_internal(process, entry, arg, TASK_RUNNABLE);
+}
+
+task_t* task_create_suspended(process_t* process, task_entry_t entry, void* arg) {
+    return task_create_internal(process, entry, arg, TASK_SUSPENDED);
+}
+
+b8 task_resume(task_t* task) {
+    if (task == NULL) {
+        return false;
+    }
+
+    u64 flags = irq_save();
+
+    if (task->state != TASK_SUSPENDED) {
+        irq_restore(flags);
+        return false;
+    }
+
+    task->state = TASK_RUNNABLE;
+    run_queue_add(task);
+
+    need_reschedule = true;
+
+    irq_restore(flags);
+
+    return true;
 }
 
 void task_yield() {
@@ -591,6 +622,47 @@ void task_reap(task_t* task) {
     task->process = NULL;
 
     irq_restore(flags);
+}
+
+b8 task_cleanup_failed(task_t* task) {
+    if (task == NULL) {
+        return false;
+    }
+
+    u64 flags = irq_save();
+
+    // only suspended tasks can be discarded this way
+    if (task->state != TASK_SUSPENDED) {
+        irq_restore(flags);
+        return false;
+    }
+
+    // suspended tasks should never be in the run queue, still remove defensively if necessary
+    run_queue_remove(task);
+
+    // clear task structure
+    task->id = 0;
+    task->state = TASK_UNUSED;
+    task->rsp = 0;
+    task->stack = NULL;
+    task->stack_size = 0;
+    task->entry = NULL;
+    task->arg = NULL;
+    task->next = NULL;
+    task->wait_next = NULL;
+    task->waiting_on = NULL;
+    task->wake_deadline_ns = 0;
+    task->is_idle = false;
+    task->name = "TASK";
+    task->process = NULL;
+    task->syscall_user_rsp = 0;
+    task->syscall_user_rip = 0;
+    task->syscall_user_rflags = 0;
+    task->kernel_stack_top = 0;
+
+    irq_restore(flags);
+
+    return true;
 }
 
 void wait_queue_init(wait_queue_t* queue) {

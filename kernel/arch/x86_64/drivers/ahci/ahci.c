@@ -134,13 +134,13 @@ int ahci_find_cmdslot(HBA_PORT* port) {
     return -1;
 }
 
-int ahci_read_sector(HBA_PORT* port, uint64_t lba, PHYSICAL_CONTIGUOUS_BUFFER buffer) {
+b8 ahci_read_sector(HBA_PORT* port, uint64_t lba, PHYSICAL_CONTIGUOUS_BUFFER buffer) {
     port->is = (uint32_t)-1; // clear interrupts
 
     int slot = ahci_find_cmdslot(port);
     if (slot == -1) {
         printf("No free command slot\n");
-        return 0;
+        return false;
     }
 
     HBA_CMD_HEADER* cmdheader = (HBA_CMD_HEADER*)(uint64_t)phys_to_hhdm(port->clb);
@@ -196,14 +196,14 @@ int ahci_read_sector(HBA_PORT* port, uint64_t lba, PHYSICAL_CONTIGUOUS_BUFFER bu
 
         if (port->is & (1 << 30)) {
             printf("Read disk error\n");
-            return 0;
+            return false;
         }
     }
 
-    return 1;
+    return true;
 }
 
-int ahci_block_read(void* drv, uint64_t lba, uint32_t count, void* buffer)
+b8 ahci_block_read(void* drv, uint64_t lba, uint32_t count, void* buffer)
 {
     HBA_PORT* port = (HBA_PORT*)drv;
 
@@ -212,7 +212,7 @@ int ahci_block_read(void* drv, uint64_t lba, uint32_t count, void* buffer)
 
     for (uint32_t i = 0; i < count; i++) {
         if (!ahci_read_sector(port, lba + i, dma.phys + i * 512)) {
-            return 0;
+            return false;
         }
     }
 
@@ -221,5 +221,5 @@ int ahci_block_read(void* drv, uint64_t lba, uint32_t count, void* buffer)
 
     // TODO: dma never frees!
 
-    return 1;
+    return true;
 }

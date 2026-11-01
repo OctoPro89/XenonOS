@@ -131,6 +131,8 @@ static void ahci_test() {
     block_device boot_disk = {
         .driver_data = (void*)port,
         .read = ahci_block_read,
+        .write = NULL,
+        .flush = NULL
     };
 
     printf("Finding FAT32 partition\n");

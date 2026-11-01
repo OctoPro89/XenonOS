@@ -5,6 +5,8 @@
 #include <windowing/window/windefs.h>
 
 #define WINDOW_TITLE_MAX 64
+#define WINDOW_TITLE_BAR_HEIGHT 31
+#define WINDOW_BORDER_TOTAL_SIZE 2
 
 typedef struct window window_t;
 typedef u32 window_id_t;

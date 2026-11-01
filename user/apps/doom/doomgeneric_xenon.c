@@ -135,12 +135,7 @@ void DG_Init() {
     window_config_t wconfig = {
         .title = "DOOM",
         .icon_path = "icons/doom.png",
-        .rect = {
-            .x = 200,
-            .y = 200,
-            .width = DOOMGENERIC_RESX + 2,
-            .height = DOOMGENERIC_RESY + 31
-        },
+        .rect = window_make_surface_rect(200, 200, DOOMGENERIC_RESX, DOOMGENERIC_RESY),
         .type = WINDOW_TYPE_NORMAL,
         .flags = 0
     };

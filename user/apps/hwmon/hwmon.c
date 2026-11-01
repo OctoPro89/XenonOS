@@ -433,12 +433,7 @@ static void sample_and_refresh() {
 int main(void) {
     window_config_t config = {
         .title = "Hardware Monitor",
-        .rect = {
-            .x = WINDOW_X,
-            .y = WINDOW_Y,
-            .width = CONTENT_W + 2,
-            .height = CONTENT_H + 31
-        },
+        .rect = window_make_surface_rect(WINDOW_X, WINDOW_Y, CONTENT_W, CONTENT_H),
         .type = WINDOW_TYPE_NORMAL,
         .flags = 0
     };

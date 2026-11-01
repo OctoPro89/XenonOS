@@ -27,8 +27,17 @@ typedef struct msc_driver {
     b8 disconnected;
 } msc_driver_t;
 
-int msc_block_read(void* driver_data, u64 lba, u32 count, void* buffer);
-int msc_block_write(void* driver_data, u64 lba, u32 count, const void* buffer);
+/**
+ * @brief Reads from a USB MSC device.
+ * @returns True on success, false otherwise.
+ */
+b8 msc_block_read(void* driver_data, u64 lba, u32 count, void* buffer);
+
+/**
+ * @brief Writes to a USB MSC device.
+ * @returns True on success, false otherwise.
+ */
+b8 msc_block_write(void* driver_data, u64 lba, u32 count, const void* buffer);
 
 // TODO: find better solution
 typedef void (*msc_driver_initalize_notify_t)(msc_driver_t* drv);
