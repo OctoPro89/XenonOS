@@ -1,5 +1,4 @@
 #include <drivers/net/rtl8168.h>
-#include <arch/x86_64/sync/sync.h>
 #include <hw/mmio.h>
 #include <kernel.h>
 
@@ -98,8 +97,8 @@ static __hint_inline__ void rtl8168_driver_hw_reset(rtl8168_driver_t* driver) {
     printf("[RTL8168]: Hardware reset timeout (CMD still has RST set)\n");
 }
 
-/*
 // Read MAC from IDR0-IDR5 (EEPROM autoloaded at power-on), falls back to a fixed address if EEPROM is blank
+/*
 static __hint_inline__ void rtl8168_driver_read_mac_address(rtl8168_driver_t* driver) {
     u32 idr0 = rtl8168_driver_reg_read32(driver, REG_IDR0);
     u32 idr4 = rtl8168_driver_reg_read32(driver, REG_IDR4);
@@ -140,15 +139,14 @@ static __hint_inline b8 rtl8168_driver_phy_read(rtl8168_driver_t* driver, u8 reg
     printf("[RTL8168]: PHY read timeout (reg=0x%02x)\n", reg);
     return true;
 }
-*/
 
 b8 rtl8168_driver_init_driver(rtl8168_driver_t* driver) {
     if (!driver) {
         return false;
     }
     
-    spin_lock_init(&driver->lock);
+    spinlock_init(&driver->lock);
 
     return true;
 }
-
+*/

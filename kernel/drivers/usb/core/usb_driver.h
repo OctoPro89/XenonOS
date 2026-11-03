@@ -10,9 +10,9 @@
 #define USB_MAKE_MATCH(cls, sub, proto) (usb_core_interface_match_t){ .interface_class = cls, .interface_subclass = sub, .interface_protocol = proto }
 
 typedef struct {
-    u8 interface_class; // USB_MATCH_ANY_8 = wildcard
-    u8 interface_subclass; // USB_MATCH_ANY_8 = wildcard
-    u8 interface_protocol; // USB_MATCH_ANY_8 = wildcard
+    u8 interface_class;    // USB_MATCH_ANY = wildcard
+    u8 interface_subclass; // USB_MATCH_ANY = wildcard
+    u8 interface_protocol; // USB_MATCH_ANY = wildcard
 } usb_core_interface_match_t;
 
 typedef struct usb_device usb_device_t;

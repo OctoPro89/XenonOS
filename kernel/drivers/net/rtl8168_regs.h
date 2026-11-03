@@ -221,12 +221,10 @@ static __hint_inline__ b8 chip_is_8168g_plus(rtl8168_chip_version_t ver) {
         case RTL8168_CHIP_VERSION_RTL8168G_2:
         case RTL8168_CHIP_VERSION_RTL8168H_1:
         case RTL8168_CHIP_VERSION_RTL8168H_2:
-        case RTL8168_CHIP_VERSION_RTL8168FP_1: {
+        case RTL8168_CHIP_VERSION_RTL8168FP_1:
             return true;
-        }
-        default: {
+        default:
             return false;
-        }
     }
 }
 

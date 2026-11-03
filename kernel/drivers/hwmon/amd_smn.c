@@ -1,5 +1,5 @@
 #include <drivers/hwmon/amd_smn.h>
-#include <arch/x86_64/drivers/pci/pci.h>
+#include <drivers/pci/pci.h>
 
 /*
     First pass implementation for AMD node 0:

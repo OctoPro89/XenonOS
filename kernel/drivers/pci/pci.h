@@ -96,9 +96,6 @@ void pci_add_device(u8 bus, u8 device, u8 function);
  */
 void pci_scan();
 
-PCI_Device* pci_find_ahci();
-PCI_Device* pci_find_xhci();
-
 void pci_enable_bus_master(PCI_Device* dev);
 
 vaddr_t pci_map_bar(PCI_Device* dev, u8 bar_index);

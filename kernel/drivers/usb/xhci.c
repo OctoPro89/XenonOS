@@ -1573,6 +1573,8 @@ static void xhci_driver_clear_async_endpoint_state(xhci_driver_t* driver, xhci_d
 }
 
 b8 xhci_driver_init_driver(xhci_driver_t* driver) {
+    if (!driver || !driver->pci_device) { return false; }
+
     pci_bar_t* bar = &driver->pci_device->bar[0];
     driver->xhc_base = xhci_map_mmio(bar->base, bar->size);
 
@@ -2320,7 +2322,7 @@ void xhci_driver_run(xhci_driver_t* driver) {
 }
 */
 
-void xhci_driver_task_entry(void* arg) {
+void xhci_driver_run(void* arg) {
     xhci_driver_t* driver = (xhci_driver_t*)arg;
     driver->xhci_driver_task = scheduler_current(); // TODO: this should work fine but probably should check
     
@@ -2346,4 +2348,21 @@ void xhci_driver_task_entry(void* arg) {
         xhci_driver_process_pending_port_changes(driver);
         // TODO: hubs
     }
+}
+
+// TODO:
+static b8 xhci_driver_init(void* self) {
+    return xhci_driver_init_driver((xhci_driver_t*)self);
+}
+
+IPCIDRIVER* xhci_driver_factory(PCI_Device* dev) {
+    xhci_driver_t* drv = kmalloc(sizeof(xhci_driver_t));
+    xassert(drv, "Failed to allocate driver!");
+    if (!drv) { return NULL; }
+    memset(drv, 0, sizeof(xhci_driver_t));
+    drv->name = "USB-xHCI (eXtensible Host Controller Interface Driver)";
+    // INTERFACE ASSIGN
+    drv->init = xhci_driver_init;
+    drv->run = xhci_driver_run;
+    return (IPCIDRIVER*)drv;
 }

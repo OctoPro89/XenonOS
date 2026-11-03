@@ -1,5 +1,6 @@
 #include "pci.h"
 
+#include <drivers/pci/core/pci_core.h>
 #include <arch/x86_64/sync/sync.h>
 #include <arch/x86_64/io.h>
 #include <xlibc/xstddef.h>
@@ -235,11 +236,9 @@ static void pci_probe_bar(PCI_Device* dev, u8 bar_index) {
     bar->prefetchable = (original_low & 8u) != 0;
 
     if (is_64bit) {
-        u64 mask = ((u64)mask_high << 32)
-                 | ((u64)mask_low & ~0xFULL);
+        u64 mask = ((u64)mask_high << 32) | ((u64)mask_low & ~0xFULL);
 
-        u64 base = ((u64)original_high << 32)
-                 | ((u64)original_low & ~0xFULL);
+        u64 base = ((u64)original_high << 32) | ((u64)original_low & ~0xFULL);
 
         if (mask == 0) {
             return;
@@ -276,12 +275,12 @@ b8 pci_enable_msi(PCI_Device* dev, u8 vector) {
     }
 
     // Read control
-    u32 ctrl = pci_config_read32(dev->bus, dev->device, dev->function, cap + MSI_CONTROL);
+    u16 ctrl = pci_config_read16(dev->bus, dev->device, dev->function, cap + MSI_CONTROL);
 
-    // Enable MSI (bit 0)
+    // Enable MSI
     ctrl |= 1;
 
-    pci_config_write32(dev->bus, dev->device, dev->function, cap + MSI_CONTROL, ctrl);
+    pci_config_write16(dev->bus, dev->device, dev->function, cap + MSI_CONTROL, ctrl);
 
     // APIC base address (fixed for x86)
     u32 apic_addr = 0xFEE00000;
@@ -388,34 +387,19 @@ void pci_scan() {
             pci_add_device((u8)bus, device, 0);
 
             // check for multi-function
-            if (pci_config_read32((u8)bus, device, 0, 0x0C) & (1 << 7)) {
+            u8 header_type = pci_config_read8((u8)bus, device, 0, 0x0E);
+
+            if (header_type & 0x80) {
                 for (u8 func = 1; func < 8; func++) {
                     pci_add_device((u8)bus, device, func);
                 }
             }
         }
     }
-}
 
-PCI_Device* pci_find_ahci() {
-    for (uint32_t i = 0; i < pci_bus.count; i++) {
-        PCI_Device *dev = &pci_bus.devices[i];
-        if (dev->class_code == 0x01 && dev->subclass == 0x06 && dev->prog_if == 0x01) {
-            return dev;
-        }
+    for (u16 i = 0; i < pci_bus.count; i++) {
+        pci_core_device_configured(&pci_bus.devices[i]);
     }
-    return NULL;
-}
-
-PCI_Device* pci_find_xhci() {
-    for (u32 i = 0; i < pci_bus.count; i++) {
-        PCI_Device* dev = &pci_bus.devices[i];
-
-        if (dev->class_code == 0x0C && dev->subclass == 0x03 && dev->prog_if == 0x30) {
-            return dev;
-        }
-    }
-    return NULL;
 }
 
 void pci_enable_bus_master(PCI_Device* dev) {

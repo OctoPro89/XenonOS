@@ -12,8 +12,10 @@
 #include <arch/x86_64/irq.h>
 #include <arch/x86_64/apic/lapic.h>
 #include <arch/x86_64/apic/apic_timer.h>
-#include <arch/x86_64/drivers/pci/pci.h>
-#include <arch/x86_64/drivers/ahci/ahci.h>
+
+#include <drivers/pci/core/pci_core.h>
+#include <drivers/pci/pci.h>
+#include <drivers/ahci/ahci.h>
 
 #include <drivers/usb/xhci.h>
 #include <drivers/usb/xhci_mem.h>
@@ -21,6 +23,8 @@
 #include <drivers/usb/core/usb_core.h>
 #include <drivers/usb/hid/hid_driver.h>
 #include <drivers/usb/mass_storage/msc_driver.h>
+
+#include <drivers/audio/intel/intel_hda.h>
 
 #include <drivers/input/input.h>
 
@@ -53,12 +57,12 @@
 #include <drivers/hwmon/amd_smn.h>
 #include <drivers/hwmon/amd_zen_temp.h>
 
+#include <hw/rtc.h>
+
 #include <memory/paging.h>
 #include <memory/pmm.h>
 #include <memory/vmm.h>
 #include <memory/heap.h>
-
-#include <hw/rtc.h>
 
 #include <time/time.h>
 
@@ -107,6 +111,7 @@ static void fs_test() {
     printf("\n");
 }
 
+/*
 static void ahci_test() {
     PCI_Device* ahci_dev = pci_find_ahci(); // find AHCI device
     if (ahci_dev == NULL) {
@@ -191,6 +196,7 @@ static void ahci_test() {
     printf("\n");
     printf("\n");
 }
+*/
 
 void fat32_list_root(FAT32_FS* fs) {
     u32 cluster = fs->root_cluster;
@@ -462,6 +468,17 @@ static void kernel_main(void* arg) {
         printf("Initializing SMP failed, using BSP only.\n");
     }
 
+    // assign PCI drivers
+    // TODO: class #define's
+    pci_core_register_driver("USB-xHCI (eXtensible Host Controller Interface) Driver", PCI_MAKE_MATCH(0x0C, 0x03, 0x30), xhci_driver_factory);
+    
+    // class 0x04: Multimedia Controller
+    // subclass 0x03: Audio Device
+    // prog IF 0x00: High Definition Audio Controller
+    pci_core_register_driver("Intel High Definition Audio Driver", PCI_MAKE_MATCH(0x04, 0x03, 0x00), intel_hda_driver_factory);
+    
+    // TODO: pci_core_register_driver("AHCI (Advanced Host Controller Interface) Serial ATA Disk Driver", PCI_MAKE_MATCH(0x01, 0x06, 0x01), );
+
     printf("Scanning for PCI devices...\n");
 
     pci_scan(); // find pci devices
@@ -486,40 +503,6 @@ static void kernel_main(void* arg) {
     } else {
         printf("AMD SMN unavailable\n");
     }
-
-    PCI_Device* xhci_dev = pci_find_xhci(); // find XHCI device
-    if (xhci_dev == NULL) {
-        printf("Failed to find XHCI device!\n");
-        while(1);
-    }
-
-    printf("\n");
-    printf("Found XHCI device\n");
-
-    printf("Initializing XHCI driver\n");
-    xhci_driver_t xhci_driver;
-    xhci_driver.name = "Default XHCI Controller Driver";
-    xhci_driver.pci_device = xhci_dev;
-    if (!xhci_driver_init_driver(&xhci_driver) /* || !xhci_driver_start_device(&xhci_driver) */) {
-        printf("Failed to initialize XHCI driver!\n");
-        while(1);
-    }
-
-    printf("XHCI Controller Mapping Info:\n");
-
-    printf("    Virtual Base: ");
-    printf("%p\n", xhci_driver.xhc_base);
-    printf("    BAR Address: ");
-    printf("%p\n", xhci_driver.pci_device->bar[0].base);
-    printf("\n");
-
-    // xhci_driver_log_capability_registers(&xhci_driver);
-
-    printf("XHCI Driver initialized successfully\n");
-    printf("\n");
-
-    printf("Creating XHCI driver task!\n");
-    task_t* xhci_driver_task = task_create(NULL, xhci_driver_task_entry, (void*)&xhci_driver);
 
 #ifndef QEMU_DEBUG
     // wait until boot USB drive is set up before launching shit

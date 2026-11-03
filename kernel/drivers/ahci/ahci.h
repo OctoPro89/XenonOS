@@ -1,7 +1,7 @@
 #pragma once
 #include <xlibc/xstdint.h>
 #include <memory/memory_types.h>
-#include <arch/x86_64/drivers/pci/pci.h>
+#include <drivers/pci/pci.h>
 
 typedef volatile struct {
     uint32_t cap;

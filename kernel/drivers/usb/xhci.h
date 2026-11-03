@@ -1,6 +1,8 @@
 #pragma once
 #include <xlibc/xstdint.h>
-#include <arch/x86_64/drivers/pci/pci.h>
+#include <xlibc/xinterface.h>
+#include <drivers/pci/pci.h>
+#include <drivers/pci/core/pci_driver.h>
 #include <drivers/usb/core/usb_transfer.h>
 #include <drivers/usb/xhci_ext_cap.h>
 #include <drivers/usb/xhci_device.h>
@@ -9,8 +11,7 @@
 #include <task.h>
 
 typedef struct {
-    const char* name;
-    PCI_Device* pci_device;
+    INTERFACE_IMPLEMENT(IPCIDRIVER_MEMBERS, IPCIDRIVER_METHODS);
     vaddr_t xhc_base;
     volatile xhci_capability_registers_t* cap_regs; // NOTE: MUST be defined as volatile because controller will change values behind scenes
     volatile xhci_operational_registers_t* op_regs;
@@ -107,10 +108,6 @@ b8 xhci_driver_usb_submit_transfer_async(xhci_driver_t* driver, xhci_device_t* d
 
 void xhci_driver_release_disconnected_device(xhci_driver_t* driver, xhci_device_t* device);
 
-/**
- * @deprecated Doesn't use new task system
- * @note This function assumes host controller has already been started successfully
- */
-void xhci_driver_run(xhci_driver_t* driver);
+void xhci_driver_task_run(void* arg);
 
-void xhci_driver_task_entry(void* arg);
+IPCIDRIVER* xhci_driver_factory(PCI_Device* dev);
