@@ -11,6 +11,26 @@
 #include <xlibc/xstddef.h>
 #include <memory/memory_types.h>
 
+/*
+ * PCI Configuration Space
+ * PCI Local Bus Specification
+ *
+ * Status / Command register: offset 0x04
+ */
+#define PCI_CONFIG_COMMAND          0x04
+
+// PCI Command register bits
+#define PCI_COMMAND_IO_SPACE        (1u << 0)
+#define PCI_COMMAND_MEMORY          (1u << 1)
+#define PCI_COMMAND_BUS_MASTER      (1u << 2)
+#define PCI_COMMAND_SPECIAL_CYCLES  (1u << 3)
+#define PCI_COMMAND_MWI             (1u << 4)
+#define PCI_COMMAND_VGA_PALETTE     (1u << 5)
+#define PCI_COMMAND_PARITY          (1u << 6)
+#define PCI_COMMAND_SERR            (1u << 8)
+#define PCI_COMMAND_FAST_BACK       (1u << 9)
+#define PCI_COMMAND_INT_DISABLE     (1u << 10)
+
 #define PCI_MAX_DEVICES 256
 #define PCI_STATUS_CAP_LIST (1 << 4)
 #define PCI_CAP_PTR 0x34

@@ -561,6 +561,8 @@ static void kernel_main(void* arg) {
     vfs_closedir(dir);
 #endif
 
+for (;;) { task_yield(); }
+
     // boot USB plugged in and set up
 
     window_server_init();

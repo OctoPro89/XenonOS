@@ -1,4 +1,4 @@
-#include <drivers/net/rtl8168.h>
+#include <drivers/net/rtl8168/rtl8168.h>
 #include <hw/mmio.h>
 #include <kernel.h>
 
@@ -8,7 +8,7 @@ struct rx_batch_entry {
 };
 
 struct rx_batch {
-    struct rx_batch_entry entries[RX_BATCH_MAX];
+    struct rx_batch_entry entries[RTL8168_RX_BATCH_MAX];
     u32 count;
 };
 

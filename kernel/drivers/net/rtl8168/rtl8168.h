@@ -1,12 +1,12 @@
 #pragma once
 
-#include <drivers/net/rtl8168_regs.h>
-// #include <net/interface.h>
+#include <drivers/net/rtl8168/rtl8168_regs.h>
+#include <drivers/net/interface.h>
 #include <arch/x86_64/sync/sync.h>
 #include <memory/memory_types.h>
 
-#define RX_BATCH_MAX ((u32)32)
-#define RX_PASSES_PER_WAKEUP ((u32)(RX_DESC_COUNT / RX_BATCH_MAX))
+#define RTL8168_RX_BATCH_MAX ((u32)32)
+#define RTL8168_RX_PASSES_PER_WAKEUP ((u32)(RTL8168_RX_DESC_COUNT / RTL8168_RX_BATCH_MAX))
 
 // TODO: pci driver interface, net driver interface
 
