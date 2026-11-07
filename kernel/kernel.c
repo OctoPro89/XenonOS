@@ -28,6 +28,11 @@
 
 #include <drivers/input/input.h>
 
+#include <drivers/hwmon/amd_smn.h>
+#include <drivers/hwmon/amd_zen_temp.h>
+
+#include <drivers/audio/audio.h>
+
 #include <filesystem/block_device/block_device.h>
 #include <filesystem/gpt/gpt.h>
 #include <filesystem/fat32/fat32.h>
@@ -54,9 +59,6 @@
 #include <smp/ipi.h>
 #include <smp/percpu.h>
 
-#include <drivers/hwmon/amd_smn.h>
-#include <drivers/hwmon/amd_zen_temp.h>
-
 #include <hw/rtc.h>
 
 #include <memory/paging.h>
@@ -77,7 +79,7 @@
 static u8 kernel_stack[KERNEL_STACK_SIZE] __attribute__((aligned(16)));
 uint64_t kernel_stack_top = (u64)(((u8*)kernel_stack) + KERNEL_STACK_SIZE);
 
-static void fs_test() {
+static void fs_test(void) {
     FILE* f = fopen("testlongfilename.txt", "r");
     if (!f) {
         printf("Failed to open file!\n");
@@ -112,7 +114,7 @@ static void fs_test() {
 }
 
 /*
-static void ahci_test() {
+static void ahci_test(void) {
     PCI_Device* ahci_dev = pci_find_ahci(); // find AHCI device
     if (ahci_dev == NULL) {
         printf("Failed to find AHCI device!\n");
@@ -270,7 +272,7 @@ void usb_drive_init(msc_driver_t* drv) {
     msc_driver_set_initialize_notify_callback(NULL); // don't get another callback
 }
 
-void kernel_setup_usb_drivers() {
+void kernel_setup_usb_drivers(void) {
     usb_core_init();
 
     usb_core_register_driver("USB-HID DRIVER", USB_MAKE_MATCH(USB_CLASS_HID, USB_MATCH_ANY, USB_MATCH_ANY), hid_driver_factory);
@@ -449,6 +451,30 @@ static b8 xenon_spawn_program(const char* absolute_path) {
 
 smp_cpu_init_result_t smp_result;
 
+void audio_demo(void) {
+    if (audio_init() != AUDIO_OK) {
+        return;
+    }
+
+    u32 count = audio_get_output_count();
+    for (u32 i = 0; i < count; ++i) {
+        audio_output_info_t info;
+        if (audio_get_output_info(i, &info) == AUDIO_OK) {
+            printf("Audio output %d: %s (id=0x%08x)\\n",
+                   (int)i, info.name, (unsigned int)info.id);
+        }
+    }
+
+    if (count != 0) {
+        audio_output_info_t info;
+        if (audio_get_output_info(0, &info) == AUDIO_OK) {
+            (void)audio_set_output(info.id);
+            (void)audio_set_volume(75);
+            (void)audio_set_mute(false);
+        }
+    }
+}
+
 static void kernel_main(void* arg) {
     if (!input_init()) {
         xassert(false, "");
@@ -561,7 +587,27 @@ static void kernel_main(void* arg) {
     vfs_closedir(dir);
 #endif
 
-for (;;) { task_yield(); }
+    if (audio_init() != AUDIO_OK) {
+        printf("Failed to initialize audio!\n");
+        for (;;) { task_yield(); }
+    }
+
+    u32 count = audio_get_output_count();
+    for (u32 i = 0; i < count; ++i) {
+        audio_output_info_t info;
+        if (audio_get_output_info(i, &info) == AUDIO_OK) {
+            printf("Audio output %d: %s (id=0x%08x)\\n", (int)i, info.name, (unsigned int)info.id);
+        }
+    }
+
+    if (count != 0) {
+        audio_output_info_t info;
+        if (audio_get_output_info(0, &info) == AUDIO_OK) {
+            (void)audio_set_output(info.id);
+            (void)audio_set_volume(75);
+            (void)audio_set_mute(false);
+        }
+    }
 
     // boot USB plugged in and set up
 

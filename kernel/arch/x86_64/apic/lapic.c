@@ -33,12 +33,15 @@
 // Bits in ICR_HIGH (32 bits)
 #define APIC_ICR_DEST_SHIFT       24          // Bits [31:24]: Destination APIC ID
 
+#define APIC_REG_ID               0x020
+
 __PRIVILEGED_DATA static paddr_t lapic_physical_base = 0;
 __PRIVILEGED_DATA static volatile u32* lapic_virtual_base = 0;
 
 static void _lapic_init(paddr_t base, u8 spurious_irq) {
     if (!lapic_physical_base) {
         vaddr_t virt_base = vmm_map_physical_page(&kernel_space, base, PAGE_PRESENT | PAGE_WRITABLE | PAGE_CACHE_DISABLE); // TODO: not sure about these paging flags
+        lapic_physical_base = base;
         lapic_virtual_base = (volatile u32*)virt_base;
     }
 
@@ -52,7 +55,7 @@ static void _lapic_init(paddr_t base, u8 spurious_irq) {
     lapic_disable_legacy_pic();
 }
 
-__PRIVILEGED_CODE void lapic_init() {
+__PRIVILEGED_CODE void lapic_init(void) {
     u64 apic_base_msr = msr_read(IA32_APIC_BASE_MSR);
 
     // enable apic by setting 11th bit
@@ -93,15 +96,15 @@ __PRIVILEGED_CODE void lapic_unmask_irq(u32 lvtoff) {
     lapic_write(lvtoff, lvt_entry);
 }
 
-__PRIVILEGED_CODE void lapic_mask_timer_irq() {
+__PRIVILEGED_CODE void lapic_mask_timer_irq(void) {
     lapic_mask_irq(APIC_LVT_TIMER);
 }
 
-__PRIVILEGED_CODE void lapic_unmask_timer_irq() {
+__PRIVILEGED_CODE void lapic_unmask_timer_irq(void) {
     lapic_unmask_irq(APIC_LVT_TIMER);
 }
 
-__PRIVILEGED_CODE void lapic_complete_irq() {
+__PRIVILEGED_CODE void lapic_complete_irq(void) {
     lapic_write(0xB0, 0x00);
 }
 
@@ -187,19 +190,23 @@ __PRIVILEGED_CODE void lapic_send_startup_ipi(u8 apic_id, u32 vector) {
     lapic_wait_for_icr_cmd_completion();
 }
 
-__PRIVILEGED_CODE void lapic_wait_for_icr_cmd_completion() {
+__PRIVILEGED_CODE void lapic_wait_for_icr_cmd_completion(void) {
     // wait until the Delivery Status bit is cleared, meaning the IPI has been sent (the hardware is not busy anymore)
     while (lapic_virtual_base[APIC_REG_ICR_LOW / 4] & APIC_DELIVERY_STATUS) {
         asm volatile("pause");
     }
 }
 
-__PRIVILEGED_CODE void lapic_disable_legacy_pic() {
+__PRIVILEGED_CODE void lapic_disable_legacy_pic(void) {
     // send the disable command (0xFF) to both PIC1 and PIC2 data ports
     x64_outb(0xA1, 0xFF);
     x64_outb(0x21, 0xFF);
 }
 
-__PRIVILEGED_CODE vaddr_t lapic_get_va() {
+__PRIVILEGED_CODE vaddr_t lapic_get_va(void) {
     return (vaddr_t)lapic_virtual_base;
+}
+
+__PRIVILEGED_CODE u32 lapic_get_id(void) {
+    return (lapic_read(APIC_REG_ID) >> 24) & 0xFF;
 }

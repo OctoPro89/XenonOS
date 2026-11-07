@@ -1,4 +1,5 @@
 #include <drivers/audio/intel/intel_hda.h>
+#include <drivers/audio/intel/intel_hda_audio.h>
 #include <hw/mmio.h>
 #include <memory/allocators/dma_allocator.h>
 #include <memory/heap.h>
@@ -780,7 +781,7 @@ static b8 intel_hda_driver_ensure_widget_d0(intel_hda_driver_t* driver, u8 codec
 	return false;
 }
 
-static b8 intel_hda_driver_configure_output_path(intel_hda_driver_t* driver, u8 codec_addr, intel_hda_output_path_t* path, b8 enable_eapd) {
+b8 intel_hda_driver_configure_output_path(intel_hda_driver_t* driver, u8 codec_addr, intel_hda_output_path_t* path, b8 enable_eapd) {
 	if (!driver || !path || !path->valid || codec_addr >= HDA_MAX_CODECS ||
 		!driver->widgets[codec_addr]) {
 		return false;
@@ -1924,7 +1925,7 @@ static void intel_hda_driver_find_output_paths(
 	}
 }
 
-static b8 intel_hda_driver_start_default_analog_output(
+b8 intel_hda_driver_start_default_analog_output(
 	intel_hda_driver_t* driver) {
 	if (!driver) {
 		return false;
@@ -2538,6 +2539,7 @@ b8 intel_hda_driver_init_driver(void* self) {
 		// enumerate codec function groups and widgets
 		if (!intel_hda_driver_enumerate_codec(driver, i)) {
 			printf("[INTEL HDA]: Warning: Codec %d enumeration was unsuccessful.\n", (int)i);
+			continue;
 		}
 
 		++successful_codecs;
@@ -2561,12 +2563,14 @@ b8 intel_hda_driver_init_driver(void* self) {
 	 * legitimately have no analog endpoint. That is not a controller
 	 * initialization failure.
 	 */
-	(void)intel_hda_driver_start_default_analog_output(driver);
+	// (void)intel_hda_driver_start_default_analog_output(driver);
 
-	printf("[INTEL HDA]: Controller initialization completed.\n");
+	if (!intel_hda_audio_register(driver)) {
+		printf("[INTEL HDA]: Failed to register audio backend.\\n");
+		return false;
+	}
 
-	return true;
-
+	printf("[INTEL HDA]: Controller initialization completed.\\n");
 	return true;
 }
 

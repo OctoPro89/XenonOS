@@ -21,43 +21,53 @@ void spin_unlock_irqrestore(spinlock_t* lock, u64 flags) {
 }
 
 void mutex_init(mutex_t* mutex) {
+    spin_lock_init(&mutex->guard);
+    mutex->owner = NULL;
+    wait_queue_init(&mutex->waiters);
+}
+
+void mutex_init(mutex_t* mutex) {
+    spin_lock_init(&mutex->guard);
     mutex->owner = NULL;
     wait_queue_init(&mutex->waiters);
 }
 
 void mutex_lock(mutex_t* mutex) {
     task_t* current = scheduler_current();
+
     xassert(current != NULL, "mutex_lock with no current task");
 
     for (;;) {
-        u64 flags = irq_save();
+        u64 flags;
+
+        spin_lock_irqsave(&mutex->guard, &flags);
 
         if (mutex->owner == NULL) {
             mutex->owner = current;
-            irq_restore(flags);
+
+            spin_unlock_irqrestore(&mutex->guard, flags);
             return;
         }
 
-        /*
-         * hold interrupts disabled while adding ourselves to the wait queue and changing our state.
-         * NOTE: task_block_current_locked() does the scheduler trap
-         */
-        task_block_current_locked(&mutex->waiters);
+        xassert(mutex->owner != current, "Recursive mutex acquisition");
 
-        // resume here after somebody wakes us
-        irq_restore(flags);
+        // atomically enqueue ourselves, release the guard, and block until awakened. task_wait() returns with the guard held and interrupts disabled
+        flags = task_wait(&mutex->waiters, &mutex->guard, flags);
+
+        spin_unlock_irqrestore(&mutex->guard, flags);
     }
 }
 
 void mutex_unlock(mutex_t* mutex) {
     task_t* current = scheduler_current();
+
+    u64 flags;
+    spin_lock_irqsave(&mutex->guard, &flags);
+
     xassert(mutex->owner == current, "mutex_unlock by non-owner");
 
-    u64 flags = irq_save();
     mutex->owner = NULL;
 
-    // Wake one waiter, the waiter will contend for the mutex when it resumes
     wait_queue_wake_one_locked(&mutex->waiters);
-
-    irq_restore(flags);
+    spin_unlock_irqrestore(&mutex->guard, flags);
 }

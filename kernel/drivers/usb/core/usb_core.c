@@ -9,9 +9,11 @@
 // tracks which usb_device_t is associated with each xhci_device_t
 // TODO: should increase to 256
 #define MAX_USB_DEVICES 16
+#define MAX_REGISTERED_DRIVERS (MAX_USB_DEVICES * 16)
+
 static usb_device_t* g_devices[MAX_USB_DEVICES];
-static IUSBDRIVER* g_bound_drivers[MAX_USB_DEVICES * 16];
-static usb_core_interface_driver_entry_t g_registered_drivers[MAX_USB_DEVICES * 16];
+static IUSBDRIVER* g_bound_drivers[MAX_REGISTERED_DRIVERS];
+static usb_core_interface_driver_entry_t g_registered_drivers[MAX_REGISTERED_DRIVERS];
 static u16 g_registered_driver_count = 0;
 static spinlock_t g_usbcore_lock;
 
@@ -150,7 +152,8 @@ static usb_device_t* build_usb_device(xhci_driver_t* hcd, xhci_device_t* xdev, c
     dev->hcd_teardown_complete = false;
     dev->finalize_started = false;
 
-    xdev->core_device = dev;
+    // do this later under a lock
+    // xdev->core_device = dev;
 
     for (u8 i = 0; i < xdev->num_interfaces; i++) {
         const xhci_interface_info_t* xi = &xdev->interfaces[i];
@@ -205,18 +208,29 @@ void usb_core_init() {
 void usb_core_device_configured(xhci_driver_t* driver, xhci_device_t* xdev, const usb_device_descriptor_t* desc) {
     u8 slot_id = xdev->slot;
 
+    if (slot_id >= MAX_USB_DEVICES) {
+        printf("[USB CORE]: Unsupported slot ID %u\n", slot_id);
+        return;
+    }
+
     usb_device_t* dev = build_usb_device(driver, xdev, desc);
     if (!dev) {
         printf("[USB CORE]: Failed to allocate usb_device_t for slot %u\n", slot_id);
         return;
     }
 
-    if (slot_id >= MAX_USB_DEVICES) {
-        printf("[USB CORE]: Unsupported slot ID %u\n", slot_id);
+    u64 flags = 0;
+    spin_lock_irqsave(&g_usbcore_lock, &flags);
+    if (g_devices[slot_id] != NULL) {
+        // device already exists
+        spin_unlock_irqrestore(&g_usbcore_lock, flags);
+        kfree(dev);
         return;
     }
 
     g_devices[slot_id] = dev;
+    xdev->core_device = dev;
+    spin_unlock_irqrestore(&g_usbcore_lock, flags);
 
     for (u8 i = 0; i < dev->num_interfaces; ++i) {
         usb_interface_t* iface = &dev->interfaces[i];
@@ -235,7 +249,8 @@ void usb_core_device_configured(xhci_driver_t* driver, xhci_device_t* xdev, cons
                 continue;
             }
 
-            task_t* task = task_create(NULL, class_driver_task_entry, (void*)drv);
+            // TODO: create paused task then resume instead of this crap
+            task_t* task = task_create_suspended(NULL, class_driver_task_entry, (void*)drv);
             if (!task) {
                 xassert(false, "");
                 printf("[USB CORE]: Failed to create task for %s\n", drv->name);
@@ -243,6 +258,7 @@ void usb_core_device_configured(xhci_driver_t* driver, xhci_device_t* xdev, cons
                 return;
             }
 
+            // initialize things before allowing the task to execute
             task->name = drv->name;
 
             drv->task = task;
@@ -250,14 +266,15 @@ void usb_core_device_configured(xhci_driver_t* driver, xhci_device_t* xdev, cons
             drv->bound_slot_id = slot_id;
             drv->bound_interface_index = i;
 
-            u64 flags = 0;
             spin_lock_irqsave(&dev->lifetime_lock, &flags);
             ++dev->active_driver_count;
             spin_unlock_irqrestore(&dev->lifetime_lock, flags);
 
             u16 drv_idx = (u16)(slot_id) * 16u + (u16)i;
-            if (drv_idx >= MAX_USB_DEVICES * 16) {
+            if (drv_idx >= MAX_REGISTERED_DRIVERS) {
                 xassert(false, "Attempted to store USB Driver at index above allowed amount");
+                task_cleanup_failed(task);
+                kfree(drv);
                 continue;
             }
 
@@ -265,7 +282,13 @@ void usb_core_device_configured(xhci_driver_t* driver, xhci_device_t* xdev, cons
             g_bound_drivers[drv_idx] = drv;
             spin_unlock_irqrestore(&g_usbcore_lock, flags);
 
+            task->name = drv->name;
+            drv->task = task;
+
             printf("[USB CORE]: Bound %s to interface %u (class=0x%x)\n", drv->name, iface->interface_number, iface->interface_class);
+
+            // driver can now execute
+            task_resume(task);
 
             break;
         }
@@ -318,6 +341,15 @@ void usb_core_finalize_disconnected_device(xhci_driver_t* driver, xhci_device_t*
 }
 
 void usb_core_register_driver(const char* name, usb_core_interface_match_t match, usb_core_interface_driver_factory_func factory) {
+    if (!name || !factory) {
+        return;
+    }
+
+    if (g_registered_driver_count >= MAX_REGISTERED_DRIVERS) {
+        printf("[USB CORE]: Driver registration limit reached\n");
+        return;
+    }
+    
     usb_core_interface_driver_entry_t entry;
     entry.name = name;
     entry.create = factory;

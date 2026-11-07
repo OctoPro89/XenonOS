@@ -12,6 +12,7 @@ void spin_lock_irqsave(spinlock_t* lock, u64* flags);
 void spin_unlock_irqrestore(spinlock_t* lock, u64 flags);
 
 typedef struct {
+    spinlock_t guard; // this is required for SMP safety
     task_t* owner;
     wait_queue_t waiters;
 } mutex_t;

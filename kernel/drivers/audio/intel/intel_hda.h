@@ -1,4 +1,3 @@
-
 #pragma once
 
 #include <xlibc/xstdint.h>
@@ -6,6 +5,7 @@
 #include <xlibc/xassert.h>
 #include <drivers/pci/pci.h>
 #include <drivers/pci/core/pci_driver.h>
+#include <arch/x86_64/sync/sync.h>
 
 // PCI Identification
 #define HDA_PCI_CLASS_CODE          0x04
@@ -381,6 +381,12 @@
 #define HDA_VERB_GET_CONNECTION_SELECT_CONTROL 0xF01
 #define HDA_VERB_SET_CONNECTION_SELECT_CONTROL 0x701
 
+#define HDA_SD_CTL_IOCE       (1u << 2)
+#define HDA_BDLE_IOC          (1u << 0)
+
+#define HDA_INTCTL_GIE        (1u << 31)
+#define HDA_INTCTL_CIE        (1u << 30)
+
 typedef struct __packed__ {
     u64 address;
     u32 length;
@@ -626,6 +632,9 @@ typedef struct {
 
     b8 output_paths_truncated[HDA_MAX_CODECS];
 
+    mutex_t command_mutex;
+    mutex_t playback_mutex;
+
     /*
      * Controller-specific quirks:
      *
@@ -653,5 +662,9 @@ b8 intel_hda_driver_init_command_dma(intel_hda_driver_t* driver);
 b8 intel_hda_driver_send_verb(intel_hda_driver_t* driver, u8 codec_addr, u8 node_id, u16 verb, u8 payload, u32* response);
 b8 intel_hda_driver_send_verb4(intel_hda_driver_t* driver, u8 codec_addr, u8 node_id, u8 verb, u16 payload, u32* response);
 b8 intel_hda_driver_enumerate_codec(intel_hda_driver_t* driver, u8 codec_addr);
+
+b8 intel_hda_driver_configure_output_path(intel_hda_driver_t* driver, u8 codec_addr, intel_hda_output_path_t* path, b8 enable_eapd);
+
+b8 intel_hda_driver_start_test_tone(intel_hda_driver_t* driver);
 
 IPCIDRIVER* intel_hda_driver_factory(PCI_Device* dev);

@@ -98,8 +98,7 @@ void pci_core_device_configured(PCI_Device* device) {
         }
 
         // TODO: may need probe here not sure
-        
-        task_t* task = task_create(NULL, class_driver_task_entry, (void*)drv);
+        task_t* task = task_create_suspended(NULL, class_driver_task_entry, (void*)drv);
         if (!task) {
             xassert(false, "");
             printf("[PCI CORE]: Failed to create task for driver '%s'\n", drv->name);
@@ -107,12 +106,16 @@ void pci_core_device_configured(PCI_Device* device) {
             return;
         }
 
+        // initialize things before allowing the task to execute
         task->name = drv->name;
 
         drv->task = task;
         binding->driver = drv;
 
         printf("[PCI CORE]: Bound %s to %02x:%02x.%x " "(vendor=%04x device=%04x class=%02x:%02x:%02x)\n", drv->name, device->bus, device->device, device->function, device->vendor_id, device->device_id, device->class_code, device->subclass, device->prog_if);
+
+        // driver can now execute
+        task_resume(task);
         
         break;
     }

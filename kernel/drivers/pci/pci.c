@@ -7,7 +7,7 @@
 #include <xlibc/string.h>
 #include <memory/vmm.h>
 #include <memory/paging.h>
-#include <limits.h>
+#include <arch/x86_64/apic/lapic.h>
 
 #define PCI_CONFIG_ADDRESS 0xCF8
 #define PCI_CONFIG_DATA    0xCFC
@@ -267,28 +267,55 @@ b8 pci_enable_msi(PCI_Device* dev, u8 vector) {
     if (!dev) {
         return false;
     }
-    
-    u8 cap = pci_find_capability(dev, 0x05); // MSI
+
+    u8 cap = pci_find_capability(dev, 0x05);
 
     if (!cap) {
         return false;
     }
 
-    // Read control
     u16 ctrl = pci_config_read16(dev->bus, dev->device, dev->function, cap + MSI_CONTROL);
 
-    // Enable MSI
-    ctrl |= 1;
+    // disable MSI while configuring
+    ctrl &= ~1u;
 
     pci_config_write16(dev->bus, dev->device, dev->function, cap + MSI_CONTROL, ctrl);
 
-    // APIC base address (fixed for x86)
-    u32 apic_addr = 0xFEE00000;
+    b8 is_64bit = (ctrl & (1u << 7)) != 0;
 
-    pci_config_write32(dev->bus, dev->device, dev->function, cap + MSI_ADDR_LOW, apic_addr);
+    // only need one MSI message, Multiple Message Enable occupies bits 3:1.
+    ctrl &= ~(7u << 4);
 
-    // Vector goes into low byte
-    pci_config_write32(dev->bus, dev->device, dev->function, cap + MSI_DATA_32, vector);
+    // fixed delivery, edge triggered, BSP destination
+    u32 apic_id = lapic_get_id();
+
+    u32 address_low = 0xFEE00000u | ((apic_id & 0xFFu) << 12);
+
+    pci_config_write32(dev->bus, dev->device, dev->function, cap + MSI_ADDR_LOW, address_low);
+
+    u16 data_offset;
+
+    if (is_64bit) {
+        pci_config_write32(dev->bus, dev->device, dev->function, cap + MSI_ADDR_HIGH, 0);
+        data_offset = cap + 0x0C;
+    } else {
+        data_offset = cap + 0x08;
+    }
+
+    // enly write the 16-bit message data field
+    pci_config_write16(dev->bus, dev->device, dev->function, data_offset, vector);
+
+    // enable MSI only after the message is configured
+    ctrl |= 1u;
+
+    pci_config_write16(dev->bus, dev->device, dev->function, cap + MSI_CONTROL, ctrl);
+
+    // disable legacy INTx
+    u16 cmd = pci_config_read16(dev->bus, dev->device, dev->function, PCI_CONFIG_COMMAND);
+
+    cmd |= PCI_COMMAND_INT_DISABLE;
+
+    pci_config_write16(dev->bus, dev->device, dev->function, PCI_CONFIG_COMMAND, cmd);
 
     return true;
 }
